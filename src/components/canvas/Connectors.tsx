@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { connectorPath } from "../../model/layout";
 import type { LayoutResult, MindMapDocument } from "../../types/mindmap";
 
@@ -6,7 +7,10 @@ interface ConnectorsProps {
   layout: LayoutResult;
 }
 
-export function Connectors({ document, layout }: ConnectorsProps) {
+export const Connectors = memo(function Connectors({
+  document,
+  layout,
+}: ConnectorsProps) {
   return (
     <svg
       aria-hidden="true"
@@ -34,4 +38,4 @@ export function Connectors({ document, layout }: ConnectorsProps) {
       })}
     </svg>
   );
-}
+});

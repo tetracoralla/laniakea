@@ -25,9 +25,14 @@ export interface MindMapDocument {
   updatedAt: string;
 }
 
+export interface SelectionState {
+  primaryId: string | null;
+  selectedIds: string[];
+}
+
 export interface EditorSnapshot {
   document: MindMapDocument;
-  selectedId: string;
+  selection: SelectionState;
 }
 
 export interface LayoutNode {
@@ -47,4 +52,6 @@ export interface LayoutResult {
   height: number;
 }
 
-export type SaveState = "saved" | "saving";
+export type SaveState = "loading" | "saved" | "saving" | "error";
+
+export type StartupMode = "loading" | "fresh" | "restored";

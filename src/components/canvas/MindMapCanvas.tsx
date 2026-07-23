@@ -1,15 +1,25 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
-  useState,
 } from "react";
+import { useCanvasGestures } from "../../hooks/useCanvasGestures";
 import { computeLayout } from "../../model/layout";
-import type { MindMapDocument, Viewport } from "../../types/mindmap";
+import {
+  singleSelection,
+  toggleSelectedNode,
+} from "../../model/selection";
+import type {
+  MindMapDocument,
+  SelectionState,
+  Viewport,
+} from "../../types/mindmap";
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
+import { SelectionMarquee } from "./SelectionMarquee";
 
 export interface CanvasHandle {
   fit: () => void;
@@ -21,14 +31,15 @@ export interface CanvasHandle {
 
 interface MindMapCanvasProps {
   document: MindMapDocument;
-  selectedId: string;
+  selection: SelectionState;
   editingId: string | null;
   draft: string;
-  onSelect: (id: string) => void;
+  onSelectionChange: (selection: SelectionState) => void;
   onBeginEdit: (id: string) => void;
+  onSpaceTap: () => void;
   onDraftChange: (value: string) => void;
-  onCommitEdit: () => void;
-  onCancelEdit: () => void;
+  onCommitEdit: (id: string, value: string) => void;
+  onCancelEdit: (id: string) => void;
   onToggle: (id: string) => void;
   onViewportChange: (viewport: Viewport) => void;
 }
@@ -40,15 +51,24 @@ function clampZoom(value: number): number {
   return Math.min(maxZoom, Math.max(minZoom, value));
 }
 
+export function draftForNode(
+  nodeId: string,
+  editingId: string | null,
+  draft: string,
+): string {
+  return nodeId === editingId ? draft : "";
+}
+
 export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
   function MindMapCanvas(
     {
       document,
-      selectedId,
+      selection,
       editingId,
       draft,
-      onSelect,
+      onSelectionChange,
       onBeginEdit,
+      onSpaceTap,
       onDraftChange,
       onCommitEdit,
       onCancelEdit,
@@ -60,18 +80,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
     const persistTimer = useRef<number | null>(null);
+    const liveViewport = useRef(document.viewport);
     const layout = useMemo(
       () => computeLayout(document),
       [document.nodes, document.rootId],
     );
     const viewport = document.viewport;
-    const liveViewport = useRef(viewport);
-    const [drag, setDrag] = useState<{
-      originX: number;
-      originY: number;
-      viewportX: number;
-      viewportY: number;
-    } | null>(null);
 
     const renderViewport = (next: Viewport) => {
       liveViewport.current = next;
@@ -88,6 +102,46 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         persistTimer.current = null;
       }, 120);
     };
+
+    const {
+      activeSelection,
+      marqueeRect,
+      selecting,
+      className,
+      bindings,
+    } = useCanvasGestures({
+      containerRef,
+      layout,
+      selection,
+      editingId,
+      liveViewport,
+      renderViewport,
+      onSelectionChange,
+      onSpaceTap,
+      onViewportChange,
+    });
+    const selectedIdSet = useMemo(
+      () => new Set(activeSelection.selectedIds),
+      [activeSelection.selectedIds],
+    );
+    const handleNodeSelect = useCallback(
+      (id: string, additive: boolean) => {
+        onSelectionChange(
+          additive
+            ? toggleSelectedNode(
+                selection,
+                id,
+                layout.visibleIds,
+              )
+            : singleSelection(id),
+        );
+      },
+      [
+        layout.visibleIds,
+        onSelectionChange,
+        selection,
+      ],
+    );
 
     const zoomAtCenter = (nextZoom: number) => {
       const bounds = containerRef.current?.getBoundingClientRect();
@@ -126,7 +180,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
 
     const focusSelected = () => {
       const bounds = containerRef.current?.getBoundingClientRect();
-      const node = layout.nodes[selectedId];
+      const node = selection.primaryId
+        ? layout.nodes[selection.primaryId]
+        : null;
       if (!bounds || !node) return;
       const current = liveViewport.current;
       onViewportChange({
@@ -154,7 +210,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
             y: -24,
           }),
       }),
-      [layout, selectedId, viewport],
+      [layout, selection.primaryId, viewport],
     );
 
     useEffect(() => {
@@ -169,7 +225,14 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     );
 
     useEffect(() => {
-      const node = layout.nodes[selectedId];
+      if (
+        selection.selectedIds.length !== 1 ||
+        !selection.primaryId ||
+        selecting
+      ) {
+        return;
+      }
+      const node = layout.nodes[selection.primaryId];
       const bounds = containerRef.current?.getBoundingClientRect();
       if (!node || !bounds) return;
       const current = liveViewport.current;
@@ -189,36 +252,13 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       if (x !== current.x || y !== current.y) {
         onViewportChange({ ...current, x, y });
       }
-    }, [selectedId, layout]);
+    }, [layout, onViewportChange, selecting, selection]);
 
     return (
       <div
         aria-label="思维导图画布"
-        className={`mindmap-canvas ${drag ? "is-dragging" : ""}`}
-        onPointerDown={(event) => {
-          if (event.button !== 0 || event.target !== event.currentTarget) return;
-          event.currentTarget.setPointerCapture(event.pointerId);
-          setDrag({
-            originX: event.clientX,
-            originY: event.clientY,
-            viewportX: liveViewport.current.x,
-            viewportY: liveViewport.current.y,
-          });
-        }}
-        onPointerMove={(event) => {
-          if (!drag) return;
-          renderViewport({
-            ...liveViewport.current,
-            x: drag.viewportX + event.clientX - drag.originX,
-            y: drag.viewportY + event.clientY - drag.originY,
-          });
-        }}
-        onPointerUp={(event) => {
-          if (!drag) return;
-          event.currentTarget.releasePointerCapture(event.pointerId);
-          setDrag(null);
-          onViewportChange(liveViewport.current);
-        }}
+        className={className}
+        {...bindings}
         onWheel={(event) => {
           event.preventDefault();
           if (event.metaKey || event.ctrlKey) {
@@ -262,23 +302,33 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           <Connectors document={document} layout={layout} />
           {layout.visibleIds.map((id) => {
             const node = document.nodes[id];
+            const selected = selectedIdSet.has(id);
             return (
               <MindMapNode
-                draft={draft}
+                draft={draftForNode(id, editingId, draft)}
                 editing={editingId === id}
                 key={id}
                 layout={layout.nodes[id]}
                 node={node}
-                onBeginEdit={() => onBeginEdit(id)}
+                onBeginEdit={onBeginEdit}
                 onCancelEdit={onCancelEdit}
                 onCommitEdit={onCommitEdit}
                 onDraftChange={onDraftChange}
-                onSelect={() => onSelect(id)}
-                onToggle={() => onToggle(id)}
-                selected={selectedId === id}
+                onSelect={handleNodeSelect}
+                onToggle={onToggle}
+                primary={activeSelection.primaryId === id}
+                selected={selected}
               />
             );
           })}
+        </div>
+        {marqueeRect && <SelectionMarquee rect={marqueeRect} />}
+        <div aria-live="polite" className="sr-only">
+          {selection.selectedIds.length === 0
+            ? "未选择节点"
+            : selection.selectedIds.length === 1
+              ? "已选择 1 个节点"
+              : `已选择 ${selection.selectedIds.length} 个节点`}
         </div>
       </div>
     );

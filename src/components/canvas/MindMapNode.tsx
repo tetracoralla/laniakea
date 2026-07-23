@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { LayoutNode, MindNode } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
 
@@ -6,20 +6,22 @@ interface MindMapNodeProps {
   node: MindNode;
   layout: LayoutNode;
   selected: boolean;
+  primary: boolean;
   editing: boolean;
   draft: string;
-  onSelect: () => void;
-  onBeginEdit: () => void;
+  onSelect: (id: string, additive: boolean) => void;
+  onBeginEdit: (id: string) => void;
   onDraftChange: (value: string) => void;
-  onCommitEdit: () => void;
-  onCancelEdit: () => void;
-  onToggle: () => void;
+  onCommitEdit: (id: string, value: string) => void;
+  onCancelEdit: (id: string) => void;
+  onToggle: (id: string) => void;
 }
 
-export function MindMapNode({
+export const MindMapNode = memo(function MindMapNode({
   node,
   layout,
   selected,
+  primary,
   editing,
   draft,
   onSelect,
@@ -35,11 +37,11 @@ export function MindMapNode({
     if (!editing) return;
     editorRef.current?.focus();
     editorRef.current?.setSelectionRange(draft.length, draft.length);
-  }, [editing, draft.length]);
+  }, [editing]);
 
   return (
     <div
-      className={`mind-node mind-node--${layout.depth === 0 ? "root" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${selected ? "is-selected" : ""}`}
+      className={`mind-node mind-node--${layout.depth === 0 ? "root" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""}`}
       data-node-id={node.id}
       style={{
         left: layout.x,
@@ -52,29 +54,34 @@ export function MindMapNode({
         <textarea
           aria-label="编辑节点"
           className="mind-node__editor"
+          placeholder={
+            node.parentId === null ? "输入中心主题" : "输入节点内容"
+          }
           ref={editorRef}
           rows={1}
           value={draft}
-          onBlur={onCommitEdit}
+          onBlur={() => onCommitEdit(node.id, draft)}
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={(event) => {
             event.stopPropagation();
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              onCommitEdit();
+              onCommitEdit(node.id, draft);
             }
             if (event.key === "Escape") {
               event.preventDefault();
-              onCancelEdit();
+              onCancelEdit(node.id);
             }
           }}
         />
       ) : (
         <button
-          aria-current={selected ? "true" : undefined}
+          aria-pressed={selected}
           className="mind-node__content"
-          onClick={onSelect}
-          onDoubleClick={onBeginEdit}
+          onClick={(event) =>
+            onSelect(node.id, event.shiftKey || event.metaKey)
+          }
+          onDoubleClick={() => onBeginEdit(node.id)}
           type="button"
         >
           {node.text}
@@ -86,7 +93,7 @@ export function MindMapNode({
           className={`mind-node__disclosure ${node.collapsed ? "is-collapsed" : ""}`}
           onClick={(event) => {
             event.stopPropagation();
-            onToggle();
+            onToggle(node.id);
           }}
           type="button"
         >
@@ -95,4 +102,4 @@ export function MindMapNode({
       )}
     </div>
   );
-}
+});

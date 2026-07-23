@@ -1,84 +1,179 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createSeedDocument } from "../data/seed";
+import { createBlankDocument } from "../data/seed";
 import {
   commitEditorHistory,
   createEditorHistory,
   redoEditorHistory,
   undoEditorHistory,
 } from "../model/history";
+import {
+  createSelection,
+  selectionEquals,
+  singleSelection,
+} from "../model/selection";
 import type { DocumentMutation } from "../model/tree";
+import {
+  isDesktopRuntime,
+  loadLocalDocument,
+  saveBrowserDocumentSynchronously,
+  saveLocalDocument,
+} from "../persistence/localDocumentStore";
 import type {
   EditorSnapshot,
   MindMapDocument,
   SaveState,
+  SelectionState,
+  StartupMode,
   Viewport,
 } from "../types/mindmap";
 
-const storageKey = "origin.mindmap.v1";
-function isDocument(value: unknown): value is MindMapDocument {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<MindMapDocument>;
-  return (
-    candidate.formatVersion === 1 &&
-    typeof candidate.title === "string" &&
-    typeof candidate.rootId === "string" &&
-    Boolean(candidate.nodes?.[candidate.rootId])
-  );
-}
-
-function loadInitialSnapshot(): EditorSnapshot {
-  try {
-    const stored = localStorage.getItem(storageKey);
-    if (stored) {
-      const document = JSON.parse(stored) as unknown;
-      if (isDocument(document)) {
-        return { document, selectedId: document.rootId };
-      }
-    }
-  } catch {
-    // Invalid local data falls back to a valid seed without blocking startup.
-  }
-
-  const document = createSeedDocument();
-  return { document, selectedId: "experience-2" };
+function freshSnapshot(): EditorSnapshot {
+  const document = createBlankDocument();
+  return {
+    document,
+    selection: singleSelection(document.rootId),
+  };
 }
 
 export function useMindMap() {
   const [history, setHistory] = useState(() =>
-    createEditorHistory(loadInitialSnapshot()),
+    createEditorHistory(freshSnapshot()),
   );
-  const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [saveState, setSaveState] = useState<SaveState>("loading");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [startupNotice, setStartupNotice] = useState<string | null>(null);
+  const [startupMode, setStartupMode] =
+    useState<StartupMode>("loading");
   const snapshot = history.present;
-  const latestDocument = useRef(history.present.document);
+  const latestDocument = useRef(snapshot.document);
+  const startupModeRef = useRef<StartupMode>("loading");
+  const skipNextSave = useRef<MindMapDocument | null>(null);
+  const saveQueue = useRef<Promise<void>>(Promise.resolve());
+  const saveRequest = useRef(0);
+
+  latestDocument.current = snapshot.document;
+  startupModeRef.current = startupMode;
+
+  const saveNow = useCallback(async (document?: MindMapDocument) => {
+    const target = document ?? latestDocument.current;
+    const request = ++saveRequest.current;
+    setSaveState("saving");
+    setSaveError(null);
+
+    const queued = saveQueue.current
+      .catch(() => undefined)
+      .then(() => saveLocalDocument(target));
+    saveQueue.current = queued;
+
+    try {
+      await queued;
+      if (request === saveRequest.current) {
+        setSaveState("saved");
+        setSaveError(null);
+      }
+      return true;
+    } catch (error) {
+      if (request === saveRequest.current) {
+        setSaveState("error");
+        setSaveError(
+          error instanceof Error
+            ? error.message
+            : "无法写入本地文件，请检查磁盘空间或文件权限。",
+        );
+      }
+      return false;
+    }
+  }, []);
 
   useEffect(() => {
-    latestDocument.current = snapshot.document;
+    let cancelled = false;
+    void loadLocalDocument()
+      .then((loaded) => {
+        if (cancelled) return;
+        if (loaded.document) {
+          if (!loaded.recoveredFromBackup) {
+            skipNextSave.current = loaded.document;
+          }
+          setHistory(
+            createEditorHistory({
+              document: loaded.document,
+              selection: singleSelection(loaded.document.rootId),
+            }),
+          );
+          setStartupMode("restored");
+        } else {
+          setStartupMode("fresh");
+        }
+
+        setStartupNotice(loaded.notice);
+        if (loaded.saveError) {
+          setSaveState("error");
+          setSaveError(loaded.saveError);
+        } else {
+          setSaveState("saved");
+          setSaveError(null);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setStartupMode("fresh");
+        setStartupNotice("本地数据无法读取，原文件不会被覆盖。");
+        setSaveState("error");
+        setSaveError("无法读取本地文件，请从导出的文件或备份恢复。");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (startupMode === "loading") return;
+    if (skipNextSave.current === snapshot.document) {
+      skipNextSave.current = null;
+      return;
+    }
+
     setSaveState("saving");
+    setSaveError(null);
     const timer = window.setTimeout(() => {
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(snapshot.document));
-      } catch {
-        // Saving remains local and non-blocking even when storage is unavailable.
-      }
-      setSaveState("saved");
+      void saveNow(snapshot.document);
     }, 320);
     return () => window.clearTimeout(timer);
-  }, [snapshot.document]);
+  }, [saveNow, snapshot.document, startupMode]);
 
   useEffect(() => {
+    if (isDesktopRuntime()) {
+      let unlisten: (() => void) | undefined;
+      let active = true;
+      void import("@tauri-apps/api/window").then(
+        async ({ getCurrentWindow }) => {
+          if (!active) return;
+          const appWindow = getCurrentWindow();
+          unlisten = await appWindow.onCloseRequested(async (event) => {
+            if (startupModeRef.current === "loading") return;
+            event.preventDefault();
+            if (await saveNow()) {
+              await appWindow.destroy();
+            }
+          });
+        },
+      );
+      return () => {
+        active = false;
+        unlisten?.();
+      };
+    }
+
     const flush = () => {
       try {
-        localStorage.setItem(
-          storageKey,
-          JSON.stringify(latestDocument.current),
-        );
+        saveBrowserDocumentSynchronously(latestDocument.current);
       } catch {
-        // Closing the window must not be blocked by storage failure.
+        // A normal autosave already exposes the failure in the top bar.
       }
     };
     window.addEventListener("beforeunload", flush);
     return () => window.removeEventListener("beforeunload", flush);
-  }, []);
+  }, [saveNow]);
 
   const applyMutation = useCallback(
     (mutate: (current: EditorSnapshot) => DocumentMutation) => {
@@ -86,18 +181,14 @@ export function useMindMap() {
         const next = mutate(current.present);
         if (
           next.document === current.present.document &&
-          next.selectedId === current.present.selectedId
+          selectionEquals(next.selection, current.present.selection)
         ) {
           return current;
         }
-        const present = {
-          document: next.document,
-          selectedId: next.selectedId,
-        };
         if (next.document === current.present.document) {
-          return { ...current, present };
+          return { ...current, present: next };
         }
-        return commitEditorHistory(current, present);
+        return commitEditorHistory(current, next);
       });
     },
     [],
@@ -107,7 +198,7 @@ export function useMindMap() {
     setHistory((current) =>
       commitEditorHistory(current, {
         document,
-        selectedId: document.rootId,
+        selection: singleSelection(document.rootId),
       }),
     );
   }, []);
@@ -117,10 +208,31 @@ export function useMindMap() {
       current.present.document.nodes[selectedId]
         ? {
             ...current,
-            present: { ...current.present, selectedId },
+            present: {
+              ...current.present,
+              selection: singleSelection(selectedId),
+            },
           }
         : current,
     );
+  }, []);
+
+  const setSelection = useCallback((selection: SelectionState) => {
+    setHistory((current) => {
+      const validIds = selection.selectedIds.filter(
+        (id) => current.present.document.nodes[id],
+      );
+      const valid = createSelection(
+        validIds,
+        validIds,
+        selection.primaryId,
+      );
+      if (selectionEquals(valid, current.present.selection)) return current;
+      return {
+        ...current,
+        present: { ...current.present, selection: valid },
+      };
+    });
   }, []);
 
   const setViewport = useCallback((viewport: Viewport) => {
@@ -133,23 +245,23 @@ export function useMindMap() {
     }));
   }, []);
 
-  const undo = useCallback(() => {
-    setHistory(undoEditorHistory);
-  }, []);
-
-  const redo = useCallback(() => {
-    setHistory(redoEditorHistory);
-  }, []);
+  const undo = useCallback(() => setHistory(undoEditorHistory), []);
+  const redo = useCallback(() => setHistory(redoEditorHistory), []);
 
   return {
     snapshot,
     saveState,
+    saveError,
+    startupNotice,
+    startupMode,
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
     applyMutation,
     replaceDocument,
     selectNode,
+    setSelection,
     setViewport,
+    retrySave: saveNow,
     undo,
     redo,
   };

@@ -24,6 +24,19 @@ interface OverlayItem {
   command?: CommandDefinition;
 }
 
+export const overlayItemLimit = 12;
+
+export function moveOverlayIndex(
+  current: number,
+  delta: -1 | 1,
+  renderedCount: number,
+): number {
+  return Math.max(
+    0,
+    Math.min(Math.max(0, renderedCount - 1), current + delta),
+  );
+}
+
 export function CommandOverlay({
   mode,
   document,
@@ -64,6 +77,10 @@ export function CommandOverlay({
         meta: node.children.length ? `${node.children.length} 个子节点` : "节点",
       }));
   }, [document.nodes, mode, query]);
+  const renderedItems = useMemo(
+    () => items.slice(0, overlayItemLimit),
+    [items],
+  );
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -104,16 +121,18 @@ export function CommandOverlay({
               if (event.key === "ArrowDown") {
                 event.preventDefault();
                 setActiveIndex((index) =>
-                  Math.min(items.length - 1, index + 1),
+                  moveOverlayIndex(index, 1, renderedItems.length),
                 );
               }
               if (event.key === "ArrowUp") {
                 event.preventDefault();
-                setActiveIndex((index) => Math.max(0, index - 1));
+                setActiveIndex((index) =>
+                  moveOverlayIndex(index, -1, renderedItems.length),
+                );
               }
               if (event.key === "Enter") {
                 event.preventDefault();
-                choose(items[activeIndex]);
+                choose(renderedItems[activeIndex]);
               }
             }}
             placeholder={mode === "commands" ? "输入命令…" : "输入节点内容…"}
@@ -126,7 +145,7 @@ export function CommandOverlay({
           {items.length === 0 ? (
             <div className="command-overlay__empty">没有匹配结果</div>
           ) : (
-            items.slice(0, 12).map((item, index) => (
+            renderedItems.map((item, index) => (
               <button
                 aria-selected={activeIndex === index}
                 className={activeIndex === index ? "is-active" : ""}

@@ -11,6 +11,12 @@ export type CommandId =
   | "node.child"
   | "node.previous"
   | "node.next"
+  | "selection.extend-parent"
+  | "selection.extend-child"
+  | "selection.extend-previous"
+  | "selection.extend-next"
+  | "selection.select-all"
+  | "selection.clear"
   | "node.move-up"
   | "node.move-down"
   | "node.toggle"
@@ -108,6 +114,49 @@ export const commandRegistry: CommandDefinition[] = [
     shortcut: "ArrowDown",
     contexts: ["selection"],
     group: "节点",
+  },
+  {
+    id: "selection.extend-parent",
+    label: "向父节点扩展选择",
+    shortcut: "Shift+ArrowLeft",
+    contexts: ["selection"],
+    group: "节点",
+  },
+  {
+    id: "selection.extend-child",
+    label: "向子节点扩展选择",
+    shortcut: "Shift+ArrowRight",
+    contexts: ["selection"],
+    group: "节点",
+  },
+  {
+    id: "selection.extend-previous",
+    label: "向上扩展选择",
+    shortcut: "Shift+ArrowUp",
+    contexts: ["selection"],
+    group: "节点",
+  },
+  {
+    id: "selection.extend-next",
+    label: "向下扩展选择",
+    shortcut: "Shift+ArrowDown",
+    contexts: ["selection"],
+    group: "节点",
+  },
+  {
+    id: "selection.select-all",
+    label: "选择全部可见节点",
+    shortcut: "Meta+a",
+    contexts: ["selection"],
+    group: "编辑",
+  },
+  {
+    id: "selection.clear",
+    label: "清除选择",
+    shortcut: "Escape",
+    aliases: ["Shift+Meta+a"],
+    contexts: ["selection"],
+    group: "编辑",
   },
   {
     id: "node.move-up",
@@ -225,10 +274,21 @@ export const commandRegistry: CommandDefinition[] = [
 
 function eventShortcut(event: KeyboardEvent): string {
   const parts: string[] = [];
-  if (event.shiftKey) parts.push("Shift");
+  const commandModifier = event.metaKey || event.ctrlKey;
+  const shiftedEqual =
+    commandModifier &&
+    (event.code === "Equal" || event.key === "+");
+  if (event.shiftKey && !shiftedEqual) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
-  if (event.metaKey || event.ctrlKey) parts.push("Meta");
-  parts.push(event.key.length === 1 ? event.key.toLowerCase() : event.key);
+  if (commandModifier) parts.push("Meta");
+
+  let key = event.key;
+  if (event.shiftKey && event.code?.startsWith("Digit")) {
+    key = event.code.slice("Digit".length);
+  } else if (shiftedEqual) {
+    key = "=";
+  }
+  parts.push(key.length === 1 ? key.toLowerCase() : key);
   return parts.join("+");
 }
 

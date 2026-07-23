@@ -18,7 +18,7 @@ export function useKeyboardCommands({
 }: KeyboardCommandOptions) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (!enabled) return;
+      if (!enabled || event.defaultPrevented) return;
       const target = event.target as HTMLElement | null;
       if (
         target?.matches("input, textarea, [contenteditable='true']") ||
@@ -34,7 +34,7 @@ export function useKeyboardCommands({
         return;
       }
 
-      if (isPrintableKey(event)) {
+      if (isPrintableKey(event) && event.key !== " ") {
         event.preventDefault();
         onBeginTyping(event.key);
       }

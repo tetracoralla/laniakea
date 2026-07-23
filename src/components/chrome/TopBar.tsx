@@ -5,6 +5,8 @@ import { Icon } from "../icons/Icon";
 interface TopBarProps {
   title: string;
   saveState: SaveState;
+  saveError: string | null;
+  onRetrySave: () => void;
   onTitleChange: (title: string) => void;
   onSearch: () => void;
   onExport: () => void;
@@ -17,6 +19,8 @@ interface TopBarProps {
 export function TopBar({
   title,
   saveState,
+  saveError,
+  onRetrySave,
   onTitleChange,
   onSearch,
   onExport,
@@ -74,14 +78,33 @@ export function TopBar({
             }}
           />
         </label>
-        <span className="save-state" aria-live="polite">
-          <span
-            className={`save-state__dot ${
-              saveState === "saving" ? "is-saving" : ""
-            }`}
-          />
-          {saveState === "saving" ? "正在保存" : "已保存到本地"}
-        </span>
+        {saveState === "error" ? (
+          <button
+            aria-live="polite"
+            className="save-state save-state--error"
+            onClick={onRetrySave}
+            title={saveError ?? "保存失败"}
+            type="button"
+          >
+            <span className="save-state__dot is-error" />
+            保存失败，重试
+          </button>
+        ) : (
+          <span className="save-state" aria-live="polite">
+            <span
+              className={`save-state__dot ${
+                saveState === "saving" || saveState === "loading"
+                  ? "is-saving"
+                  : ""
+              }`}
+            />
+            {saveState === "loading"
+              ? "正在打开"
+              : saveState === "saving"
+                ? "正在保存"
+                : "已保存到本地"}
+          </span>
+        )}
       </div>
 
       <nav className="topbar__actions" aria-label="文档操作">

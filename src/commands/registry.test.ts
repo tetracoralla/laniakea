@@ -11,6 +11,7 @@ function keyboardEvent(
     altKey: Boolean(options.altKey),
     metaKey: Boolean(options.metaKey),
     ctrlKey: Boolean(options.ctrlKey),
+    code: options.code ?? "",
   } as KeyboardEvent;
 }
 
@@ -37,6 +38,34 @@ describe("command registry context isolation", () => {
     );
   });
 
+  it("matches shifted digit viewport shortcuts by physical key", () => {
+    expect(
+      findCommandForEvent(
+        keyboardEvent("!", { shiftKey: true, code: "Digit1" }),
+        "selection",
+      )?.id,
+    ).toBe("viewport.fit");
+    expect(
+      findCommandForEvent(
+        keyboardEvent("@", { shiftKey: true, code: "Digit2" }),
+        "selection",
+      )?.id,
+    ).toBe("viewport.focus");
+  });
+
+  it("matches Command-plus without treating Shift as a separate command", () => {
+    expect(
+      findCommandForEvent(
+        keyboardEvent("+", {
+          shiftKey: true,
+          metaKey: true,
+          code: "Equal",
+        }),
+        "selection",
+      )?.id,
+    ).toBe("viewport.zoom-in");
+  });
+
   it("supports both macOS delete key events", () => {
     expect(
       findCommandForEvent(keyboardEvent("Backspace"), "selection")?.id,
@@ -44,6 +73,24 @@ describe("command registry context isolation", () => {
     expect(findCommandForEvent(keyboardEvent("Delete"), "selection")?.id).toBe(
       "node.delete",
     );
+  });
+
+  it("keeps multi-selection shortcuts in selection context", () => {
+    expect(
+      findCommandForEvent(
+        keyboardEvent("ArrowDown", { shiftKey: true }),
+        "selection",
+      )?.id,
+    ).toBe("selection.extend-next");
+    expect(
+      findCommandForEvent(
+        keyboardEvent("a", { metaKey: true }),
+        "selection",
+      )?.id,
+    ).toBe("selection.select-all");
+    expect(
+      findCommandForEvent(keyboardEvent("Escape"), "selection")?.id,
+    ).toBe("selection.clear");
   });
 
   it("starts editing only for unmodified printable keys", () => {

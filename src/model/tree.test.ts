@@ -3,11 +3,15 @@ import { createSeedDocument } from "../data/seed";
 import {
   createChild,
   deleteNodePreserveChildren,
+  deleteSelectedSubtrees,
   deleteSubtree,
   indentNode,
   moveNode,
   outdentNode,
+  revealNode,
+  toggleCollapsedMany,
 } from "./tree";
+import { singleSelection } from "./selection";
 
 describe("tree mutations", () => {
   it("creates a child without mutating the previous document", () => {
@@ -18,7 +22,9 @@ describe("tree mutations", () => {
     expect(document.nodes.experience.children).toBe(originalChildren);
     expect(document.nodes.experience.children).toHaveLength(3);
     expect(result.document.nodes.experience.children).toHaveLength(4);
-    expect(result.document.nodes[result.selectedId].parentId).toBe(
+    expect(
+      result.document.nodes[result.selection.primaryId!].parentId,
+    ).toBe(
       "experience",
     );
   });
@@ -74,5 +80,43 @@ describe("tree mutations", () => {
       "path-3",
     ]);
     expect(result.document.nodes["path-2"].parentId).toBe("path");
+  });
+
+  it("deletes selected roots once and protects the root node", () => {
+    const document = createSeedDocument();
+    const result = deleteSelectedSubtrees(document, {
+      primaryId: "experience-2",
+      selectedIds: ["root", "experience", "experience-2", "path"],
+    });
+
+    expect(result.document.nodes.root).toBeDefined();
+    expect(result.document.nodes.experience).toBeUndefined();
+    expect(result.document.nodes["experience-2"]).toBeUndefined();
+    expect(result.document.nodes.path).toBeUndefined();
+    expect(result.document.nodes.scenario).toBeDefined();
+    expect(result.selection).toEqual(singleSelection("root"));
+  });
+
+  it("drops descendants that become hidden after a batch collapse", () => {
+    const document = createSeedDocument();
+    const result = toggleCollapsedMany(document, {
+      primaryId: "experience",
+      selectedIds: ["experience", "experience-2"],
+    });
+
+    expect(result.document.nodes.experience.collapsed).toBe(true);
+    expect(result.selection).toEqual(singleSelection("experience"));
+  });
+
+  it("reveals every collapsed ancestor before selecting a search result", () => {
+    const document = createSeedDocument();
+    document.nodes.experience.collapsed = true;
+    document.nodes.root.collapsed = true;
+
+    const result = revealNode(document, "experience-2");
+
+    expect(result.document.nodes.root.collapsed).toBe(false);
+    expect(result.document.nodes.experience.collapsed).toBe(false);
+    expect(result.selection).toEqual(singleSelection("experience-2"));
   });
 });

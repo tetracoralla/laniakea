@@ -18,27 +18,79 @@ export function subtreeToMarkdown(
   return lines.join("\n");
 }
 
-function cleanListText(line: string): { depth: number; text: string } | null {
+interface ParsedLine {
+  indent: number;
+  text: string;
+}
+
+function cleanListText(line: string): ParsedLine | null {
   const match = line.match(/^(\s*)(?:[-*+]|\d+\.)\s+(.+)$/);
   if (!match) return null;
-  const spaces = match[1].replace(/\t/g, "  ").length;
   return {
-    depth: Math.floor(spaces / 2),
+    indent: match[1].replace(/\t/g, "    ").length,
     text: match[2].trim(),
   };
+}
+
+function cleanIndentedText(line: string): ParsedLine | null {
+  const match = line.match(/^(\s*)(\S.*)$/);
+  if (!match) return null;
+  return {
+    indent: match[1].replace(/\t/g, "    ").length,
+    text: match[2].trim(),
+  };
+}
+
+function normalizeIndentation(
+  items: ParsedLine[],
+): Array<{ depth: number; text: string }> {
+  const levels = [items[0]?.indent ?? 0];
+  return items.map((item, index) => {
+    if (index === 0) return { depth: 0, text: item.text };
+    const exactDepth = levels.indexOf(item.indent);
+    if (exactDepth >= 0) {
+      levels.length = exactDepth + 1;
+      return { depth: exactDepth, text: item.text };
+    }
+
+    let parentDepth = -1;
+    levels.forEach((indent, depth) => {
+      if (indent < item.indent) parentDepth = depth;
+    });
+    const depth = Math.max(0, parentDepth + 1);
+    levels[depth] = item.indent;
+    levels.length = depth + 1;
+    return { depth, text: item.text };
+  });
 }
 
 export function markdownToDocument(
   markdown: string,
   title = "导入的思维",
 ): MindMapDocument {
-  const parsed = markdown
+  const lines = markdown
     .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0);
+  const listItems = lines
     .map(cleanListText)
-    .filter((item): item is { depth: number; text: string } => Boolean(item));
+    .filter((item): item is ParsedLine => Boolean(item));
+  const indentedItems =
+    listItems.length === 0
+      ? lines
+          .map(cleanIndentedText)
+          .filter((item): item is ParsedLine => Boolean(item))
+      : [];
+  const rawParsed =
+    listItems.length > 0
+      ? listItems
+      : indentedItems.length >= 2 &&
+          indentedItems.some((item) => item.indent > 0)
+        ? indentedItems
+        : [];
+  const parsed = normalizeIndentation(rawParsed);
 
   if (parsed.length === 0) {
-    throw new Error("没有找到可导入的 Markdown 列表");
+    throw new Error("没有找到可导入的 Markdown 列表或缩进文本");
   }
 
   const now = new Date().toISOString();

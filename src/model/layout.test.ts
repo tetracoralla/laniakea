@@ -55,4 +55,21 @@ describe("automatic layout", () => {
     expect(layout.visibleIds).toHaveLength(1_000);
     expect(elapsed).toBeLessThan(50);
   });
+
+  it("grows long and multiline nodes without overlapping siblings", () => {
+    const document = largeDocument(3);
+    document.nodes["node-1"].text =
+      "这是一个需要完整显示的很长节点，它应该自动换行并增高，而不是被固定高度裁掉。".repeat(
+        3,
+      );
+    document.nodes["node-2"].text = "第一行\n第二行\n第三行";
+
+    const layout = computeLayout(document);
+    const first = layout.nodes["node-1"];
+    const second = layout.nodes["node-2"];
+
+    expect(first.height).toBeGreaterThan(48);
+    expect(second.height).toBeGreaterThan(48);
+    expect(first.y + first.height).toBeLessThanOrEqual(second.y);
+  });
 });

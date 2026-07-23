@@ -6,15 +6,54 @@ import type {
 } from "../types/mindmap";
 
 const tones: BranchTone[] = ["violet", "blue", "emerald", "amber"];
-const nodeHeight = 48;
+const minimumNodeHeight = 48;
 const siblingGap = 14;
 const branchGap = 30;
 const rootX = 92;
 
-function widthFor(depth: number, text: string): number {
-  if (depth === 0) return Math.max(226, Math.min(286, text.length * 19 + 48));
-  if (depth === 1) return Math.max(150, Math.min(210, text.length * 17 + 40));
-  return Math.max(152, Math.min(230, text.length * 16 + 36));
+function textUnits(text: string): number {
+  return Array.from(text).reduce((total, character) => {
+    if (character === " ") return total + 0.32;
+    if (/[\u2e80-\u9fff\uf900-\ufaff]/u.test(character)) {
+      return total + 1;
+    }
+    return total + 0.56;
+  }, 0);
+}
+
+function sizeFor(depth: number, text: string) {
+  const fontSize = depth === 0 ? 19 : depth === 1 ? 16 : 15;
+  const horizontalPadding = depth === 0 ? 50 : depth === 1 ? 40 : 36;
+  const minimumWidth = depth === 0 ? 226 : depth === 1 ? 150 : 152;
+  const maximumWidth = depth === 0 ? 286 : depth === 1 ? 210 : 230;
+  const longestLine = Math.max(
+    1,
+    ...text.split("\n").map((line) => textUnits(line)),
+  );
+  const width = Math.max(
+    minimumWidth,
+    Math.min(
+      maximumWidth,
+      Math.ceil(longestLine * fontSize + horizontalPadding),
+    ),
+  );
+  const lineCapacity = Math.max(
+    1,
+    (width - horizontalPadding) / fontSize,
+  );
+  const lineCount = text.split("\n").reduce(
+    (total, line) =>
+      total + Math.max(1, Math.ceil(textUnits(line) / lineCapacity)),
+    0,
+  );
+  const verticalPadding = depth === 0 ? 20 : 18;
+  return {
+    width,
+    height: Math.max(
+      minimumNodeHeight,
+      Math.ceil(lineCount * fontSize * 1.35 + verticalPadding),
+    ),
+  };
 }
 
 function depthX(depth: number): number {
@@ -30,12 +69,15 @@ export function computeLayout(document: MindMapDocument): LayoutResult {
   if (!root) return { nodes: {}, visibleIds: [], width: 0, height: 0 };
 
   const subtreeHeights = new Map<string, number>();
+  const nodeSizes = new Map<string, { width: number; height: number }>();
   const measure = (id: string, depth: number): number => {
     const current = document.nodes[id];
     if (!current) return 0;
+    const size = sizeFor(depth, current.text);
+    nodeSizes.set(id, size);
     if (current.collapsed || current.children.length === 0) {
-      subtreeHeights.set(id, nodeHeight);
-      return nodeHeight;
+      subtreeHeights.set(id, size.height);
+      return size.height;
     }
     const gap = depth === 0 ? branchGap : siblingGap;
     const childrenHeight =
@@ -44,7 +86,7 @@ export function computeLayout(document: MindMapDocument): LayoutResult {
         0,
       ) +
       gap * Math.max(0, current.children.length - 1);
-    const value = Math.max(nodeHeight, childrenHeight);
+    const value = Math.max(size.height, childrenHeight);
     subtreeHeights.set(id, value);
     return value;
   };
@@ -61,17 +103,17 @@ export function computeLayout(document: MindMapDocument): LayoutResult {
   ) => {
     const current = document.nodes[id];
     if (!current) return;
-    const subtreeHeight = subtreeHeights.get(id) ?? nodeHeight;
-    const width = widthFor(depth, current.text);
-    const y = slotTop + (subtreeHeight - nodeHeight) / 2;
+    const size = nodeSizes.get(id) ?? sizeFor(depth, current.text);
+    const subtreeHeight = subtreeHeights.get(id) ?? size.height;
+    const y = slotTop + (subtreeHeight - size.height) / 2;
     const tone = depth === 0 ? "violet" : inheritedTone;
 
     result[id] = {
       id,
       x: depthX(depth),
       y,
-      width,
-      height: nodeHeight,
+      width: size.width,
+      height: size.height,
       depth,
       tone,
     };
@@ -90,7 +132,8 @@ export function computeLayout(document: MindMapDocument): LayoutResult {
         childTone,
         depth === 0 ? index : rootChildIndex,
       );
-      childTop += (subtreeHeights.get(childId) ?? nodeHeight) + gap;
+      childTop +=
+        (subtreeHeights.get(childId) ?? minimumNodeHeight) + gap;
     });
   };
 

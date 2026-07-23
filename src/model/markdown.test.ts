@@ -30,9 +30,23 @@ describe("Markdown import and export", () => {
     expect(document.nodes["imported-3"].parentId).toBe("imported-2");
   });
 
+  it("imports indented plain text with spaces or tabs", () => {
+    const document = markdownToDocument(
+      "需求分析\n    用户\n        私密需求\n\t价值",
+      "需求分析",
+    );
+
+    expect(document.nodes.root.text).toBe("需求分析");
+    expect(document.nodes.root.children).toEqual([
+      "imported-1",
+      "imported-3",
+    ]);
+    expect(document.nodes["imported-2"].parentId).toBe("imported-1");
+  });
+
   it("rejects prose that is not a list", () => {
     expect(() => markdownToDocument("没有列表")).toThrow(
-      "没有找到可导入的 Markdown 列表",
+      "没有找到可导入的 Markdown 列表或缩进文本",
     );
   });
 });

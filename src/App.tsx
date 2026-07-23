@@ -1,9 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CommandId } from "./commands/registry";
-import {
-  type OverlayMode,
-  CommandOverlay,
-} from "./components/commands/CommandOverlay";
 import {
   type CanvasHandle,
   MindMapCanvas,
@@ -11,24 +6,20 @@ import {
 import { CanvasControls } from "./components/chrome/CanvasControls";
 import { KeyboardHints } from "./components/chrome/KeyboardHints";
 import { TopBar } from "./components/chrome/TopBar";
+import {
+  type OverlayMode,
+  CommandOverlay,
+} from "./components/commands/CommandOverlay";
 import { Toast } from "./components/feedback/Toast";
-import { createBlankDocument } from "./data/seed";
+import { readDesktopRuntimeStatus } from "./desktop/runtime";
 import { useKeyboardCommands } from "./hooks/useKeyboardCommands";
 import { useMindMap } from "./hooks/useMindMap";
+import { useMindMapCommands } from "./hooks/useMindMapCommands";
 import { markdownToDocument, subtreeToMarkdown } from "./model/markdown";
 import {
-  adjacentSibling,
-  createChild,
-  createSibling,
-  deleteNodePreserveChildren,
-  deleteSubtree,
-  firstChildOf,
-  moveNode,
-  outdentNode,
-  parentOf,
-  setAllCollapsed,
   setDocumentTitle,
   setNodeText,
+  revealNode,
   toggleCollapsed,
 } from "./model/tree";
 
@@ -56,19 +47,31 @@ export function App() {
   const {
     snapshot,
     saveState,
+    saveError,
+    startupNotice,
+    startupMode,
     canUndo,
     canRedo,
     applyMutation,
     replaceDocument,
     selectNode,
+    setSelection,
     setViewport,
+    retrySave,
     undo,
     redo,
   } = useMindMap();
-  const { document: mindMap, selectedId } = snapshot;
+  const { document: mindMap, selection } = snapshot;
+  const selectedId = selection.primaryId;
+  const hasSingleSelection =
+    selection.selectedIds.length === 1 && selectedId !== null;
   const canvasRef = useRef<CanvasHandle>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const editAfterMutation = useRef(false);
+  const initialEditStarted = useRef(false);
+  const cancelledEdit = useRef<string | null>(null);
+  const mindMapRef = useRef(mindMap);
+  mindMapRef.current = mindMap;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [overlay, setOverlay] = useState<OverlayMode | null>(null);
@@ -86,6 +89,7 @@ export function App() {
       const node = mindMap.nodes[id];
       if (!node) return;
       selectNode(id);
+      cancelledEdit.current = null;
       setEditingId(id);
       setDraft(replacement ?? node.text);
     },
@@ -93,7 +97,29 @@ export function App() {
   );
 
   useEffect(() => {
-    if (!editAfterMutation.current) return;
+    if (startupMode !== "fresh" || initialEditStarted.current) return;
+    initialEditStarted.current = true;
+    beginEdit(mindMap.rootId, "");
+  }, [beginEdit, mindMap.rootId, startupMode]);
+
+  useEffect(() => {
+    if (!startupNotice) return;
+    notify({ message: startupNotice });
+  }, [notify, startupNotice]);
+
+  useEffect(() => {
+    if (startupMode === "loading") return;
+    void readDesktopRuntimeStatus().then((status) => {
+      if (status && !status.globalShortcutRegistered) {
+        notify({
+          message: `全局快捷键 ${status.globalShortcut.replace("CommandOrControl", "⌘")} 被占用，可继续从 Dock 打开`,
+        });
+      }
+    });
+  }, [notify, startupMode]);
+
+  useEffect(() => {
+    if (!editAfterMutation.current || !selectedId) return;
     const node = mindMap.nodes[selectedId];
     if (!node) return;
     editAfterMutation.current = false;
@@ -101,234 +127,72 @@ export function App() {
     setDraft(node.text === "新节点" ? "" : node.text);
   }, [mindMap.nodes, selectedId]);
 
-  const createAndEdit = useCallback(
-    (
-      mutate: Parameters<typeof applyMutation>[0],
-      feedback: string,
-    ) => {
-      editAfterMutation.current = true;
-      applyMutation(mutate);
-      notify({ message: feedback, actionLabel: "撤销", onAction: undo });
-    },
-    [applyMutation, notify, undo],
-  );
-
-  const copyMarkdown = useCallback(
-    async (rootId = selectedId) => {
-      const markdown = subtreeToMarkdown(mindMap, rootId);
-      try {
-        await navigator.clipboard.writeText(markdown);
-      } catch {
-        const textarea = document.createElement("textarea");
-        textarea.value = markdown;
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.append(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        textarea.remove();
-      }
-      notify({
-        message:
-          rootId === mindMap.rootId
-            ? "已复制整张图为 Markdown"
-            : "已复制当前分支为 Markdown",
-      });
-    },
-    [mindMap, notify, selectedId],
-  );
-
-  const executeCommand = useCallback(
-    (id: CommandId) => {
-      setEditingId(null);
-      switch (id) {
-        case "node.create-sibling":
-          createAndEdit(
-            (current) =>
-              createSibling(
-                current.document,
-                current.selectedId,
-                "below",
-              ),
-            "已创建同级节点",
-          );
-          break;
-        case "node.create-above":
-          createAndEdit(
-            (current) =>
-              createSibling(
-                current.document,
-                current.selectedId,
-                "above",
-              ),
-            "已创建上方节点",
-          );
-          break;
-        case "node.create-child":
-          createAndEdit(
-            (current) =>
-              createChild(current.document, current.selectedId),
-            "已创建子节点",
-          );
-          break;
-        case "node.outdent":
-          applyMutation((current) =>
-            outdentNode(current.document, current.selectedId),
-          );
-          break;
-        case "node.delete":
-          applyMutation((current) =>
-            deleteSubtree(current.document, current.selectedId),
-          );
-          notify({
-            message: "已删除节点",
-            actionLabel: "撤销",
-            onAction: undo,
-          });
-          break;
-        case "node.delete-preserve":
-          applyMutation((current) =>
-            deleteNodePreserveChildren(
-              current.document,
-              current.selectedId,
-            ),
-          );
-          notify({
-            message: "已删除节点并保留子节点",
-            actionLabel: "撤销",
-            onAction: undo,
-          });
-          break;
-        case "node.parent": {
-          const target = parentOf(mindMap, selectedId);
-          if (target) selectNode(target);
-          break;
-        }
-        case "node.child": {
-          const target = firstChildOf(mindMap, selectedId);
-          if (target) selectNode(target);
-          break;
-        }
-        case "node.previous": {
-          const target = adjacentSibling(mindMap, selectedId, -1);
-          if (target) selectNode(target);
-          break;
-        }
-        case "node.next": {
-          const target = adjacentSibling(mindMap, selectedId, 1);
-          if (target) selectNode(target);
-          break;
-        }
-        case "node.move-up":
-          applyMutation((current) =>
-            moveNode(current.document, current.selectedId, -1),
-          );
-          break;
-        case "node.move-down":
-          applyMutation((current) =>
-            moveNode(current.document, current.selectedId, 1),
-          );
-          break;
-        case "node.toggle":
-          applyMutation((current) =>
-            toggleCollapsed(current.document, current.selectedId),
-          );
-          break;
-        case "map.collapse-all":
-          applyMutation((current) =>
-            setAllCollapsed(
-              current.document,
-              true,
-              current.selectedId,
-            ),
-          );
-          break;
-        case "map.expand-all":
-          applyMutation((current) =>
-            setAllCollapsed(
-              current.document,
-              false,
-              current.selectedId,
-            ),
-          );
-          break;
-        case "history.undo":
-          if (canUndo) undo();
-          break;
-        case "history.redo":
-          if (canRedo) redo();
-          break;
-        case "map.copy-markdown":
-          void copyMarkdown();
-          break;
-        case "map.new": {
-          const blank = createBlankDocument();
-          replaceDocument(blank);
-          setEditingId(blank.rootId);
-          setDraft("");
-          notify({
-            message: "已新建空白思维",
-            actionLabel: "撤销",
-            onAction: undo,
-          });
-          break;
-        }
-        case "map.search":
-          setOverlay("search");
-          break;
-        case "map.command-palette":
-          setOverlay("commands");
-          break;
-        case "viewport.fit":
-          canvasRef.current?.fit();
-          break;
-        case "viewport.focus":
-          canvasRef.current?.focusSelected();
-          break;
-        case "viewport.zoom-in":
-          canvasRef.current?.zoomIn();
-          break;
-        case "viewport.zoom-out":
-          canvasRef.current?.zoomOut();
-          break;
-        case "viewport.reset":
-          canvasRef.current?.resetZoom();
-          break;
-      }
-    },
-    [
-      applyMutation,
-      canRedo,
-      canUndo,
-      copyMarkdown,
-      createAndEdit,
-      mindMap,
-      notify,
-      redo,
-      replaceDocument,
-      selectNode,
-      selectedId,
-      undo,
-    ],
-  );
-
-  useKeyboardCommands({
-    enabled: editingId === null && overlay === null,
-    onCommand: executeCommand,
-    onBeginTyping: (character) =>
-      beginEdit(selectedId, character === " " ? undefined : character),
+  const { copyMarkdown, executeCommand } = useMindMapCommands({
+    mindMap,
+    selection,
+    canUndo,
+    canRedo,
+    canvasRef,
+    editAfterMutation,
+    applyMutation,
+    replaceDocument,
+    selectNode,
+    setSelection,
+    setEditingId,
+    setDraft,
+    setOverlay,
+    notify,
+    undo,
+    redo,
   });
 
-  const commitEdit = useCallback(() => {
-    if (!editingId) return;
-    const current = mindMap.nodes[editingId];
-    const nextText = draft.trim() || "未命名节点";
-    setEditingId(null);
+  useKeyboardCommands({
+    enabled:
+      startupMode !== "loading" &&
+      editingId === null &&
+      overlay === null,
+    onCommand: executeCommand,
+    onBeginTyping: (character) => {
+      if (hasSingleSelection && selectedId) {
+        beginEdit(selectedId, character);
+      }
+    },
+  });
+
+  const commitEdit = useCallback((id: string, value: string) => {
+    if (cancelledEdit.current === id) {
+      cancelledEdit.current = null;
+      return;
+    }
+    const current = mindMapRef.current.nodes[id];
+    const nextText =
+      value.trim() ||
+      (current?.text === "输入中心主题"
+        ? "输入中心主题"
+        : "未命名节点");
+    setEditingId((editing) => (editing === id ? null : editing));
     if (!current || current.text === nextText) return;
-    applyMutation((snapshot) =>
-      setNodeText(snapshot.document, editingId, nextText),
+    applyMutation((currentSnapshot) =>
+      setNodeText(currentSnapshot.document, id, nextText),
     );
-  }, [applyMutation, draft, editingId, mindMap.nodes]);
+  }, [applyMutation]);
+
+  const cancelEdit = useCallback((id: string) => {
+    cancelledEdit.current = id;
+    setEditingId((editing) => (editing === id ? null : editing));
+  }, []);
+
+  const toggleNode = useCallback(
+    (id: string) =>
+      applyMutation((current) =>
+        toggleCollapsed(current.document, id),
+      ),
+    [applyMutation],
+  );
+
+  const editSelectedFromSpace = useCallback(() => {
+    if (hasSingleSelection && selectedId) beginEdit(selectedId);
+  }, [beginEdit, hasSingleSelection, selectedId]);
 
   const importMarkdown = async (file: File) => {
     try {
@@ -376,11 +240,13 @@ export function App() {
             setDocumentTitle(
               current.document,
               title,
-              current.selectedId,
+              current.selection,
             ),
           )
         }
         saveState={saveState}
+        saveError={saveError}
+        onRetrySave={() => void retrySave()}
         title={mindMap.title}
       />
 
@@ -388,22 +254,19 @@ export function App() {
         document={mindMap}
         draft={draft}
         editingId={editingId}
-        onBeginEdit={(id) => beginEdit(id)}
-        onCancelEdit={() => setEditingId(null)}
+        onBeginEdit={beginEdit}
+        onCancelEdit={cancelEdit}
         onCommitEdit={commitEdit}
         onDraftChange={setDraft}
-        onSelect={selectNode}
-        onToggle={(id) =>
-          applyMutation((current) =>
-            toggleCollapsed(current.document, id),
-          )
-        }
+        onSelectionChange={setSelection}
+        onSpaceTap={editSelectedFromSpace}
+        onToggle={toggleNode}
         onViewportChange={setViewport}
         ref={canvasRef}
-        selectedId={selectedId}
+        selection={selection}
       />
 
-      <KeyboardHints />
+      <KeyboardHints selectionCount={selection.selectedIds.length} />
       <CanvasControls
         onFit={() => canvasRef.current?.fit()}
         onReset={() => canvasRef.current?.resetZoom()}
@@ -427,10 +290,13 @@ export function App() {
           onClose={() => setOverlay(null)}
           onExecute={executeCommand}
           onSelectNode={(id) => {
-            selectNode(id);
-            window.setTimeout(
-              () => canvasRef.current?.focusSelected(),
-              0,
+            applyMutation((current) =>
+              revealNode(current.document, id),
+            );
+            window.requestAnimationFrame(() =>
+              window.requestAnimationFrame(() =>
+                canvasRef.current?.focusSelected(),
+              ),
             );
           }}
         />

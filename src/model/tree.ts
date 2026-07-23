@@ -1,8 +1,18 @@
-import type { MindMapDocument, MindNode } from "../types/mindmap";
+import type {
+  MindMapDocument,
+  MindNode,
+  SelectionState,
+} from "../types/mindmap";
+import {
+  createSelection,
+  normalizeSelectedRoots,
+  singleSelection,
+  visibleNodeIds,
+} from "./selection";
 
 export interface DocumentMutation {
   document: MindMapDocument;
-  selectedId: string;
+  selection: SelectionState;
 }
 
 function uid(): string {
@@ -58,13 +68,16 @@ export function setNodeText(
 ): DocumentMutation {
   const value = text.trim() || "未命名节点";
   const nodes = updateNode(document.nodes, id, { text: value });
-  return { document: withTimestamp(document, nodes), selectedId: id };
+  return {
+    document: withTimestamp(document, nodes),
+    selection: singleSelection(id),
+  };
 }
 
 export function setDocumentTitle(
   document: MindMapDocument,
   title: string,
-  selectedId: string,
+  selection: SelectionState,
 ): DocumentMutation {
   return {
     document: {
@@ -72,7 +85,7 @@ export function setDocumentTitle(
       title: title.trim() || "未命名思维",
       updatedAt: new Date().toISOString(),
     },
-    selectedId,
+    selection,
   };
 }
 
@@ -82,7 +95,9 @@ export function createChild(
   text = "新节点",
 ): DocumentMutation {
   const parent = document.nodes[parentId];
-  if (!parent) return { document, selectedId: document.rootId };
+  if (!parent) {
+    return { document, selection: singleSelection(document.rootId) };
+  }
 
   const child = createNode(text, parentId);
   let nodes = {
@@ -96,7 +111,7 @@ export function createChild(
 
   return {
     document: withTimestamp(document, nodes),
-    selectedId: child.id,
+    selection: singleSelection(child.id),
   };
 }
 
@@ -126,7 +141,7 @@ export function createSibling(
 
   return {
     document: withTimestamp(document, nodes),
-    selectedId: created.id,
+    selection: singleSelection(created.id),
   };
 }
 
@@ -135,11 +150,15 @@ export function indentNode(
   id: string,
 ): DocumentMutation {
   const current = document.nodes[id];
-  if (!current?.parentId) return { document, selectedId: id };
+  if (!current?.parentId) {
+    return { document, selection: singleSelection(id) };
+  }
 
   const parent = document.nodes[current.parentId];
   const index = parent.children.indexOf(id);
-  if (index <= 0) return { document, selectedId: id };
+  if (index <= 0) {
+    return { document, selection: singleSelection(id) };
+  }
 
   const newParentId = parent.children[index - 1];
   const newParent = document.nodes[newParentId];
@@ -152,7 +171,10 @@ export function indentNode(
   });
   nodes = updateNode(nodes, id, { parentId: newParentId });
 
-  return { document: withTimestamp(document, nodes), selectedId: id };
+  return {
+    document: withTimestamp(document, nodes),
+    selection: singleSelection(id),
+  };
 }
 
 export function outdentNode(
@@ -160,10 +182,14 @@ export function outdentNode(
   id: string,
 ): DocumentMutation {
   const current = document.nodes[id];
-  if (!current?.parentId) return { document, selectedId: id };
+  if (!current?.parentId) {
+    return { document, selection: singleSelection(id) };
+  }
 
   const parent = document.nodes[current.parentId];
-  if (!parent.parentId) return { document, selectedId: id };
+  if (!parent.parentId) {
+    return { document, selection: singleSelection(id) };
+  }
 
   const grandParent = document.nodes[parent.parentId];
   const parentIndex = grandParent.children.indexOf(parent.id);
@@ -176,7 +202,10 @@ export function outdentNode(
   nodes = updateNode(nodes, grandParent.id, { children: grandChildren });
   nodes = updateNode(nodes, id, { parentId: grandParent.id });
 
-  return { document: withTimestamp(document, nodes), selectedId: id };
+  return {
+    document: withTimestamp(document, nodes),
+    selection: singleSelection(id),
+  };
 }
 
 export function moveNode(
@@ -185,13 +214,15 @@ export function moveNode(
   direction: -1 | 1,
 ): DocumentMutation {
   const current = document.nodes[id];
-  if (!current?.parentId) return { document, selectedId: id };
+  if (!current?.parentId) {
+    return { document, selection: singleSelection(id) };
+  }
 
   const parent = document.nodes[current.parentId];
   const index = parent.children.indexOf(id);
   const destination = index + direction;
   if (destination < 0 || destination >= parent.children.length) {
-    return { document, selectedId: id };
+    return { document, selection: singleSelection(id) };
   }
 
   const children = [...parent.children];
@@ -200,7 +231,10 @@ export function moveNode(
     children[index],
   ];
   const nodes = updateNode(document.nodes, parent.id, { children });
-  return { document: withTimestamp(document, nodes), selectedId: id };
+  return {
+    document: withTimestamp(document, nodes),
+    selection: singleSelection(id),
+  };
 }
 
 function collectSubtree(document: MindMapDocument, id: string): string[] {
@@ -220,7 +254,9 @@ export function deleteSubtree(
   id: string,
 ): DocumentMutation {
   const current = document.nodes[id];
-  if (!current?.parentId) return { document, selectedId: id };
+  if (!current?.parentId) {
+    return { document, selection: singleSelection(id) };
+  }
 
   const parent = document.nodes[current.parentId];
   const removed = new Set(collectSubtree(document, id));
@@ -233,7 +269,48 @@ export function deleteSubtree(
 
   return {
     document: withTimestamp(document, nextNodes),
-    selectedId: parent.id,
+    selection: singleSelection(parent.id),
+  };
+}
+
+export function deleteSelectedSubtrees(
+  document: MindMapDocument,
+  selection: SelectionState,
+): DocumentMutation {
+  const selectedRoots = normalizeSelectedRoots(
+    document,
+    selection.selectedIds.filter((id) => id !== document.rootId),
+  );
+  if (selectedRoots.length === 0) return { document, selection };
+
+  const removed = new Set(
+    selectedRoots.flatMap((id) => collectSubtree(document, id)),
+  );
+  let nextPrimaryId = selection.primaryId;
+  while (nextPrimaryId && removed.has(nextPrimaryId)) {
+    nextPrimaryId = document.nodes[nextPrimaryId]?.parentId ?? null;
+  }
+  nextPrimaryId ??= document.rootId;
+
+  let nodes = Object.fromEntries(
+    Object.entries(document.nodes).filter(([id]) => !removed.has(id)),
+  );
+  const affectedParents = new Set(
+    selectedRoots
+      .map((id) => document.nodes[id]?.parentId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  affectedParents.forEach((parentId) => {
+    const parent = nodes[parentId];
+    if (!parent) return;
+    nodes = updateNode(nodes, parentId, {
+      children: parent.children.filter((id) => !removed.has(id)),
+    });
+  });
+
+  return {
+    document: withTimestamp(document, nodes),
+    selection: singleSelection(nextPrimaryId),
   };
 }
 
@@ -242,7 +319,9 @@ export function deleteNodePreserveChildren(
   id: string,
 ): DocumentMutation {
   const current = document.nodes[id];
-  if (!current?.parentId) return { document, selectedId: id };
+  if (!current?.parentId) {
+    return { document, selection: singleSelection(id) };
+  }
 
   const parent = document.nodes[current.parentId];
   const index = parent.children.indexOf(id);
@@ -258,7 +337,7 @@ export function deleteNodePreserveChildren(
 
   return {
     document: withTimestamp(document, nodes),
-    selectedId: parent.id,
+    selection: singleSelection(parent.id),
   };
 }
 
@@ -268,18 +347,83 @@ export function toggleCollapsed(
 ): DocumentMutation {
   const current = document.nodes[id];
   if (!current || current.children.length === 0) {
-    return { document, selectedId: id };
+    return { document, selection: singleSelection(id) };
   }
   const nodes = updateNode(document.nodes, id, {
     collapsed: !current.collapsed,
   });
-  return { document: withTimestamp(document, nodes), selectedId: id };
+  return {
+    document: withTimestamp(document, nodes),
+    selection: singleSelection(id),
+  };
+}
+
+export function revealNode(
+  document: MindMapDocument,
+  id: string,
+): DocumentMutation {
+  const target = document.nodes[id];
+  if (!target) {
+    return {
+      document,
+      selection: singleSelection(document.rootId),
+    };
+  }
+
+  const ancestors: string[] = [];
+  let parentId = target.parentId;
+  while (parentId) {
+    ancestors.push(parentId);
+    parentId = document.nodes[parentId]?.parentId ?? null;
+  }
+  const collapsedAncestors = ancestors.filter(
+    (ancestorId) => document.nodes[ancestorId]?.collapsed,
+  );
+  if (collapsedAncestors.length === 0) {
+    return { document, selection: singleSelection(id) };
+  }
+
+  let nodes = document.nodes;
+  collapsedAncestors.forEach((ancestorId) => {
+    nodes = updateNode(nodes, ancestorId, { collapsed: false });
+  });
+  return {
+    document: withTimestamp(document, nodes),
+    selection: singleSelection(id),
+  };
+}
+
+export function toggleCollapsedMany(
+  document: MindMapDocument,
+  selection: SelectionState,
+): DocumentMutation {
+  const branchIds = selection.selectedIds.filter(
+    (id) => document.nodes[id]?.children.length,
+  );
+  if (branchIds.length === 0) return { document, selection };
+
+  let nodes = document.nodes;
+  branchIds.forEach((id) => {
+    nodes = updateNode(nodes, id, {
+      collapsed: !nodes[id].collapsed,
+    });
+  });
+  const nextDocument = withTimestamp(document, nodes);
+  const visible = visibleNodeIds(nextDocument);
+  return {
+    document: nextDocument,
+    selection: createSelection(
+      selection.selectedIds,
+      visible,
+      selection.primaryId,
+    ),
+  };
 }
 
 export function setAllCollapsed(
   document: MindMapDocument,
   collapsed: boolean,
-  selectedId: string,
+  selection: SelectionState,
 ): DocumentMutation {
   const now = new Date().toISOString();
   const nodes = Object.fromEntries(
@@ -298,7 +442,16 @@ export function setAllCollapsed(
       },
     ]),
   );
-  return { document: withTimestamp(document, nodes), selectedId };
+  const nextDocument = withTimestamp(document, nodes);
+  const visible = visibleNodeIds(nextDocument);
+  return {
+    document: nextDocument,
+    selection: createSelection(
+      selection.selectedIds,
+      visible,
+      selection.primaryId,
+    ),
+  };
 }
 
 export function parentOf(
