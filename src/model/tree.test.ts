@@ -1,14 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
 import {
+  adjacentSibling,
+  attachSubtree,
   createChild,
+  detachSubtree,
   deleteNodePreserveChildren,
   deleteSelectedSubtrees,
   deleteSubtree,
   indentNode,
   moveNode,
   outdentNode,
+  pasteSubtrees,
   revealNode,
+  setNodeText,
   toggleCollapsedMany,
 } from "./tree";
 import { singleSelection } from "./selection";
@@ -27,6 +32,35 @@ describe("tree mutations", () => {
     ).toBe(
       "experience",
     );
+  });
+
+  it("uses a caller-provided id so editing can start in the creation event", () => {
+    const document = createSeedDocument();
+    const result = createChild(
+      document,
+      "experience",
+      "新节点",
+      "node-created-before-edit",
+    );
+
+    expect(result.selection.primaryId).toBe("node-created-before-edit");
+    expect(result.document.nodes["node-created-before-edit"].text).toBe(
+      "新节点",
+    );
+  });
+
+  it("preserves intentional empty node content", () => {
+    const document = createSeedDocument();
+    const created = createChild(document, "root");
+    const createdId = created.selection.primaryId!;
+    expect(created.document.nodes[createdId].text).toBe("");
+
+    const cleared = setNodeText(
+      created.document,
+      createdId,
+      "   ",
+    );
+    expect(cleared.document.nodes[createdId].text).toBe("");
   });
 
   it("indents under the previous sibling and can outdent again", () => {
@@ -70,6 +104,61 @@ describe("tree mutations", () => {
     expect(deleteSubtree(document, "root").document).toBe(document);
   });
 
+  it("detaches a complete subtree and attaches it beneath another node", () => {
+    const document = createSeedDocument();
+    const detached = detachSubtree(document, "experience", {
+      x: 740,
+      y: 260,
+    });
+
+    expect(detached.document.nodes.experience.parentId).toBeNull();
+    expect(detached.document.nodes.root.children).not.toContain("experience");
+    expect(detached.document.floatingRoots).toEqual([
+      { id: "experience", x: 740, y: 260 },
+    ]);
+    expect(detached.document.nodes["experience-2"].parentId).toBe(
+      "experience",
+    );
+
+    const attached = attachSubtree(
+      detached.document,
+      "experience",
+      "path",
+    );
+    expect(attached.document.floatingRoots).toEqual([]);
+    expect(attached.document.nodes.experience.parentId).toBe("path");
+    expect(attached.document.nodes.path.children).toContain("experience");
+  });
+
+  it("does not allow attaching a branch beneath its own descendant", () => {
+    const document = createSeedDocument();
+    const detached = detachSubtree(document, "experience", {
+      x: 740,
+      y: 260,
+    });
+
+    expect(
+      attachSubtree(
+        detached.document,
+        "experience",
+        "experience-2",
+      ).document,
+    ).toBe(detached.document);
+  });
+
+  it("deletes a floating branch without deleting the main root", () => {
+    const document = detachSubtree(
+      createSeedDocument(),
+      "boundary",
+      { x: 760, y: 280 },
+    ).document;
+    const result = deleteSubtree(document, "boundary");
+
+    expect(result.document.nodes.boundary).toBeUndefined();
+    expect(result.document.floatingRoots).toEqual([]);
+    expect(result.document.nodes.root).toBeDefined();
+  });
+
   it("reorders siblings without changing their parent", () => {
     const document = createSeedDocument();
     const result = moveNode(document, "path-2", -1);
@@ -80,6 +169,106 @@ describe("tree mutations", () => {
       "path-3",
     ]);
     expect(result.document.nodes["path-2"].parentId).toBe("path");
+  });
+
+  it("navigates between the main root and floating roots", () => {
+    const withFirstFloating = detachSubtree(
+      createSeedDocument(),
+      "experience",
+      { x: 740, y: 260 },
+    ).document;
+    const document = detachSubtree(
+      withFirstFloating,
+      "path",
+      { x: 760, y: 520 },
+    ).document;
+
+    expect(adjacentSibling(document, "root", 1)).toBe("experience");
+    expect(adjacentSibling(document, "experience", -1)).toBe("root");
+    expect(adjacentSibling(document, "experience", 1)).toBe("path");
+    expect(adjacentSibling(document, "path", 1)).toBeNull();
+  });
+
+  it("reorders floating roots with the same keyboard command as siblings", () => {
+    const withFirstFloating = detachSubtree(
+      createSeedDocument(),
+      "experience",
+      { x: 740, y: 260 },
+    ).document;
+    const document = detachSubtree(
+      withFirstFloating,
+      "path",
+      { x: 760, y: 520 },
+    ).document;
+    const result = moveNode(document, "path", -1);
+
+    expect(result.document.floatingRoots.map(({ id }) => id)).toEqual([
+      "path",
+      "experience",
+    ]);
+    expect(result.selection).toEqual(singleSelection("path"));
+  });
+
+  it("pastes independent copies of complete subtrees", () => {
+    const document = createSeedDocument();
+    const sourceChildren = [...document.nodes.experience.children];
+    const result = pasteSubtrees(
+      document,
+      "path-1",
+      document,
+      ["experience"],
+    );
+    const pastedId = result.selection.primaryId!;
+    const pasted = result.document.nodes[pastedId];
+
+    expect(pastedId).not.toBe("experience");
+    expect(pasted.text).toBe("核心体验");
+    expect(pasted.parentId).toBe("path-1");
+    expect(pasted.children).toHaveLength(sourceChildren.length);
+    expect(pasted.children).not.toEqual(sourceChildren);
+    expect(
+      pasted.children.map((id) => result.document.nodes[id].text),
+    ).toEqual(sourceChildren.map((id) => document.nodes[id].text));
+    expect(document.nodes["path-1"].children).toEqual([]);
+    expect(result.document.nodes["path-1"].children).toContain(pastedId);
+  });
+
+  it("keeps every pasted node unique even when the id source collides", () => {
+    vi.stubGlobal("crypto", undefined);
+    const now = vi.spyOn(Date, "now").mockReturnValue(123);
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.25);
+    try {
+      const document = createSeedDocument();
+      const sourceIds = [
+        "experience",
+        ...document.nodes.experience.children,
+      ];
+      const beforeCount = Object.keys(document.nodes).length;
+
+      const result = pasteSubtrees(
+        document,
+        "path-1",
+        document,
+        ["experience"],
+      );
+      const pastedRootId = result.selection.primaryId!;
+      const pastedIds = [
+        pastedRootId,
+        ...result.document.nodes[pastedRootId].children,
+      ];
+
+      expect(new Set(pastedIds).size).toBe(sourceIds.length);
+      expect(Object.keys(result.document.nodes)).toHaveLength(
+        beforeCount + sourceIds.length,
+      );
+      expect(result.document.nodes["path-1"].children).toEqual([
+        pastedRootId,
+      ]);
+    } finally {
+      now.mockRestore();
+      random.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("deletes selected roots once and protects the root node", () => {

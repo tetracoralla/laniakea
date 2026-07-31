@@ -5,24 +5,39 @@ import {
   useImperativeHandle,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { useCanvasGestures } from "../../hooks/useCanvasGestures";
-import { computeLayout } from "../../model/layout";
+import { useNodeDrag } from "../../hooks/useNodeDrag";
+import {
+  draftForNode,
+  nodePlaceholder,
+  nodeIdsRequiredInDom,
+} from "../../model/canvasRender";
+import {
+  applyDraftWidth,
+  computeLayout,
+  shareStableLayout,
+  sizeForNode,
+} from "../../model/layout";
 import {
   singleSelection,
   toggleSelectedNode,
 } from "../../model/selection";
 import type {
+  LayoutResult,
   MindMapDocument,
   SelectionState,
   Viewport,
 } from "../../types/mindmap";
+import { visibleLayoutNodeIds } from "../../model/viewportCulling";
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
 import { SelectionMarquee } from "./SelectionMarquee";
 
 export interface CanvasHandle {
   fit: () => void;
+  focusCanvas: () => void;
   focusSelected: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
@@ -38,9 +53,15 @@ interface MindMapCanvasProps {
   onBeginEdit: (id: string) => void;
   onSpaceTap: () => void;
   onDraftChange: (value: string) => void;
+  onPasteStructured: (id: string, value: string) => boolean;
   onCommitEdit: (id: string, value: string) => void;
   onCancelEdit: (id: string) => void;
   onToggle: (id: string) => void;
+  onAttachNode: (id: string, parentId: string) => void;
+  onDetachNode: (
+    id: string,
+    position: { x: number; y: number },
+  ) => void;
   onViewportChange: (viewport: Viewport) => void;
 }
 
@@ -49,14 +70,6 @@ const maxZoom = 1.8;
 
 function clampZoom(value: number): number {
   return Math.min(maxZoom, Math.max(minZoom, value));
-}
-
-export function draftForNode(
-  nodeId: string,
-  editingId: string | null,
-  draft: string,
-): string {
-  return nodeId === editingId ? draft : "";
 }
 
 export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
@@ -70,44 +83,133 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onBeginEdit,
       onSpaceTap,
       onDraftChange,
+      onPasteStructured,
       onCommitEdit,
       onCancelEdit,
       onToggle,
+      onAttachNode,
+      onDetachNode,
       onViewportChange,
     },
     ref,
   ) {
     const containerRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+    const dragPreviewRef = useRef<HTMLDivElement>(null);
     const persistTimer = useRef<number | null>(null);
+    const viewportFrame = useRef<number | null>(null);
     const liveViewport = useRef(document.viewport);
-    const layout = useMemo(
-      () => computeLayout(document),
-      [document.nodes, document.rootId],
+    const previousLayoutRef = useRef<LayoutResult | null>(null);
+    const draftHeightLayoutRef = useRef<{
+      base: LayoutResult;
+      editingId: string;
+      height: number;
+      layout: LayoutResult;
+    } | null>(null);
+    const activeSelectionRef = useRef(selection);
+    const visibleIdsRef = useRef<readonly string[]>([]);
+    const [containerSize, setContainerSize] = useState(() => ({
+      width: Math.max(1, window.innerWidth),
+      height: Math.max(1, window.innerHeight),
+    }));
+    const [renderViewportState, setRenderViewportState] = useState(
+      document.viewport,
     );
+    const documentLayout = useMemo(
+      () => {
+        const next = shareStableLayout(
+          previousLayoutRef.current,
+          computeLayout(document),
+        );
+        previousLayoutRef.current = next;
+        return next;
+      },
+      [document.floatingRoots, document.nodes, document.rootId],
+    );
+    const editingLayout = editingId
+      ? documentLayout.nodes[editingId]
+      : undefined;
+    const draftSizingText =
+      editingLayout && draft === ""
+        ? (nodePlaceholder(editingLayout) ?? "")
+        : draft;
+    const draftSize = editingLayout
+      ? sizeForNode(
+          editingLayout.depth,
+          draftSizingText,
+          editingLayout.rootKind,
+        )
+      : null;
+    let heightAwareLayout = documentLayout;
+    if (
+      editingId &&
+      editingLayout &&
+      draftSize &&
+      draftSize.height !== editingLayout.height
+    ) {
+      const cached = draftHeightLayoutRef.current;
+      if (
+        !cached ||
+        cached.base !== documentLayout ||
+        cached.editingId !== editingId ||
+        cached.height !== draftSize.height
+      ) {
+        draftHeightLayoutRef.current = {
+          base: documentLayout,
+          editingId,
+          height: draftSize.height,
+          layout: computeLayout(document, {
+            id: editingId,
+            text: draftSizingText,
+          }),
+        };
+      }
+      heightAwareLayout =
+        draftHeightLayoutRef.current?.layout ?? documentLayout;
+    } else {
+      draftHeightLayoutRef.current = null;
+    }
+    const layout = useMemo(
+      () =>
+        applyDraftWidth(
+          heightAwareLayout,
+          document,
+          editingId,
+          draftSizingText,
+        ),
+      [document, draftSizingText, editingId, heightAwareLayout],
+    );
+    visibleIdsRef.current = layout.visibleIds;
     const viewport = document.viewport;
 
-    const renderViewport = (next: Viewport) => {
+    const renderViewport = useCallback((next: Viewport) => {
       liveViewport.current = next;
       if (contentRef.current) {
         contentRef.current.style.transform = `translate3d(${next.x}px, ${next.y}px, 0) scale(${next.zoom})`;
       }
-    };
+      if (viewportFrame.current === null) {
+        viewportFrame.current = window.requestAnimationFrame(() => {
+          viewportFrame.current = null;
+          setRenderViewportState(liveViewport.current);
+        });
+      }
+    }, []);
 
-    const scheduleViewportCommit = (next: Viewport) => {
+    const scheduleViewportCommit = useCallback((next: Viewport) => {
       renderViewport(next);
       if (persistTimer.current) window.clearTimeout(persistTimer.current);
       persistTimer.current = window.setTimeout(() => {
         onViewportChange(liveViewport.current);
         persistTimer.current = null;
       }, 120);
-    };
+    }, [onViewportChange, renderViewport]);
 
     const {
       activeSelection,
       marqueeRect,
       selecting,
       className,
+      panModifierHeld,
       bindings,
     } = useCanvasGestures({
       containerRef,
@@ -120,27 +222,63 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onSpaceTap,
       onViewportChange,
     });
+    activeSelectionRef.current = activeSelection;
+    const {
+      beginNodeDrag,
+      bindings: nodeDragBindings,
+      draggingId,
+      dropTargetId,
+    } = useNodeDrag({
+      containerRef,
+      previewRef: dragPreviewRef,
+      panModifierHeld,
+      document,
+      layout,
+      editingId,
+      liveViewport,
+      onAttach: onAttachNode,
+      onDetach: onDetachNode,
+    });
     const selectedIdSet = useMemo(
       () => new Set(activeSelection.selectedIds),
       [activeSelection.selectedIds],
+    );
+    const pinnedIds = useMemo(() => {
+      return nodeIdsRequiredInDom(
+        activeSelection.primaryId,
+        editingId,
+        draggingId,
+        dropTargetId,
+      );
+    }, [
+      activeSelection.primaryId,
+      draggingId,
+      dropTargetId,
+      editingId,
+    ]);
+    const renderedIds = useMemo(
+      () =>
+        visibleLayoutNodeIds(
+          layout,
+          renderViewportState,
+          containerSize,
+          pinnedIds,
+        ),
+      [containerSize, layout, pinnedIds, renderViewportState],
     );
     const handleNodeSelect = useCallback(
       (id: string, additive: boolean) => {
         onSelectionChange(
           additive
             ? toggleSelectedNode(
-                selection,
+                activeSelectionRef.current,
                 id,
-                layout.visibleIds,
+                visibleIdsRef.current,
               )
             : singleSelection(id),
         );
       },
-      [
-        layout.visibleIds,
-        onSelectionChange,
-        selection,
-      ],
+      [onSelectionChange],
     );
 
     const zoomAtCenter = (nextZoom: number) => {
@@ -200,6 +338,8 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       ref,
       () => ({
         fit,
+        focusCanvas: () =>
+          containerRef.current?.focus({ preventScroll: true }),
         focusSelected,
         zoomIn: () => zoomAtCenter(viewport.zoom + 0.1),
         zoomOut: () => zoomAtCenter(viewport.zoom - 0.1),
@@ -215,11 +355,30 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
 
     useEffect(() => {
       renderViewport(viewport);
-    }, [viewport.x, viewport.y, viewport.zoom]);
+    }, [renderViewport, viewport]);
+
+    useEffect(() => {
+      const container = containerRef.current;
+      if (!container) return;
+      const updateSize = () => {
+        const bounds = container.getBoundingClientRect();
+        setContainerSize({
+          width: bounds.width,
+          height: bounds.height,
+        });
+      };
+      updateSize();
+      const observer = new ResizeObserver(updateSize);
+      observer.observe(container);
+      return () => observer.disconnect();
+    }, []);
 
     useEffect(
       () => () => {
         if (persistTimer.current) window.clearTimeout(persistTimer.current);
+        if (viewportFrame.current !== null) {
+          window.cancelAnimationFrame(viewportFrame.current);
+        }
       },
       [],
     );
@@ -258,7 +417,23 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       <div
         aria-label="思维导图画布"
         className={className}
-        {...bindings}
+        onClickCapture={(event) => {
+          nodeDragBindings.onClickCapture(event);
+          if (!event.defaultPrevented) bindings.onClickCapture(event);
+        }}
+        onPointerCancel={(event) => {
+          nodeDragBindings.onPointerCancel(event);
+          bindings.onPointerCancel(event);
+        }}
+        onPointerDown={bindings.onPointerDown}
+        onPointerMove={(event) => {
+          nodeDragBindings.onPointerMove(event);
+          bindings.onPointerMove(event);
+        }}
+        onPointerUp={(event) => {
+          nodeDragBindings.onPointerUp(event);
+          bindings.onPointerUp(event);
+        }}
         onWheel={(event) => {
           event.preventDefault();
           if (event.metaKey || event.ctrlKey) {
@@ -299,13 +474,19 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
             transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.zoom})`,
           }}
         >
-          <Connectors document={document} layout={layout} />
-          {layout.visibleIds.map((id) => {
+          <Connectors
+            document={document}
+            layout={layout}
+            renderedIds={renderedIds}
+          />
+          {renderedIds.map((id) => {
             const node = document.nodes[id];
             const selected = selectedIdSet.has(id);
             return (
               <MindMapNode
                 draft={draftForNode(id, editingId, draft)}
+                dragging={draggingId === id}
+                dropTarget={dropTargetId === id}
                 editing={editingId === id}
                 key={id}
                 layout={layout.nodes[id]}
@@ -314,6 +495,8 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
                 onCancelEdit={onCancelEdit}
                 onCommitEdit={onCommitEdit}
                 onDraftChange={onDraftChange}
+                onDragPointerDown={beginNodeDrag}
+                onPasteStructured={onPasteStructured}
                 onSelect={handleNodeSelect}
                 onToggle={onToggle}
                 primary={activeSelection.primaryId === id}
@@ -321,6 +504,19 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
               />
             );
           })}
+          {draggingId && layout.nodes[draggingId] && (
+            <div
+              aria-hidden="true"
+              className="node-drag-preview"
+              ref={dragPreviewRef}
+              style={{
+                height: layout.nodes[draggingId].height,
+                width: layout.nodes[draggingId].width,
+              }}
+            >
+              {document.nodes[draggingId]?.text}
+            </div>
+          )}
         </div>
         {marqueeRect && <SelectionMarquee rect={marqueeRect} />}
         <div aria-live="polite" className="sr-only">

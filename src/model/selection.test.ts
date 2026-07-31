@@ -64,4 +64,19 @@ describe("multi-selection model", () => {
     expect(visibleNodeIds(document)).toContain("experience");
     expect(visibleNodeIds(document)).not.toContain("experience-2");
   });
+
+  it("includes detached branches in visible document order", () => {
+    const document = createSeedDocument();
+    document.nodes.root.children = document.nodes.root.children.filter(
+      (id) => id !== "experience",
+    );
+    document.nodes.experience.parentId = null;
+    document.floatingRoots = [{ id: "experience", x: 700, y: 160 }];
+
+    const visible = visibleNodeIds(document);
+    expect(visible.indexOf("experience")).toBeGreaterThan(
+      visible.indexOf("boundary-3"),
+    );
+    expect(visible).toContain("experience-2");
+  });
 });

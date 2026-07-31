@@ -33,9 +33,7 @@ describe("atomic editor history", () => {
     history = undoEditorHistory(history);
     expect(
       history.present.document.nodes[created.selection.primaryId!].text,
-    ).toBe(
-      "新节点",
-    );
+    ).toBe("");
 
     history = undoEditorHistory(history);
     expect(

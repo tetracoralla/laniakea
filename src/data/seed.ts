@@ -62,6 +62,7 @@ export function createSeedDocument(): MindMapDocument {
     title: "思维导图工具",
     rootId: "root",
     nodes,
+    floatingRoots: [],
     viewport: { x: 96, y: -24, zoom: 1 },
     updatedAt: stamp,
   };
@@ -76,7 +77,7 @@ export function createBlankDocument(): MindMapDocument {
     nodes: {
       root: {
         id: "root",
-        text: "输入中心主题",
+        text: "",
         parentId: null,
         children: [],
         collapsed: false,
@@ -84,6 +85,7 @@ export function createBlankDocument(): MindMapDocument {
         updatedAt: now,
       },
     },
+    floatingRoots: [],
     viewport: { x: 96, y: 0, zoom: 1 },
     updatedAt: now,
   };

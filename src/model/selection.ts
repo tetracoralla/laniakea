@@ -2,6 +2,7 @@ import type {
   MindMapDocument,
   SelectionState,
 } from "../types/mindmap";
+import { topLevelRootIds } from "./document";
 
 export function emptySelection(): SelectionState {
   return { primaryId: null, selectedIds: [] };
@@ -72,7 +73,7 @@ export function visibleNodeIds(document: MindMapDocument): string[] {
     result.push(id);
     if (!node.collapsed) node.children.forEach(visit);
   };
-  visit(document.rootId);
+  topLevelRootIds(document).forEach(visit);
   return result;
 }
 

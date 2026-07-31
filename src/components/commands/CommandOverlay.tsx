@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   commandRegistry,
   type CommandDefinition,
@@ -6,6 +12,7 @@ import {
 } from "../../commands/registry";
 import type { MindMapDocument } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
+import { trapDialogTab } from "../overlays/focus";
 
 export type OverlayMode = "commands" | "search";
 
@@ -47,6 +54,8 @@ export function CommandOverlay({
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const listId = useId();
 
   const items = useMemo<OverlayItem[]>(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -106,11 +115,19 @@ export function CommandOverlay({
         aria-label={mode === "commands" ? "命令面板" : "搜索节点"}
         aria-modal="true"
         className="command-overlay"
+        onKeyDown={(event) => trapDialogTab(event, dialogRef)}
+        ref={dialogRef}
         role="dialog"
       >
         <div className="command-overlay__search">
           <Icon name={mode === "commands" ? "command" : "search"} />
           <input
+            aria-activedescendant={
+              renderedItems[activeIndex]
+                ? `${listId}-option-${activeIndex}`
+                : undefined
+            }
+            aria-controls={listId}
             aria-label={mode === "commands" ? "搜索命令" : "搜索节点"}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
@@ -141,7 +158,11 @@ export function CommandOverlay({
           />
           <kbd>Esc</kbd>
         </div>
-        <div className="command-overlay__list" role="listbox">
+        <div
+          className="command-overlay__list"
+          id={listId}
+          role="listbox"
+        >
           {items.length === 0 ? (
             <div className="command-overlay__empty">没有匹配结果</div>
           ) : (
@@ -149,6 +170,7 @@ export function CommandOverlay({
               <button
                 aria-selected={activeIndex === index}
                 className={activeIndex === index ? "is-active" : ""}
+                id={`${listId}-option-${index}`}
                 key={item.id}
                 onClick={() => choose(item)}
                 onPointerMove={() => setActiveIndex(index)}

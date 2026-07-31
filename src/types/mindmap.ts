@@ -16,11 +16,18 @@ export interface Viewport {
   zoom: number;
 }
 
+export interface FloatingRoot {
+  id: string;
+  x: number;
+  y: number;
+}
+
 export interface MindMapDocument {
   formatVersion: 1;
   title: string;
   rootId: string;
   nodes: Record<string, MindNode>;
+  floatingRoots: FloatingRoot[];
   viewport: Viewport;
   updatedAt: string;
 }
@@ -43,6 +50,7 @@ export interface LayoutNode {
   height: number;
   depth: number;
   tone: BranchTone;
+  rootKind: "main" | "floating" | null;
 }
 
 export interface LayoutResult {

@@ -17,6 +17,9 @@ export type CommandId =
   | "selection.extend-next"
   | "selection.select-all"
   | "selection.clear"
+  | "node.copy"
+  | "node.cut"
+  | "node.paste"
   | "node.move-up"
   | "node.move-down"
   | "node.toggle"
@@ -26,6 +29,9 @@ export type CommandId =
   | "history.redo"
   | "map.copy-markdown"
   | "map.new"
+  | "map.open"
+  | "map.save"
+  | "map.save-as"
   | "map.search"
   | "map.command-palette"
   | "viewport.fit"
@@ -84,6 +90,7 @@ export const commandRegistry: CommandDefinition[] = [
     id: "node.delete-preserve",
     label: "仅删除当前节点",
     shortcut: "Alt+Backspace",
+    aliases: ["Alt+Delete"],
     contexts: ["selection"],
     group: "节点",
   },
@@ -159,6 +166,27 @@ export const commandRegistry: CommandDefinition[] = [
     group: "编辑",
   },
   {
+    id: "node.copy",
+    label: "复制选中节点",
+    shortcut: "Meta+c",
+    contexts: ["selection"],
+    group: "编辑",
+  },
+  {
+    id: "node.cut",
+    label: "剪切选中节点",
+    shortcut: "Meta+x",
+    contexts: ["selection"],
+    group: "编辑",
+  },
+  {
+    id: "node.paste",
+    label: "粘贴为子节点",
+    shortcut: "Meta+v",
+    contexts: ["selection"],
+    group: "编辑",
+  },
+  {
     id: "node.move-up",
     label: "节点向上移动",
     shortcut: "Meta+ArrowUp",
@@ -218,6 +246,27 @@ export const commandRegistry: CommandDefinition[] = [
     id: "map.new",
     label: "新建思维导图",
     shortcut: "Meta+n",
+    contexts: ["selection", "global"],
+    group: "文件",
+  },
+  {
+    id: "map.open",
+    label: "打开文件",
+    shortcut: "Meta+o",
+    contexts: ["selection", "global"],
+    group: "文件",
+  },
+  {
+    id: "map.save",
+    label: "立即保存",
+    shortcut: "Meta+s",
+    contexts: ["selection", "global"],
+    group: "文件",
+  },
+  {
+    id: "map.save-as",
+    label: "另存为 Markdown",
+    shortcut: "Shift+Meta+s",
     contexts: ["selection", "global"],
     group: "文件",
   },

@@ -16,6 +16,7 @@ const layout: LayoutResult = {
       height: 40,
       depth: 1,
       tone: "violet",
+      rootKind: null,
     },
     b: {
       id: "b",
@@ -25,6 +26,7 @@ const layout: LayoutResult = {
       height: 40,
       depth: 1,
       tone: "blue",
+      rootKind: null,
     },
   },
   visibleIds: ["a", "b"],

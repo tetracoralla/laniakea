@@ -1,100 +1,153 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   type CanvasHandle,
   MindMapCanvas,
 } from "./components/canvas/MindMapCanvas";
 import { CanvasControls } from "./components/chrome/CanvasControls";
-import { KeyboardHints } from "./components/chrome/KeyboardHints";
 import { TopBar } from "./components/chrome/TopBar";
 import {
   type OverlayMode,
   CommandOverlay,
 } from "./components/commands/CommandOverlay";
-import { Toast } from "./components/feedback/Toast";
-import { readDesktopRuntimeStatus } from "./desktop/runtime";
+import { StatusBar } from "./components/feedback/StatusBar";
+import { restoreFocus } from "./components/overlays/focus";
+import { ShortcutSettings } from "./components/settings/ShortcutSettings";
+import {
+  readDesktopRuntimeStatus,
+  updateDesktopGlobalShortcut,
+  type DesktopRuntimeStatus,
+} from "./desktop/runtime";
+import { displayGlobalShortcut } from "./desktop/shortcut";
+import { useAppNotice } from "./hooks/useAppNotice";
+import { useDocumentWorkflow } from "./hooks/useDocumentWorkflow";
+import { useEditorSession } from "./hooks/useEditorSession";
 import { useKeyboardCommands } from "./hooks/useKeyboardCommands";
 import { useMindMap } from "./hooks/useMindMap";
 import { useMindMapCommands } from "./hooks/useMindMapCommands";
-import { markdownToDocument, subtreeToMarkdown } from "./model/markdown";
 import {
   setDocumentTitle,
-  setNodeText,
   revealNode,
-  toggleCollapsed,
 } from "./model/tree";
 
-interface ToastState {
-  message: string;
-  actionLabel?: string;
-  onAction?: () => void;
-}
-
-function downloadText(filename: string, content: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
-function safeFilename(value: string): string {
-  return value.trim().replace(/[\\/:*?"<>|]+/g, "-") || "未命名思维";
-}
-
 export function App() {
+  const prepareForLifecycleSave = useCallback(() => {
+    flushSync(() => {
+      const activeElement = globalThis.document.activeElement;
+      if (activeElement instanceof HTMLElement) activeElement.blur();
+    });
+  }, []);
   const {
     snapshot,
+    documentPath,
+    sourceDocumentPath,
+    documentSessionId,
     saveState,
     saveError,
+    saveWarning,
     startupNotice,
     startupMode,
+    recentDocuments,
     canUndo,
     canRedo,
     applyMutation,
+    isDocumentSessionCurrent,
+    newDocument,
+    openDocument,
+    moveRecentDocument,
+    removeRecentDocument,
     replaceDocument,
+    saveDocumentAs,
     selectNode,
     setSelection,
     setViewport,
     retrySave,
+    saveBeforeSwitch,
     undo,
     redo,
-  } = useMindMap();
+  } = useMindMap({ prepareForLifecycleSave });
   const { document: mindMap, selection } = snapshot;
   const selectedId = selection.primaryId;
   const hasSingleSelection =
     selection.selectedIds.length === 1 && selectedId !== null;
   const canvasRef = useRef<CanvasHandle>(null);
-  const importInputRef = useRef<HTMLInputElement>(null);
-  const editAfterMutation = useRef(false);
+  const overlayReturnFocusRef = useRef<HTMLElement | null>(null);
+  const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
   const initialEditStarted = useRef(false);
-  const cancelledEdit = useRef<string | null>(null);
-  const mindMapRef = useRef(mindMap);
-  mindMapRef.current = mindMap;
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
   const [overlay, setOverlay] = useState<OverlayMode | null>(null);
-  const [toast, setToast] = useState<ToastState | null>(null);
-
-  const notify = useCallback((next: ToastState) => {
-    setToast(next);
-    window.setTimeout(() => {
-      setToast((current) => (current === next ? null : current));
-    }, 4200);
+  const [shortcutSettingsOpen, setShortcutSettingsOpen] =
+    useState(false);
+  const [desktopRuntimeStatus, setDesktopRuntimeStatus] =
+    useState<DesktopRuntimeStatus | null>(null);
+  const {
+    announcement,
+    notify,
+    dismiss: dismissAnnouncement,
+    pause: pauseAnnouncement,
+    resume: resumeAnnouncement,
+  } = useAppNotice();
+  const {
+    editingId,
+    draft,
+    setEditingId,
+    setDraft,
+    beginEdit,
+    beginBlankDocument,
+    finishDocumentSwitch,
+    commitEdit,
+    cancelEdit,
+    toggleNode,
+    detachNodeToCanvas,
+    attachNodeToParent,
+    editSelectedFromSpace,
+    pasteStructuredIntoBlankRoot,
+  } = useEditorSession({
+    document: mindMap,
+    selection,
+    canvasRef,
+    applyMutation,
+    selectNode,
+    notify,
+    undo,
+  });
+  const openOverlay = useCallback((
+    mode: OverlayMode,
+    returnFocus?: HTMLElement | null,
+  ) => {
+    const active = document.activeElement;
+    overlayReturnFocusRef.current =
+      returnFocus ??
+      (active instanceof HTMLElement &&
+      active !== document.body
+        ? active
+        : null);
+    setOverlay(mode);
   }, []);
 
-  const beginEdit = useCallback(
-    (id: string, replacement?: string) => {
-      const node = mindMap.nodes[id];
-      if (!node) return;
-      selectNode(id);
-      cancelledEdit.current = null;
-      setEditingId(id);
-      setDraft(replacement ?? node.text);
-    },
-    [mindMap.nodes, selectNode],
-  );
+  const closeOverlay = useCallback(() => {
+    const returnFocus = overlayReturnFocusRef.current;
+    overlayReturnFocusRef.current = null;
+    setOverlay(null);
+    restoreFocus(
+      returnFocus,
+      () => canvasRef.current?.focusCanvas(),
+    );
+  }, []);
+
+  const openShortcutSettings = useCallback((returnFocus: HTMLElement) => {
+    settingsReturnFocusRef.current = returnFocus;
+    setShortcutSettingsOpen(true);
+  }, []);
+
+  const closeShortcutSettings = useCallback(() => {
+    const returnFocus = settingsReturnFocusRef.current;
+    settingsReturnFocusRef.current = null;
+    setShortcutSettingsOpen(false);
+    restoreFocus(
+      returnFocus,
+      () => canvasRef.current?.focusCanvas(),
+    );
+  }, []);
 
   useEffect(() => {
     if (startupMode !== "fresh" || initialEditStarted.current) return;
@@ -110,38 +163,70 @@ export function App() {
   useEffect(() => {
     if (startupMode === "loading") return;
     void readDesktopRuntimeStatus().then((status) => {
+      setDesktopRuntimeStatus(status);
       if (status && !status.globalShortcutRegistered) {
         notify({
-          message: `全局快捷键 ${status.globalShortcut.replace("CommandOrControl", "⌘")} 被占用，可继续从 Dock 打开`,
+          message: `唤醒快捷键 ${displayGlobalShortcut(status.globalShortcut)} 被占用，可在“更多”中更换`,
+          tone: "error",
         });
       }
     });
   }, [notify, startupMode]);
 
-  useEffect(() => {
-    if (!editAfterMutation.current || !selectedId) return;
-    const node = mindMap.nodes[selectedId];
-    if (!node) return;
-    editAfterMutation.current = false;
-    setEditingId(selectedId);
-    setDraft(node.text === "新节点" ? "" : node.text);
-  }, [mindMap.nodes, selectedId]);
+  const {
+    importInputRef,
+    openImport,
+    openRecentDocument,
+    revealRecentDocument,
+    copyRecentDocumentPath,
+    forgetRecentDocument,
+    moveRecentDocumentToDirectory,
+    createNewDocument,
+    saveAsMarkdownDocument,
+    saveCurrentDocument,
+    importFile,
+  } = useDocumentWorkflow({
+    document: mindMap,
+    documentPath,
+    currentDocumentPath: sourceDocumentPath ?? documentPath,
+    documentSessionId,
+    isDocumentSessionCurrent,
+    recentDocuments,
+    saveState,
+    saveError,
+    saveWarning,
+    notify,
+    newDocument,
+    openDocument,
+    replaceDocument,
+    saveDocumentAs,
+    retrySave,
+    saveBeforeSwitch,
+    beginBlankDocument,
+    finishDocumentSwitch,
+    moveRecentDocument,
+    removeRecentDocument,
+  });
 
-  const { copyMarkdown, executeCommand } = useMindMapCommands({
+  const { copyDocumentMarkdown, executeCommand } = useMindMapCommands({
     mindMap,
     selection,
     canUndo,
     canRedo,
     canvasRef,
-    editAfterMutation,
     applyMutation,
-    replaceDocument,
+    documentSessionId,
+    isDocumentSessionCurrent,
     selectNode,
     setSelection,
     setEditingId,
     setDraft,
-    setOverlay,
+    openOverlay,
     notify,
+    onImport: openImport,
+    onNew: createNewDocument,
+    onSaveAs: () => void saveAsMarkdownDocument(),
+    saveNow: saveCurrentDocument,
     undo,
     redo,
   });
@@ -149,8 +234,9 @@ export function App() {
   useKeyboardCommands({
     enabled:
       startupMode !== "loading" &&
-      editingId === null &&
-      overlay === null,
+      overlay === null &&
+      !shortcutSettingsOpen,
+    selectionEnabled: editingId === null,
     onCommand: executeCommand,
     onBeginTyping: (character) => {
       if (hasSingleSelection && selectedId) {
@@ -159,82 +245,45 @@ export function App() {
     },
   });
 
-  const commitEdit = useCallback((id: string, value: string) => {
-    if (cancelledEdit.current === id) {
-      cancelledEdit.current = null;
-      return;
-    }
-    const current = mindMapRef.current.nodes[id];
-    const nextText =
-      value.trim() ||
-      (current?.text === "输入中心主题"
-        ? "输入中心主题"
-        : "未命名节点");
-    setEditingId((editing) => (editing === id ? null : editing));
-    if (!current || current.text === nextText) return;
-    applyMutation((currentSnapshot) =>
-      setNodeText(currentSnapshot.document, id, nextText),
-    );
-  }, [applyMutation]);
-
-  const cancelEdit = useCallback((id: string) => {
-    cancelledEdit.current = id;
-    setEditingId((editing) => (editing === id ? null : editing));
-  }, []);
-
-  const toggleNode = useCallback(
-    (id: string) =>
-      applyMutation((current) =>
-        toggleCollapsed(current.document, id),
-      ),
-    [applyMutation],
+  const saveGlobalShortcut = useCallback(
+    async (shortcut: string): Promise<boolean> => {
+      try {
+        const status = await updateDesktopGlobalShortcut(shortcut);
+        setDesktopRuntimeStatus(status);
+        notify({ message: "唤醒快捷键已更新" });
+        return true;
+      } catch (error) {
+        notify({
+          message:
+            typeof error === "string"
+              ? error
+              : error instanceof Error
+                ? error.message
+                : "无法更新唤醒快捷键",
+          tone: "error",
+        });
+        return false;
+      }
+    },
+    [notify],
   );
-
-  const editSelectedFromSpace = useCallback(() => {
-    if (hasSingleSelection && selectedId) beginEdit(selectedId);
-  }, [beginEdit, hasSingleSelection, selectedId]);
-
-  const importMarkdown = async (file: File) => {
-    try {
-      const content = await file.text();
-      const title = file.name.replace(/\.(md|markdown|txt)$/i, "");
-      const imported = markdownToDocument(content, title);
-      replaceDocument(imported);
-      notify({
-        message: `已导入 ${Object.keys(imported.nodes).length} 个节点`,
-        actionLabel: "撤销",
-        onAction: undo,
-      });
-      window.setTimeout(() => canvasRef.current?.fit(), 0);
-    } catch (error) {
-      notify({
-        message:
-          error instanceof Error ? error.message : "无法导入这个文件",
-      });
-    }
-  };
 
   return (
     <main className="app-shell">
       <TopBar
-        onExport={() => void copyMarkdown(mindMap.rootId)}
-        onExportMarkdown={() =>
-          downloadText(
-            `${safeFilename(mindMap.title)}.md`,
-            subtreeToMarkdown(mindMap),
-            "text/markdown;charset=utf-8",
-          )
-        }
-        onExportJson={() =>
-          downloadText(
-            `${safeFilename(mindMap.title)}.mindmap.json`,
-            JSON.stringify(mindMap, null, 2),
-            "application/json;charset=utf-8",
-          )
-        }
-        onImport={() => importInputRef.current?.click()}
-        onNew={() => executeCommand("map.new")}
-        onSearch={() => setOverlay("search")}
+        currentDocumentPath={sourceDocumentPath ?? documentPath}
+        onCopyMarkdown={() => void copyDocumentMarkdown()}
+        onImport={openImport}
+        onNew={createNewDocument}
+        onCopyRecentPath={copyRecentDocumentPath}
+        onForgetRecent={forgetRecentDocument}
+        onMoveRecent={moveRecentDocumentToDirectory}
+        onOpenRecent={(path) => void openRecentDocument(path)}
+        onRevealRecent={revealRecentDocument}
+        onSave={() => void saveCurrentDocument()}
+        onSaveAs={() => void saveAsMarkdownDocument()}
+        onSearch={(returnFocus) => openOverlay("search", returnFocus)}
+        onShortcutSettings={openShortcutSettings}
         onTitleChange={(title) =>
           applyMutation((current) =>
             setDocumentTitle(
@@ -244,9 +293,7 @@ export function App() {
             ),
           )
         }
-        saveState={saveState}
-        saveError={saveError}
-        onRetrySave={() => void retrySave()}
+        recentDocuments={recentDocuments}
         title={mindMap.title}
       />
 
@@ -258,6 +305,9 @@ export function App() {
         onCancelEdit={cancelEdit}
         onCommitEdit={commitEdit}
         onDraftChange={setDraft}
+        onAttachNode={attachNodeToParent}
+        onDetachNode={detachNodeToCanvas}
+        onPasteStructured={pasteStructuredIntoBlankRoot}
         onSelectionChange={setSelection}
         onSpaceTap={editSelectedFromSpace}
         onToggle={toggleNode}
@@ -266,7 +316,6 @@ export function App() {
         selection={selection}
       />
 
-      <KeyboardHints selectionCount={selection.selectedIds.length} />
       <CanvasControls
         onFit={() => canvasRef.current?.fit()}
         onReset={() => canvasRef.current?.resetZoom()}
@@ -275,19 +324,21 @@ export function App() {
         zoom={mindMap.viewport.zoom}
       />
 
-      {toast && (
-        <Toast
-          actionLabel={toast.actionLabel}
-          message={toast.message}
-          onAction={toast.onAction}
-        />
-      )}
+      <StatusBar
+        notice={announcement}
+        onNoticeActionComplete={dismissAnnouncement}
+        onPauseNotice={pauseAnnouncement}
+        onResumeNotice={resumeAnnouncement}
+        onRetrySave={() => void retrySave()}
+        saveError={saveError}
+        saveState={saveState}
+      />
 
       {overlay && (
         <CommandOverlay
           document={mindMap}
           mode={overlay}
-          onClose={() => setOverlay(null)}
+          onClose={closeOverlay}
           onExecute={executeCommand}
           onSelectNode={(id) => {
             applyMutation((current) =>
@@ -302,12 +353,26 @@ export function App() {
         />
       )}
 
+      {shortcutSettingsOpen && (
+        <ShortcutSettings
+          currentShortcut={
+            desktopRuntimeStatus?.globalShortcut ??
+            "CommandOrControl+Shift+M"
+          }
+          onClose={closeShortcutSettings}
+          onSave={saveGlobalShortcut}
+          registered={
+            desktopRuntimeStatus?.globalShortcutRegistered ?? false
+          }
+        />
+      )}
+
       <input
-        accept=".md,.markdown,.txt,text/markdown,text/plain"
+        accept=".mindmap.json,.md,.markdown,.txt,application/json,text/markdown,text/plain"
         className="sr-only"
         onChange={(event) => {
           const file = event.target.files?.[0];
-          if (file) void importMarkdown(file);
+          if (file) void importFile(file);
           event.currentTarget.value = "";
         }}
         ref={importInputRef}

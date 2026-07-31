@@ -26,7 +26,6 @@
     0 18px 50px rgba(28, 28, 50, 0.12), 0 2px 8px rgba(28, 28, 50, 0.06);
   --radius-node: 10px;
   --radius-control: 9px;
-  --topbar-height: 62px;
   --motion-fast: 140ms;
   --motion-standard: 220ms;
 }

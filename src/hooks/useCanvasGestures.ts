@@ -71,6 +71,7 @@ interface CanvasGestureResult {
   marqueeRect: CanvasRect | null;
   selecting: boolean;
   className: string;
+  panModifierHeld: RefObject<boolean>;
   bindings: CanvasGestureBindings;
 }
 
@@ -169,13 +170,15 @@ export function useCanvasGestures({
 
   const bindings: CanvasGestureBindings = {
     onClickCapture: (event) => {
-      if (!suppressNextClick.current) return;
+      if (!spaceHeld.current && !suppressNextClick.current) return;
       event.preventDefault();
       event.stopPropagation();
       suppressNextClick.current = false;
     },
     onPointerDown: (event) => {
-      const wantsPan = event.button === 1 || spaceHeld.current;
+      const wantsPan =
+        event.button === 1 ||
+        (event.button === 0 && spaceHeld.current);
       const wantsSelection =
         event.button === 0 && event.target === event.currentTarget;
       if (!wantsPan && !wantsSelection) return;
@@ -336,6 +339,7 @@ export function useCanvasGestures({
     marqueeRect,
     selecting: gesture?.kind === "select",
     className,
+    panModifierHeld: spaceHeld,
     bindings,
   };
 }

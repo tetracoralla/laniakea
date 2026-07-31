@@ -9,13 +9,25 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_BUNDLE="$ROOT_DIR/src-tauri/target/release/bundle/macos/原点.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$PROCESS_NAME"
 
-pkill -x "$PROCESS_NAME" >/dev/null 2>&1 || true
+pkill -f "${PROCESS_NAME}$" >/dev/null 2>&1 || true
 
 cd "$ROOT_DIR"
+rm -rf -- "$APP_BUNDLE"
 npx tauri build --bundles app
+if [[ ! -x "$APP_BINARY" ]]; then
+  echo "built app is missing its executable: $APP_BINARY" >&2
+  exit 1
+fi
 
 open_app() {
-  /usr/bin/open -n "$APP_BUNDLE"
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    if /usr/bin/open "$APP_BUNDLE"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 case "$MODE" in

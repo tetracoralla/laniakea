@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import {
+  isDesktopRuntime,
   loadLocalDocument,
   saveLocalDocument,
 } from "./localDocumentStore";
@@ -38,6 +39,11 @@ describe("local document persistence errors", () => {
   beforeEach(() => {
     values.clear();
     failWrites = false;
+    delete (
+      globalThis as typeof globalThis & {
+        __TAURI_INTERNALS__?: object;
+      }
+    ).__TAURI_INTERNALS__;
   });
 
   it("rejects a failed write instead of reporting it as saved", async () => {
@@ -59,5 +65,15 @@ describe("local document persistence errors", () => {
         key.startsWith("origin.mindmap.v1.corrupt."),
       ),
     ).toBe(true);
+  });
+
+  it("recognizes the injected desktop bridge even without the legacy flag", () => {
+    (
+      globalThis as typeof globalThis & {
+        __TAURI_INTERNALS__?: object;
+      }
+    ).__TAURI_INTERNALS__ = {};
+
+    expect(isDesktopRuntime()).toBe(true);
   });
 });

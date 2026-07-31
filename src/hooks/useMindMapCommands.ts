@@ -4,6 +4,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
+import { flushSync } from "react-dom";
 import type { CommandId } from "../commands/registry";
 import type {
   CanvasHandle,
@@ -11,8 +12,6 @@ import type {
 import type {
   OverlayMode,
 } from "../components/commands/CommandOverlay";
-import { createBlankDocument } from "../data/seed";
-import { subtreeToMarkdown } from "../model/markdown";
 import {
   addToSelection,
   createSelection,
@@ -23,6 +22,7 @@ import {
 import {
   adjacentSibling,
   createChild,
+  createNodeId,
   createSibling,
   deleteNodePreserveChildren,
   deleteSelectedSubtrees,
@@ -39,12 +39,8 @@ import type {
   MindMapDocument,
   SelectionState,
 } from "../types/mindmap";
-
-interface ToastMessage {
-  message: string;
-  actionLabel?: string;
-  onAction?: () => void;
-}
+import type { AppNotice } from "../types/feedback";
+import { useMindMapClipboard } from "./useMindMapClipboard";
 
 interface MindMapCommandOptions {
   mindMap: MindMapDocument;
@@ -52,17 +48,22 @@ interface MindMapCommandOptions {
   canUndo: boolean;
   canRedo: boolean;
   canvasRef: RefObject<CanvasHandle | null>;
-  editAfterMutation: RefObject<boolean>;
   applyMutation: (
     mutate: (current: EditorSnapshot) => DocumentMutation,
+    expectedDocumentSessionId?: number,
   ) => void;
-  replaceDocument: (document: MindMapDocument) => void;
+  documentSessionId: number;
+  isDocumentSessionCurrent: (sessionId: number) => boolean;
   selectNode: (id: string) => void;
   setSelection: (selection: SelectionState) => void;
   setEditingId: Dispatch<SetStateAction<string | null>>;
   setDraft: Dispatch<SetStateAction<string>>;
-  setOverlay: Dispatch<SetStateAction<OverlayMode | null>>;
-  notify: (message: ToastMessage) => void;
+  openOverlay: (mode: OverlayMode) => void;
+  notify: (message: AppNotice) => void;
+  onImport: () => void;
+  onNew: () => void;
+  onSaveAs: () => void;
+  saveNow: () => Promise<boolean>;
   undo: () => void;
   redo: () => void;
 }
@@ -77,36 +78,25 @@ const singleSelectionCommands = new Set<CommandId>([
   "node.move-down",
 ]);
 
-async function writeClipboard(value: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.append(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
-}
-
 export function useMindMapCommands({
   mindMap,
   selection,
   canUndo,
   canRedo,
   canvasRef,
-  editAfterMutation,
   applyMutation,
-  replaceDocument,
+  documentSessionId,
+  isDocumentSessionCurrent,
   selectNode,
   setSelection,
   setEditingId,
   setDraft,
-  setOverlay,
+  openOverlay,
   notify,
+  onImport,
+  onNew,
+  onSaveAs,
+  saveNow,
   undo,
   redo,
 }: MindMapCommandOptions) {
@@ -116,37 +106,38 @@ export function useMindMapCommands({
 
   const createAndEdit = useCallback(
     (
-      mutate: Parameters<typeof applyMutation>[0],
-      feedback: string,
+      mutate: (
+        current: EditorSnapshot,
+        createdId: string,
+      ) => DocumentMutation,
     ) => {
-      editAfterMutation.current = true;
-      applyMutation(mutate);
-      notify({ message: feedback, actionLabel: "撤销", onAction: undo });
-    },
-    [applyMutation, editAfterMutation, notify, undo],
-  );
-
-  const copyMarkdown = useCallback(
-    async (rootId?: string) => {
-      const roots = rootId
-        ? [rootId]
-        : normalizeSelectedRoots(mindMap, selection.selectedIds);
-      if (roots.length === 0) return;
-      const markdown = roots
-        .map((id) => subtreeToMarkdown(mindMap, id))
-        .join("\n");
-      await writeClipboard(markdown);
-      notify({
-        message:
-          roots.length === 1 && roots[0] === mindMap.rootId
-            ? "已复制整张图为 Markdown"
-            : roots.length === 1
-              ? "已复制当前分支为 Markdown"
-              : `已复制 ${roots.length} 个分支为 Markdown`,
+      const createdId = createNodeId();
+      // Commit the node and its editor before this key event returns. This
+      // keeps the next keystroke in a rapid Tab/Enter sequence inside the new
+      // editor instead of letting the canvas-level handler consume it.
+      flushSync(() => {
+        setEditingId(createdId);
+        setDraft("");
+        applyMutation((current) => mutate(current, createdId));
       });
     },
-    [mindMap, notify, selection.selectedIds],
+    [applyMutation, setDraft, setEditingId],
   );
+
+  const {
+    copyDocumentMarkdown,
+    copyMarkdown,
+    cutSelection,
+    pasteClipboard,
+  } = useMindMapClipboard({
+      mindMap,
+      selection,
+      applyMutation,
+      documentSessionId,
+      isDocumentSessionCurrent,
+      notify,
+      undo,
+    });
 
   const executeCommand = useCallback(
     (id: CommandId) => {
@@ -159,34 +150,37 @@ export function useMindMapCommands({
       switch (id) {
         case "node.create-sibling":
           createAndEdit(
-            (current) =>
+            (current, createdId) =>
               createSibling(
                 current.document,
                 current.selection.primaryId!,
                 "below",
+                "",
+                createdId,
               ),
-            "已创建同级节点",
           );
           break;
         case "node.create-above":
           createAndEdit(
-            (current) =>
+            (current, createdId) =>
               createSibling(
                 current.document,
                 current.selection.primaryId!,
                 "above",
+                "",
+                createdId,
               ),
-            "已创建上方节点",
           );
           break;
         case "node.create-child":
           createAndEdit(
-            (current) =>
+            (current, createdId) =>
               createChild(
                 current.document,
                 current.selection.primaryId!,
+                "",
+                createdId,
               ),
-            "已创建子节点",
           );
           break;
         case "node.outdent":
@@ -308,6 +302,15 @@ export function useMindMapCommands({
         case "selection.clear":
           setSelection(emptySelection());
           break;
+        case "node.copy":
+          void copyMarkdown();
+          break;
+        case "node.cut":
+          void cutSelection();
+          break;
+        case "node.paste":
+          void pasteClipboard();
+          break;
         case "node.move-up":
           applyMutation((current) =>
             moveNode(
@@ -361,23 +364,23 @@ export function useMindMapCommands({
         case "map.copy-markdown":
           void copyMarkdown();
           break;
-        case "map.new": {
-          const blank = createBlankDocument();
-          replaceDocument(blank);
-          setEditingId(blank.rootId);
-          setDraft("");
-          notify({
-            message: "已新建空白思维",
-            actionLabel: "撤销",
-            onAction: undo,
-          });
+        case "map.new":
+          onNew();
           break;
-        }
+        case "map.open":
+          onImport();
+          break;
+        case "map.save":
+          void saveNow();
+          break;
+        case "map.save-as":
+          onSaveAs();
+          break;
         case "map.search":
-          setOverlay("search");
+          openOverlay("search");
           break;
         case "map.command-palette":
-          setOverlay("commands");
+          openOverlay("commands");
           break;
         case "viewport.fit":
           canvasRef.current?.fit();
@@ -402,22 +405,28 @@ export function useMindMapCommands({
       canUndo,
       canvasRef,
       copyMarkdown,
+      copyDocumentMarkdown,
       createAndEdit,
+      cutSelection,
       hasSingleSelection,
       mindMap,
       notify,
+      onImport,
+      onNew,
+      onSaveAs,
+      pasteClipboard,
       redo,
-      replaceDocument,
+      saveNow,
       selectNode,
       selectedId,
       selection,
       setDraft,
       setEditingId,
-      setOverlay,
+      openOverlay,
       setSelection,
       undo,
     ],
   );
 
-  return { copyMarkdown, executeCommand };
+  return { copyDocumentMarkdown, copyMarkdown, executeCommand };
 }

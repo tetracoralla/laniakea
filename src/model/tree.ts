@@ -1,8 +1,10 @@
 import type {
+  FloatingRoot,
   MindMapDocument,
   MindNode,
   SelectionState,
 } from "../types/mindmap";
+import { topLevelRootIds } from "./document";
 import {
   createSelection,
   normalizeSelectedRoots,
@@ -15,8 +17,22 @@ export interface DocumentMutation {
   selection: SelectionState;
 }
 
-function uid(): string {
+export function createNodeId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid) return `node-${uuid}`;
   return `node-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function reserveUniqueNodeId(reservedIds: Set<string>): string {
+  const base = createNodeId();
+  let id = base;
+  let suffix = 1;
+  while (reservedIds.has(id)) {
+    id = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  reservedIds.add(id);
+  return id;
 }
 
 function withTimestamp(
@@ -48,10 +64,14 @@ function updateNode(
   };
 }
 
-function createNode(text: string, parentId: string): MindNode {
+function createNode(
+  text: string,
+  parentId: string,
+  id = createNodeId(),
+): MindNode {
   const now = new Date().toISOString();
   return {
-    id: uid(),
+    id,
     text,
     parentId,
     children: [],
@@ -61,12 +81,16 @@ function createNode(text: string, parentId: string): MindNode {
   };
 }
 
+export function normalizeNodeText(text: string): string {
+  return text.trim();
+}
+
 export function setNodeText(
   document: MindMapDocument,
   id: string,
   text: string,
 ): DocumentMutation {
-  const value = text.trim() || "未命名节点";
+  const value = normalizeNodeText(text);
   const nodes = updateNode(document.nodes, id, { text: value });
   return {
     document: withTimestamp(document, nodes),
@@ -92,14 +116,15 @@ export function setDocumentTitle(
 export function createChild(
   document: MindMapDocument,
   parentId: string,
-  text = "新节点",
+  text = "",
+  nodeId = createNodeId(),
 ): DocumentMutation {
   const parent = document.nodes[parentId];
   if (!parent) {
     return { document, selection: singleSelection(document.rootId) };
   }
 
-  const child = createNode(text, parentId);
+  const child = createNode(text, parentId, nodeId);
   let nodes = {
     ...document.nodes,
     [child.id]: child,
@@ -119,15 +144,16 @@ export function createSibling(
   document: MindMapDocument,
   siblingId: string,
   placement: "above" | "below" = "below",
-  text = "新节点",
+  text = "",
+  nodeId = createNodeId(),
 ): DocumentMutation {
   const sibling = document.nodes[siblingId];
   if (!sibling?.parentId) {
-    return createChild(document, siblingId, text);
+    return createChild(document, siblingId, text, nodeId);
   }
 
   const parent = document.nodes[sibling.parentId];
-  const created = createNode(text, parent.id);
+  const created = createNode(text, parent.id, nodeId);
   const siblingIndex = parent.children.indexOf(siblingId);
   const insertAt = siblingIndex + (placement === "below" ? 1 : 0);
   const children = [...parent.children];
@@ -142,6 +168,61 @@ export function createSibling(
   return {
     document: withTimestamp(document, nodes),
     selection: singleSelection(created.id),
+  };
+}
+
+export function pasteSubtrees(
+  document: MindMapDocument,
+  parentId: string,
+  source: MindMapDocument,
+  sourceRootIds: readonly string[],
+): DocumentMutation {
+  const parent = document.nodes[parentId];
+  const roots = sourceRootIds.filter((id) => source.nodes[id]);
+  if (!parent || roots.length === 0) {
+    return { document, selection: singleSelection(document.rootId) };
+  }
+
+  const now = new Date().toISOString();
+  let nodes = { ...document.nodes };
+  const reservedIds = new Set(Object.keys(nodes));
+  const clone = (sourceId: string, cloneParentId: string): string | null => {
+    const sourceNode = source.nodes[sourceId];
+    if (!sourceNode) return null;
+    const id = reserveUniqueNodeId(reservedIds);
+    nodes[id] = {
+      ...sourceNode,
+      id,
+      parentId: cloneParentId,
+      children: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const children = sourceNode.children
+      .map((childId) => clone(childId, id))
+      .filter((childId): childId is string => Boolean(childId));
+    nodes[id] = { ...nodes[id], children };
+    return id;
+  };
+
+  const pastedRoots = roots
+    .map((id) => clone(id, parentId))
+    .filter((id): id is string => Boolean(id));
+  if (pastedRoots.length === 0) {
+    return { document, selection: singleSelection(parentId) };
+  }
+  nodes = updateNode(nodes, parentId, {
+    children: [...parent.children, ...pastedRoots],
+    collapsed: false,
+  });
+  const nextDocument = withTimestamp(document, nodes);
+  return {
+    document: nextDocument,
+    selection: createSelection(
+      pastedRoots,
+      visibleNodeIds(nextDocument),
+      pastedRoots[0],
+    ),
   };
 }
 
@@ -214,8 +295,32 @@ export function moveNode(
   direction: -1 | 1,
 ): DocumentMutation {
   const current = document.nodes[id];
-  if (!current?.parentId) {
-    return { document, selection: singleSelection(id) };
+  if (!current) {
+    return { document, selection: singleSelection(document.rootId) };
+  }
+  if (!current.parentId) {
+    const index = floatingRootIndex(document, id);
+    const destination = index + direction;
+    if (
+      index < 0 ||
+      destination < 0 ||
+      destination >= document.floatingRoots.length
+    ) {
+      return { document, selection: singleSelection(id) };
+    }
+    const floatingRoots = [...document.floatingRoots];
+    [floatingRoots[index], floatingRoots[destination]] = [
+      floatingRoots[destination],
+      floatingRoots[index],
+    ];
+    return {
+      document: {
+        ...document,
+        floatingRoots,
+        updatedAt: new Date().toISOString(),
+      },
+      selection: singleSelection(id),
+    };
   }
 
   const parent = document.nodes[current.parentId];
@@ -249,27 +354,135 @@ function collectSubtree(document: MindMapDocument, id: string): string[] {
   return result;
 }
 
+function floatingRootIndex(
+  document: MindMapDocument,
+  id: string,
+): number {
+  return document.floatingRoots.findIndex((root) => root.id === id);
+}
+
+export function detachSubtree(
+  document: MindMapDocument,
+  id: string,
+  position: Pick<FloatingRoot, "x" | "y">,
+): DocumentMutation {
+  const current = document.nodes[id];
+  if (!current || id === document.rootId) {
+    return { document, selection: singleSelection(document.rootId) };
+  }
+
+  const x = Math.max(32, Math.round(position.x));
+  const y = Math.max(32, Math.round(position.y));
+  const existingIndex = floatingRootIndex(document, id);
+  if (existingIndex >= 0) {
+    const existing = document.floatingRoots[existingIndex];
+    if (existing.x === x && existing.y === y) {
+      return { document, selection: singleSelection(id) };
+    }
+    const floatingRoots = [...document.floatingRoots];
+    floatingRoots[existingIndex] = { id, x, y };
+    return {
+      document: {
+        ...document,
+        floatingRoots,
+      },
+      selection: singleSelection(id),
+    };
+  }
+
+  if (!current.parentId) {
+    return { document, selection: singleSelection(id) };
+  }
+  const parent = document.nodes[current.parentId];
+  let nodes = updateNode(document.nodes, parent.id, {
+    children: parent.children.filter((childId) => childId !== id),
+  });
+  nodes = updateNode(nodes, id, { parentId: null });
+  return {
+    document: {
+      ...withTimestamp(document, nodes),
+      floatingRoots: [...document.floatingRoots, { id, x, y }],
+    },
+    selection: singleSelection(id),
+  };
+}
+
+export function attachSubtree(
+  document: MindMapDocument,
+  id: string,
+  parentId: string,
+): DocumentMutation {
+  const current = document.nodes[id];
+  const parent = document.nodes[parentId];
+  if (
+    !current ||
+    !parent ||
+    id === document.rootId ||
+    id === parentId ||
+    collectSubtree(document, id).includes(parentId)
+  ) {
+    return {
+      document,
+      selection: singleSelection(current ? id : document.rootId),
+    };
+  }
+  if (current.parentId === parentId) {
+    return { document, selection: singleSelection(id) };
+  }
+
+  let nodes = document.nodes;
+  if (current.parentId) {
+    const oldParent = document.nodes[current.parentId];
+    nodes = updateNode(nodes, oldParent.id, {
+      children: oldParent.children.filter((childId) => childId !== id),
+    });
+  }
+  nodes = updateNode(nodes, id, { parentId });
+  nodes = updateNode(nodes, parentId, {
+    children: [...parent.children, id],
+    collapsed: false,
+  });
+  return {
+    document: {
+      ...withTimestamp(document, nodes),
+      floatingRoots: document.floatingRoots.filter(
+        (root) => root.id !== id,
+      ),
+    },
+    selection: singleSelection(id),
+  };
+}
+
 export function deleteSubtree(
   document: MindMapDocument,
   id: string,
 ): DocumentMutation {
   const current = document.nodes[id];
-  if (!current?.parentId) {
+  if (!current || id === document.rootId) {
     return { document, selection: singleSelection(id) };
   }
 
-  const parent = document.nodes[current.parentId];
   const removed = new Set(collectSubtree(document, id));
   const nodes = Object.fromEntries(
     Object.entries(document.nodes).filter(([nodeId]) => !removed.has(nodeId)),
   );
-  const nextNodes = updateNode(nodes, parent.id, {
-    children: parent.children.filter((childId) => childId !== id),
-  });
+  const parent = current.parentId
+    ? document.nodes[current.parentId]
+    : null;
+  const nextNodes = parent
+    ? updateNode(nodes, parent.id, {
+        children: parent.children.filter((childId) => childId !== id),
+      })
+    : nodes;
 
   return {
-    document: withTimestamp(document, nextNodes),
-    selection: singleSelection(parent.id),
+    document: {
+      ...withTimestamp(document, nextNodes),
+      floatingRoots: document.floatingRoots.filter(
+        (root) => !removed.has(root.id),
+      ),
+    },
+    selection: singleSelection(parent?.id ?? document.rootId),
   };
 }
 
@@ -309,7 +522,12 @@ export function deleteSelectedSubtrees(
   });
 
   return {
-    document: withTimestamp(document, nodes),
+    document: {
+      ...withTimestamp(document, nodes),
+      floatingRoots: document.floatingRoots.filter(
+        (root) => !removed.has(root.id),
+      ),
+    },
     selection: singleSelection(nextPrimaryId),
   };
 }
@@ -476,8 +694,10 @@ export function adjacentSibling(
   direction: -1 | 1,
 ): string | null {
   const current = document.nodes[id];
-  if (!current?.parentId) return null;
-  const siblings = document.nodes[current.parentId].children;
+  if (!current) return null;
+  const siblings = current.parentId
+    ? document.nodes[current.parentId].children
+    : topLevelRootIds(document);
   const index = siblings.indexOf(id);
   return siblings[index + direction] ?? null;
 }

@@ -9,11 +9,13 @@ export type IconName =
   | "fit"
   | "check"
   | "file"
+  | "newMindMap"
   | "folder"
   | "code"
   | "undo"
   | "command"
-  | "chevron";
+  | "chevron"
+  | "chevronDown";
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName;
@@ -64,6 +66,12 @@ export function Icon({ name, size = 18, ...props }: IconProps) {
         <path d="M14 3v5h5" />
       </>
     ),
+    newMindMap: (
+      <>
+        <path d="M3.5 5h10v4h7v11H3.5z" />
+        <path d="M17 2.5v5M14.5 5h5" />
+      </>
+    ),
     folder: <path d="M3 6.5h7l2 2h9v10.5H3z" />,
     code: (
       <>
@@ -83,6 +91,7 @@ export function Icon({ name, size = 18, ...props }: IconProps) {
       </>
     ),
     chevron: <path d="m9 6 6 6-6 6" />,
+    chevronDown: <path d="m7 9.5 5 5 5-5" />,
   };
 
   return (

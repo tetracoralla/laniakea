@@ -1,15 +1,36 @@
 import { memo } from "react";
 import { connectorPath } from "../../model/layout";
-import type { LayoutResult, MindMapDocument } from "../../types/mindmap";
+import type {
+  LayoutNode,
+  LayoutResult,
+  MindMapDocument,
+} from "../../types/mindmap";
 
 interface ConnectorsProps {
   document: MindMapDocument;
   layout: LayoutResult;
+  renderedIds: readonly string[];
 }
+
+const ConnectorPath = memo(function ConnectorPath({
+  parent,
+  child,
+}: {
+  parent: LayoutNode;
+  child: LayoutNode;
+}) {
+  return (
+    <path
+      className={`connector connector--${child.tone}`}
+      d={connectorPath(parent, child)}
+    />
+  );
+});
 
 export const Connectors = memo(function Connectors({
   document,
   layout,
+  renderedIds,
 }: ConnectorsProps) {
   return (
     <svg
@@ -19,22 +40,19 @@ export const Connectors = memo(function Connectors({
       viewBox={`0 0 ${layout.width} ${layout.height}`}
       width={layout.width}
     >
-      {layout.visibleIds.flatMap((id) => {
-        const parentLayout = layout.nodes[id];
-        const parent = document.nodes[id];
-        if (!parent || parent.collapsed) return [];
-
-        return parent.children.map((childId) => {
-          const childLayout = layout.nodes[childId];
-          if (!childLayout) return null;
-          return (
-            <path
-              className={`connector connector--${childLayout.tone}`}
-              d={connectorPath(parentLayout, childLayout)}
-              key={`${id}-${childId}`}
-            />
-          );
-        });
+      {renderedIds.map((id) => {
+        const child = document.nodes[id];
+        if (!child?.parentId) return null;
+        const parentLayout = layout.nodes[child.parentId];
+        const childLayout = layout.nodes[id];
+        if (!parentLayout || !childLayout) return null;
+        return (
+          <ConnectorPath
+            child={childLayout}
+            key={`${child.parentId}-${id}`}
+            parent={parentLayout}
+          />
+        );
       })}
     </svg>
   );

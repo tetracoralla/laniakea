@@ -10,18 +10,28 @@
     "desktop:build": "tauri build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "check:regression": "npm test && npm run build && cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:desktop-runtime": "./script/build_and_run.sh --verify",
     "preview": "vite preview"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "mdast-util-to-string": "^4.0.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-stringify": "^11.0.0",
+    "unified": "^11.0.5"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.4",
+    "@types/mdast": "^4.0.4",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.4",
+    "jsdom": "^29.1.1",
     "typescript": "^5.9.3",
     "vite": "^7.1.9",
     "vitest": "^3.2.4"

@@ -1,4 +1,8 @@
-import type { MindMapDocument, MindNode } from "../types/mindmap";
+import type {
+  FloatingRoot,
+  MindMapDocument,
+  MindNode,
+} from "../types/mindmap";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -18,6 +22,24 @@ function isNode(value: unknown, id: string): value is MindNode {
   );
 }
 
+function isFloatingRoot(value: unknown): value is FloatingRoot {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.x === "number" &&
+    Number.isFinite(value.x) &&
+    typeof value.y === "number" &&
+    Number.isFinite(value.y)
+  );
+}
+
+export function topLevelRootIds(document: MindMapDocument): string[] {
+  return [
+    document.rootId,
+    ...document.floatingRoots.map((root) => root.id),
+  ];
+}
+
 export function isMindMapDocument(
   value: unknown,
 ): value is MindMapDocument {
@@ -27,6 +49,8 @@ export function isMindMapDocument(
     typeof value.title !== "string" ||
     typeof value.rootId !== "string" ||
     typeof value.updatedAt !== "string" ||
+    !Array.isArray(value.floatingRoots) ||
+    !value.floatingRoots.every(isFloatingRoot) ||
     !isRecord(value.viewport) ||
     typeof value.viewport.x !== "number" ||
     !Number.isFinite(value.viewport.x) ||
@@ -41,6 +65,17 @@ export function isMindMapDocument(
   const nodes = value.nodes;
   const root = nodes[value.rootId];
   if (!isNode(root, value.rootId) || root.parentId !== null) return false;
+  const floatingIds = value.floatingRoots.map((floating) => floating.id);
+  const rootIds = [value.rootId, ...floatingIds];
+  if (new Set(rootIds).size !== rootIds.length) return false;
+  if (
+    floatingIds.some((id) => {
+      const node = nodes[id];
+      return !isNode(node, id) || node.parentId !== null;
+    })
+  ) {
+    return false;
+  }
 
   for (const [id, candidate] of Object.entries(nodes)) {
     if (!isNode(candidate, id)) return false;
@@ -70,13 +105,32 @@ export function isMindMapDocument(
     return true;
   };
 
-  return visit(value.rootId) && visited.size === Object.keys(nodes).length;
+  return (
+    rootIds.every(visit) &&
+    visited.size === Object.keys(nodes).length
+  );
 }
 
 export function parseMindMapDocument(value: string): MindMapDocument {
   const parsed = JSON.parse(value) as unknown;
-  if (!isMindMapDocument(parsed)) {
+  const migrated =
+    isRecord(parsed) && !("floatingRoots" in parsed)
+      ? { ...parsed, floatingRoots: [] }
+      : parsed;
+  if (!isMindMapDocument(migrated)) {
     throw new Error("思维导图文件结构无效");
   }
-  return parsed;
+  return migrated;
+}
+
+export function isBlankMindMapDocument(
+  document: MindMapDocument,
+): boolean {
+  const root = document.nodes[document.rootId];
+  return (
+    Object.keys(document.nodes).length === 1 &&
+    document.floatingRoots.length === 0 &&
+    root.children.length === 0 &&
+    root.text.trim() === ""
+  );
 }

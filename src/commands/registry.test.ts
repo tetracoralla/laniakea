@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { findCommandForEvent, isPrintableKey } from "./registry";
+import {
+  commandRegistry,
+  findCommandForEvent,
+  isPrintableKey,
+  type CommandContext,
+} from "./registry";
 
 function keyboardEvent(
   key: string,
@@ -91,6 +96,45 @@ describe("command registry context isolation", () => {
     expect(
       findCommandForEvent(keyboardEvent("Escape"), "selection")?.id,
     ).toBe("selection.clear");
+  });
+
+  it("routes standard edit and file shortcuts on the canvas", () => {
+    const expected = [
+      ["a", "selection.select-all"],
+      ["c", "node.copy"],
+      ["x", "node.cut"],
+      ["v", "node.paste"],
+      ["o", "map.open"],
+      ["s", "map.save"],
+    ] as const;
+
+    expected.forEach(([key, id]) => {
+      const event = keyboardEvent(key, { metaKey: true });
+      expect(findCommandForEvent(event, "selection")?.id).toBe(id);
+      expect(findCommandForEvent(event, "editing")).toBeUndefined();
+    });
+  });
+
+  it("keeps Save As separate from normal save", () => {
+    expect(
+      findCommandForEvent(
+        keyboardEvent("s", { metaKey: true, shiftKey: true }),
+        "selection",
+      )?.id,
+    ).toBe("map.save-as");
+  });
+
+  it("does not register two commands for the same shortcut and context", () => {
+    const bindings = new Set<string>();
+    commandRegistry.forEach((command) => {
+      [command.shortcut, ...(command.aliases ?? [])].forEach((shortcut) => {
+        command.contexts.forEach((context: CommandContext) => {
+          const binding = `${context}:${shortcut}`;
+          expect(bindings.has(binding), binding).toBe(false);
+          bindings.add(binding);
+        });
+      });
+    });
   });
 
   it("starts editing only for unmodified printable keys", () => {
