@@ -1135,23 +1135,40 @@ describe("document workflow", () => {
     });
   });
 
-  it("keeps rich Markdown source protection and rejects the same browser file", async () => {
+  it("restores rich Markdown if the save picker clears the protected source before rejecting it", async () => {
     mocks.desktopRuntime = false;
+    const originalSource =
+      "# 研究\n\n| 项目 | 结论 |\n| --- | --- |\n| A | B |\n";
+    let sourceContent = originalSource;
     const importedFile = {
       name: "研究.md",
-      text: vi.fn(async () =>
-        "# 研究\n\n| 项目 | 结论 |\n| --- | --- |\n| A | B |\n"
-      ),
+      text: vi.fn(async () => sourceContent),
     } as unknown as File;
+    const sourceWrite = vi.fn(async (data: string | ArrayBuffer) => {
+      sourceContent = typeof data === "string"
+        ? data
+        : new TextDecoder().decode(data);
+    });
+    const sourceClose = vi.fn(async () => undefined);
     const sourceHandle = {
       createWritable: vi.fn(),
+      getFile: vi.fn(async () => ({
+        arrayBuffer: async () =>
+          new TextEncoder().encode(sourceContent).buffer,
+      } as File)),
     };
-    const createWritable = vi.fn();
+    const createWritable = vi.fn(async () => ({
+      write: sourceWrite,
+      close: sourceClose,
+    }));
     const targetHandle = {
       createWritable,
       isSameEntry: vi.fn(async (other: unknown) => other === sourceHandle),
     };
-    const showSaveFilePicker = vi.fn(async () => targetHandle);
+    const showSaveFilePicker = vi.fn(async () => {
+      sourceContent = "";
+      return targetHandle;
+    });
     Object.defineProperty(window, "showSaveFilePicker", {
       configurable: true,
       value: showSaveFilePicker,
@@ -1179,6 +1196,7 @@ describe("document workflow", () => {
         recentDocuments: [],
         saveState: "saved",
         saveError: null,
+        isDocumentSessionCurrent: () => false,
         notify,
         newDocument,
         openDocument: (
@@ -1249,7 +1267,15 @@ describe("document workflow", () => {
       expect.objectContaining({ suggestedName: "研究 - Laniakea.md" }),
     );
     expect(targetHandle.isSameEntry).toHaveBeenCalledWith(sourceHandle);
-    expect(createWritable).not.toHaveBeenCalled();
+    expect(createWritable).toHaveBeenCalledTimes(1);
+    expect(sourceHandle.createWritable).not.toHaveBeenCalled();
+    expect(sourceWrite).toHaveBeenCalledTimes(1);
+    expect(typeof sourceWrite.mock.calls[0]![0]).not.toBe("string");
+    expect(
+      (sourceWrite.mock.calls[0]![0] as ArrayBuffer).byteLength,
+    ).toBeGreaterThan(0);
+    expect(sourceClose).toHaveBeenCalledTimes(1);
+    expect(sourceContent).toBe(originalSource);
     expect(notify).toHaveBeenCalledWith({
       message: "protected source",
       tone: "error",

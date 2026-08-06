@@ -86,7 +86,11 @@ interface DocumentWorkflowOptions {
   deleteBrowserDocument?: (path: string) => Promise<boolean>;
 }
 
-function downloadText(filename: string, content: string, type: string) {
+function downloadText(
+  filename: string,
+  content: string | ArrayBuffer,
+  type: string,
+) {
   const blob = new Blob([content], { type });
   const url = URL.createObjectURL(blob);
   const anchor = window.document.createElement("a");
@@ -101,7 +105,7 @@ function safeFilename(value: string): string {
 }
 
 interface BrowserWritableFile {
-  write: (data: string) => Promise<void>;
+  write: (data: string | ArrayBuffer) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -463,6 +467,30 @@ export function useDocumentWorkflow({
       const browserWindow = window as FilePickerWindow;
       if (browserWindow.showSaveFilePicker) {
         try {
+          const protectedHandle = documentPath
+            ? browserSourceHandles.current.get(documentPath)
+            : undefined;
+          let protectedSourceBytes: ArrayBuffer | null = null;
+          if (protectedHandle) {
+            if (!protectedHandle.getFile) {
+              notify({
+                message: "无法读取原始 Markdown，已取消另存以保护源文件",
+                tone: "error",
+              });
+              return false;
+            }
+            try {
+              protectedSourceBytes = await (
+                await protectedHandle.getFile()
+              ).arrayBuffer();
+            } catch {
+              notify({
+                message: "无法读取原始 Markdown，已取消另存以保护源文件",
+                tone: "error",
+              });
+              return false;
+            }
+          }
           const handle = await browserWindow.showSaveFilePicker({
             suggestedName: filename,
             types: [
@@ -472,21 +500,43 @@ export function useDocumentWorkflow({
               },
             ],
           });
-          if (!isDocumentSessionCurrent(operationSessionId)) return false;
-          const protectedHandle = documentPath
-            ? browserSourceHandles.current.get(documentPath)
-            : undefined;
           if (
             protectedHandle &&
             handle.isSameEntry &&
             await handle.isSameEntry(protectedHandle)
           ) {
+            if (protectedSourceBytes !== null) {
+              try {
+                const sourceWritable = await handle.createWritable();
+                await sourceWritable.write(protectedSourceBytes);
+                await sourceWritable.close();
+              } catch {
+                const recoveryName = `${safeFilename(
+                  (protectedBrowserSourceName ?? document.title).replace(
+                    /\.(md|markdown|txt)$/i,
+                    "",
+                  ),
+                )} - 原文件恢复.md`;
+                downloadText(
+                  recoveryName,
+                  protectedSourceBytes,
+                  "text/markdown;charset=utf-8",
+                );
+                notify({
+                  message:
+                    "无法自动还原原始 Markdown，原内容已下载为恢复文件",
+                  tone: "error",
+                });
+                return false;
+              }
+            }
             notify({
               message: protectedSourceOverwriteMessage,
               tone: "error",
             });
             return false;
           }
+          if (!isDocumentSessionCurrent(operationSessionId)) return false;
           const writable = await handle.createWritable();
           await writable.write(content);
           await writable.close();
