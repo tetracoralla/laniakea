@@ -146,4 +146,50 @@ describe("node editor input method handling", () => {
         ?.textContent,
     ).toBe("中文 English 后续");
   });
+
+  it("renders a Markdown thematic break as a divider while keeping it editable", async () => {
+    const mindMapDocument = createBlankDocument();
+    const node = mindMapDocument.nodes[mindMapDocument.rootId];
+    node.text = "***";
+    const layout = computeLayout(mindMapDocument).nodes[mindMapDocument.rootId];
+    const onBeginEdit = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <MindMapNode
+          draft=""
+          dragging={false}
+          dropTarget={false}
+          editing={false}
+          layout={layout}
+          node={node}
+          onBeginEdit={onBeginEdit}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDraftChange={() => undefined}
+          onDragPointerDown={() => undefined}
+          onPasteStructured={() => false}
+          onSelect={() => undefined}
+          onToggle={() => undefined}
+          primary={false}
+          selected={false}
+        />,
+      );
+    });
+
+    const dividerNode = container.querySelector<HTMLElement>(
+      ".mind-node.is-markdown-divider",
+    );
+    const content = dividerNode?.querySelector<HTMLButtonElement>(
+      ".mind-node__content",
+    );
+    expect(content?.getAttribute("aria-label")).toBe("Markdown 分隔线");
+    expect(content?.querySelector(".mind-node__divider")).not.toBeNull();
+    expect(content?.textContent).toBe("");
+
+    await act(async () => {
+      content?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(onBeginEdit).toHaveBeenCalledWith(node.id);
+  });
 });

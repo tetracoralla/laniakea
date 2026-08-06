@@ -128,11 +128,12 @@ describe("automatic layout", () => {
     expect(multiline.height).toBeGreaterThan(48);
   });
 
-  it("keeps second-level and deeper nodes visually lighter", () => {
+  it("keeps second-level nodes compact without sacrificing text padding", () => {
     expect(sizeForNode(0, "中心主题", "main").height).toBe(48);
     expect(sizeForNode(1, "一级主题").height).toBe(48);
-    expect(sizeForNode(2, "二级主题").height).toBe(40);
-    expect(sizeForNode(4, "更深层主题").height).toBe(40);
+    expect(sizeForNode(2, "二级主题").height).toBe(44);
+    expect(sizeForNode(4, "更深层主题").height).toBe(44);
+    expect(sizeForNode(2, "第一行\n第二行\n第三行").height).toBe(83);
   });
 
   it("keeps a short connector gap and pushes descendants when a parent widens", () => {

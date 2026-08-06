@@ -429,13 +429,9 @@
   top: 0;
   left: 0;
   transform-origin: 0 0;
-  transition: transform var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1);
+  transition: none;
   will-change: transform;
   pointer-events: none;
-}
-
-.mindmap-canvas.is-panning .mindmap-canvas__content {
-  transition: none;
 }
 
 .selection-marquee {
@@ -553,9 +549,21 @@
   font-weight: 620;
 }
 
-.mind-node--leaf .mind-node__content,
-.mind-node--leaf .mind-node__editor {
-  --node-padding-block: 7px;
+.mind-node.is-markdown-divider .mind-node__content {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+}
+
+.mind-node__divider {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: var(--muted-soft);
+  border-radius: var(--radius-node);
+}
+
+.mind-node.is-markdown-divider.is-selected .mind-node__divider,
+.mind-node.is-markdown-divider.is-primary .mind-node__divider {
+  background: var(--violet);
 }
 
 .mind-node--branch .mind-node__content {

@@ -6,6 +6,7 @@ import {
 } from "react";
 import {
   emptyNodeLabel,
+  isMarkdownThematicBreak,
   nodePlaceholder,
 } from "../../model/canvasRender";
 import type { LayoutNode, MindNode } from "../../types/mindmap";
@@ -52,6 +53,7 @@ export const MindMapNode = memo(function MindMapNode({
   const inputMethodComposingRef = useRef(false);
   const placeholder = nodePlaceholder(layout);
   const empty = node.text.length === 0;
+  const markdownDivider = isMarkdownThematicBreak(node.text);
 
   useLayoutEffect(() => {
     if (!editing) return;
@@ -61,7 +63,7 @@ export const MindMapNode = memo(function MindMapNode({
 
   return (
     <div
-      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${dragging ? "is-dragging" : ""} ${dropTarget ? "is-drop-target" : ""}`}
+      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${dragging ? "is-dragging" : ""} ${dropTarget ? "is-drop-target" : ""}`}
       data-node-id={node.id}
       onPointerDown={onDragPointerDown}
       style={{
@@ -115,7 +117,11 @@ export const MindMapNode = memo(function MindMapNode({
       ) : (
         <button
           aria-label={
-            node.text.trim() ? undefined : emptyNodeLabel(layout)
+            markdownDivider
+              ? "Markdown 分隔线"
+              : node.text.trim()
+                ? undefined
+                : emptyNodeLabel(layout)
           }
           aria-pressed={selected}
           className={`mind-node__content ${empty ? "is-placeholder" : ""}`}
@@ -125,7 +131,13 @@ export const MindMapNode = memo(function MindMapNode({
           onDoubleClick={() => onBeginEdit(node.id)}
           type="button"
         >
-          {empty ? placeholder : node.text}
+          {markdownDivider ? (
+            <span aria-hidden="true" className="mind-node__divider" />
+          ) : empty ? (
+            placeholder
+          ) : (
+            node.text
+          )}
         </button>
       )}
       {node.children.length > 0 && (

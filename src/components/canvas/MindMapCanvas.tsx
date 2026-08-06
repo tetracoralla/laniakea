@@ -1,8 +1,10 @@
 import {
   forwardRef,
   useCallback,
+  useDeferredValue,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,7 +32,10 @@ import type {
   SelectionState,
   Viewport,
 } from "../../types/mindmap";
-import { visibleLayoutNodeIds } from "../../model/viewportCulling";
+import {
+  viewportNeedsRenderWindowRefresh,
+  visibleLayoutNodeIds,
+} from "../../model/viewportCulling";
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
 import { SelectionMarquee } from "./SelectionMarquee";
@@ -112,9 +117,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       width: Math.max(1, window.innerWidth),
       height: Math.max(1, window.innerHeight),
     }));
+    const containerSizeRef = useRef(containerSize);
     const [renderViewportState, setRenderViewportState] = useState(
       document.viewport,
     );
+    const renderViewportStateRef = useRef(document.viewport);
+    containerSizeRef.current = containerSize;
     const documentLayout = useMemo(
       () => {
         const next = shareStableLayout(
@@ -133,10 +141,11 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       editingLayout && draft === ""
         ? (nodePlaceholder(editingLayout) ?? "")
         : draft;
+    const deferredDraftSizingText = useDeferredValue(draftSizingText);
     const draftSize = editingLayout
       ? sizeForNode(
           editingLayout.depth,
-          draftSizingText,
+          deferredDraftSizingText,
           editingLayout.rootKind,
         )
       : null;
@@ -160,7 +169,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           height: draftSize.height,
           layout: computeLayout(document, {
             id: editingId,
-            text: draftSizingText,
+            text: deferredDraftSizingText,
           }),
         };
       }
@@ -175,9 +184,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           heightAwareLayout,
           document,
           editingId,
-          draftSizingText,
+          deferredDraftSizingText,
         ),
-      [document, draftSizingText, editingId, heightAwareLayout],
+      [document, deferredDraftSizingText, editingId, heightAwareLayout],
     );
     visibleIdsRef.current = layout.visibleIds;
     const viewport = document.viewport;
@@ -190,7 +199,18 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       if (viewportFrame.current === null) {
         viewportFrame.current = window.requestAnimationFrame(() => {
           viewportFrame.current = null;
-          setRenderViewportState(liveViewport.current);
+          const live = liveViewport.current;
+          if (
+            !viewportNeedsRenderWindowRefresh(
+              renderViewportStateRef.current,
+              live,
+              containerSizeRef.current,
+            )
+          ) {
+            return;
+          }
+          renderViewportStateRef.current = live;
+          setRenderViewportState(live);
         });
       }
     }, []);
@@ -203,6 +223,34 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         persistTimer.current = null;
       }, 120);
     }, [onViewportChange, renderViewport]);
+
+    const handleWheel = useCallback((event: WheelEvent) => {
+      event.preventDefault();
+      if (event.metaKey || event.ctrlKey) {
+        const bounds = containerRef.current?.getBoundingClientRect();
+        if (!bounds) return;
+        const current = liveViewport.current;
+        const nextZoom = clampZoom(
+          current.zoom * (event.deltaY > 0 ? 0.92 : 1.08),
+        );
+        const pointX = event.clientX - bounds.left;
+        const pointY = event.clientY - bounds.top;
+        const contentX = (pointX - current.x) / current.zoom;
+        const contentY = (pointY - current.y) / current.zoom;
+        scheduleViewportCommit({
+          zoom: nextZoom,
+          x: pointX - contentX * nextZoom,
+          y: pointY - contentY * nextZoom,
+        });
+        return;
+      }
+      const current = liveViewport.current;
+      scheduleViewportCommit({
+        ...current,
+        x: current.x - event.deltaX,
+        y: current.y - event.deltaY,
+      });
+    }, [scheduleViewportCommit]);
 
     const {
       activeSelection,
@@ -353,9 +401,22 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       [layout, selection.primaryId, viewport],
     );
 
-    useEffect(() => {
-      renderViewport(viewport);
-    }, [renderViewport, viewport]);
+    useLayoutEffect(() => {
+      liveViewport.current = viewport;
+      if (contentRef.current) {
+        contentRef.current.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.zoom})`;
+      }
+      if (
+        viewportNeedsRenderWindowRefresh(
+          renderViewportStateRef.current,
+          viewport,
+          containerSizeRef.current,
+        )
+      ) {
+        renderViewportStateRef.current = viewport;
+        setRenderViewportState(viewport);
+      }
+    }, [viewport]);
 
     useEffect(() => {
       const container = containerRef.current;
@@ -373,11 +434,21 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       return () => observer.disconnect();
     }, []);
 
+    useEffect(() => {
+      const container = containerRef.current;
+      if (!container) return;
+      container.addEventListener("wheel", handleWheel, {
+        passive: false,
+      });
+      return () => container.removeEventListener("wheel", handleWheel);
+    }, [handleWheel]);
+
     useEffect(
       () => () => {
         if (persistTimer.current) window.clearTimeout(persistTimer.current);
         if (viewportFrame.current !== null) {
           window.cancelAnimationFrame(viewportFrame.current);
+          viewportFrame.current = null;
         }
       },
       [],
@@ -434,33 +505,6 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           nodeDragBindings.onPointerUp(event);
           bindings.onPointerUp(event);
         }}
-        onWheel={(event) => {
-          event.preventDefault();
-          if (event.metaKey || event.ctrlKey) {
-            const bounds = containerRef.current?.getBoundingClientRect();
-            if (!bounds) return;
-            const current = liveViewport.current;
-            const nextZoom = clampZoom(
-              current.zoom * (event.deltaY > 0 ? 0.92 : 1.08),
-            );
-            const pointX = event.clientX - bounds.left;
-            const pointY = event.clientY - bounds.top;
-            const contentX = (pointX - current.x) / current.zoom;
-            const contentY = (pointY - current.y) / current.zoom;
-            scheduleViewportCommit({
-              zoom: nextZoom,
-              x: pointX - contentX * nextZoom,
-              y: pointY - contentY * nextZoom,
-            });
-          } else {
-            const current = liveViewport.current;
-            scheduleViewportCommit({
-              ...current,
-              x: current.x - event.deltaX,
-              y: current.y - event.deltaY,
-            });
-          }
-        }}
         ref={containerRef}
         role="application"
         tabIndex={0}
@@ -471,6 +515,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           style={{
             width: layout.width,
             height: layout.height,
+            transition: "none",
             transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.zoom})`,
           }}
         >

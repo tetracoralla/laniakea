@@ -12,6 +12,15 @@ export function emptyNodeLabel(layout: LayoutNode): string {
   return "空白节点";
 }
 
+export function isMarkdownThematicBreak(text: string): boolean {
+  const value = text.trim();
+  return (
+    /^(?:\*\s*){3,}$/.test(value) ||
+    /^(?:-\s*){3,}$/.test(value) ||
+    /^(?:_\s*){3,}$/.test(value)
+  );
+}
+
 export function draftForNode(
   nodeId: string,
   editingId: string | null,

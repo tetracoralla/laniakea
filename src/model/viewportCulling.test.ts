@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { LayoutResult } from "../types/mindmap";
-import { visibleLayoutNodeIds } from "./viewportCulling";
+import {
+  viewportNeedsRenderWindowRefresh,
+  visibleLayoutNodeIds,
+} from "./viewportCulling";
 
 function largeLayout(count: number): LayoutResult {
   const visibleIds = Array.from(
@@ -38,8 +41,9 @@ describe("viewport node culling", () => {
     );
 
     expect(ids.length).toBeGreaterThan(10);
-    expect(ids.length).toBeLessThan(30);
+    expect(ids.length).toBeLessThan(40);
     expect(ids).toContain("node-0");
+    expect(ids).toContain("node-30");
     expect(ids).not.toContain("node-100");
   });
 
@@ -52,5 +56,34 @@ describe("viewport node culling", () => {
     );
 
     expect(ids).toContain("node-3200");
+  });
+
+  it("reuses the mounted window for small movements and refreshes before its buffer expires", () => {
+    const size = { width: 1200, height: 900 };
+
+    expect(
+      viewportNeedsRenderWindowRefresh(
+        { x: 0, y: 0, zoom: 1 },
+        { x: -400, y: -300, zoom: 1 },
+        size,
+      ),
+    ).toBe(false);
+    expect(
+      viewportNeedsRenderWindowRefresh(
+        { x: 0, y: 0, zoom: 1 },
+        { x: -700, y: 0, zoom: 1 },
+        size,
+      ),
+    ).toBe(true);
+  });
+
+  it("refreshes when zooming would reveal content beyond the mounted window", () => {
+    expect(
+      viewportNeedsRenderWindowRefresh(
+        { x: 0, y: 0, zoom: 1 },
+        { x: 0, y: 0, zoom: 0.52 },
+        { width: 1200, height: 900 },
+      ),
+    ).toBe(true);
   });
 });

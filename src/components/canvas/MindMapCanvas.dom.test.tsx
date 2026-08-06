@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
+import { Profiler, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../App";
@@ -355,6 +356,175 @@ describe("rendered interaction regressions", () => {
     expect(mountedNodes).toBeLessThan(40);
     expect(container.querySelector("[data-node-id='root']")).not.toBeNull();
     expect(elapsed).toBeLessThan(1_000);
+  });
+
+  it("keeps the latest pan transform and renders the incoming viewport in the same frame", async () => {
+    const document = largeDocument(5_000);
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft=""
+          editingId={null}
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          selection={singleSelection(document.rootId)}
+        />,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    const content = container.querySelector<HTMLElement>(
+      ".mindmap-canvas__content",
+    )!;
+    expect(content.style.transition).toBe("none");
+    expect(container.querySelector("[data-node-id='node-30']")).toBeNull();
+
+    const firstWheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaY: 800,
+    });
+    await act(async () => {
+      canvas.dispatchEvent(firstWheel);
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          deltaY: 800,
+        }),
+      );
+    });
+    expect(firstWheel.defaultPrevented).toBe(true);
+    expect(content.style.transform).toBe(
+      "translate3d(0px, -1600px, 0) scale(1)",
+    );
+
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(16));
+    });
+
+    expect(content.style.transform).toBe(
+      "translate3d(0px, -1600px, 0) scale(1)",
+    );
+    expect(
+      container.querySelector("[data-node-id='node-30']"),
+    ).not.toBeNull();
+  });
+
+  it("keeps small pans compositor-only until the mounted window needs refreshing", async () => {
+    const document = largeDocument(5_000);
+    let commits = 0;
+    await act(async () => {
+      root.render(
+        <Profiler id="canvas" onRender={() => commits += 1}>
+          <MindMapCanvas
+            document={document}
+            draft=""
+            editingId={null}
+            onAttachNode={() => undefined}
+            onBeginEdit={() => undefined}
+            onCancelEdit={() => undefined}
+            onCommitEdit={() => undefined}
+            onDetachNode={() => undefined}
+            onDraftChange={() => undefined}
+            onPasteStructured={() => false}
+            onSelectionChange={() => undefined}
+            onSpaceTap={() => undefined}
+            onToggle={() => undefined}
+            onViewportChange={() => undefined}
+            selection={singleSelection(document.rootId)}
+          />
+        </Profiler>,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    const initialCommits = commits;
+
+    for (let index = 0; index < 4; index += 1) {
+      await act(async () => {
+        canvas.dispatchEvent(
+          new WheelEvent("wheel", {
+            bubbles: true,
+            cancelable: true,
+            deltaY: 100,
+          }),
+        );
+        animationFrames.splice(0).forEach((callback) => callback(16));
+      });
+    }
+
+    expect(commits).toBe(initialCommits);
+
+    await act(async () => {
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          deltaY: 400,
+        }),
+      );
+      animationFrames.splice(0).forEach((callback) => callback(32));
+    });
+
+    expect(commits).toBe(initialCommits + 1);
+  });
+
+  it("refreshes incoming nodes when mounted under React strict mode", async () => {
+    const document = largeDocument(5_000);
+    await act(async () => {
+      root.render(
+        <StrictMode>
+          <MindMapCanvas
+            document={document}
+            draft=""
+            editingId={null}
+            onAttachNode={() => undefined}
+            onBeginEdit={() => undefined}
+            onCancelEdit={() => undefined}
+            onCommitEdit={() => undefined}
+            onDetachNode={() => undefined}
+            onDraftChange={() => undefined}
+            onPasteStructured={() => false}
+            onSelectionChange={() => undefined}
+            onSpaceTap={() => undefined}
+            onToggle={() => undefined}
+            onViewportChange={() => undefined}
+            selection={singleSelection(document.rootId)}
+          />
+        </StrictMode>,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+
+    await act(async () => {
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          deltaY: 1_600,
+        }),
+      );
+      animationFrames.splice(0).forEach((callback) => callback(16));
+    });
+
+    expect(
+      container.querySelector("[data-node-id='node-30']"),
+    ).not.toBeNull();
   });
 
   it("shows persistent empty-state prompts without storing them as content", async () => {

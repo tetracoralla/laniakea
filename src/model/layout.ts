@@ -8,7 +8,7 @@ import { nodePlaceholder } from "./canvasRender";
 
 const tones: BranchTone[] = ["violet", "blue", "emerald", "amber"];
 const emphasizedNodeHeight = 48;
-const leafNodeHeight = 40;
+const leafNodeHeight = 44;
 const siblingGap = 14;
 const branchGap = 30;
 const rootX = 92;
@@ -96,11 +96,8 @@ export function sizeForNode(
           Math.max(1, Math.ceil(textUnits(line) / lineCapacity))
         );
       }, 0);
-  const verticalPadding = isLeaf
-    ? 14
-    : isMainRoot || isFloatingRoot
-      ? 20
-      : 18;
+  const verticalPadding = 20;
+  const verticalBorders = 2;
   const minimumHeight = isLeaf
     ? leafNodeHeight
     : emphasizedNodeHeight;
@@ -108,7 +105,11 @@ export function sizeForNode(
     width,
     height: Math.max(
       minimumHeight,
-      Math.ceil(lineCount * fontSize * 1.35 + verticalPadding),
+      Math.ceil(
+        lineCount * fontSize * 1.35 +
+          verticalPadding +
+          verticalBorders,
+      ),
     ),
   };
 }

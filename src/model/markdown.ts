@@ -24,6 +24,11 @@ const markdownProcessor = unified()
     listItemIndent: "one",
   });
 
+const nodeTextLinesCache = new WeakMap<
+  MindNode,
+  { text: string; lines: string[] }
+>();
+
 export interface MarkdownParseResult {
   document: MindMapDocument;
   /**
@@ -119,6 +124,14 @@ function safeLineText(value: string): string[] {
   return lines.length > 0 ? lines : [""];
 }
 
+function safeNodeText(node: MindNode): string[] {
+  const cached = nodeTextLinesCache.get(node);
+  if (cached?.text === node.text) return cached.lines;
+  const lines = safeLineText(node.text);
+  nodeTextLinesCache.set(node, { text: node.text, lines });
+  return lines;
+}
+
 export function subtreeToMarkdown(
   document: MindMapDocument,
   rootId = document.rootId,
@@ -129,7 +142,7 @@ export function subtreeToMarkdown(
     const node = document.nodes[id];
     if (!node) return;
     const indent = "  ".repeat(depth);
-    const textLines = safeLineText(node.text);
+    const textLines = safeNodeText(node);
     lines.push(`${indent}- ${textLines[0]}`);
     textLines.slice(1).forEach((line) => {
       lines.push(`${indent}  ${line}`);
@@ -213,7 +226,9 @@ function listItemText(item: ListItem): string {
   const first = item.children[0];
   if (!first || first.type === "list") return "";
   const text =
-    first.type === "paragraph" && !isPlainParagraph(first)
+    first.type === "thematicBreak"
+      ? blockLabel(first)
+      : first.type === "paragraph" && !isPlainParagraph(first)
       ? stringifyBlock(first)
       : toString(first);
   const taskPrefix =
@@ -273,6 +288,7 @@ function stringifyBlock(node: RootContent): string {
 }
 
 function blockLabel(node: RootContent): string {
+  if (node.type === "thematicBreak") return "***";
   if (node.type === "paragraph" && isPlainParagraph(node)) {
     return toString(node).trim();
   }

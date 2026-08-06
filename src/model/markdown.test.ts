@@ -102,6 +102,16 @@ describe("Markdown import and export", () => {
     ).toBe("");
   });
 
+  it("invalidates cached Markdown text if a legacy caller mutates a node", () => {
+    const source = createBlankDocument();
+    documentToMarkdown(source);
+
+    source.nodes.root.text = "缓存后修改";
+    const markdown = documentToMarkdown(source);
+
+    expect(markdown).toContain("- 缓存后修改");
+  });
+
   it("round-trips floating branches as ordinary top-level Markdown items", () => {
     const source = createSeedDocument();
     source.nodes.root.children = source.nodes.root.children.filter(
@@ -174,6 +184,30 @@ describe("Markdown import and export", () => {
     expect(labels.some((text) => text.includes("| 指标 | 目标 |"))).toBe(
       true,
     );
+  });
+
+  it("recognizes a Markdown thematic break as a stable canvas divider marker", () => {
+    const parsed = parseMarkdownDocument(
+      [
+        "# 方案",
+        "",
+        "正文",
+        "",
+        "---",
+        "",
+        "- 任务",
+        "  - ***",
+        "  - 后续",
+      ].join("\n"),
+      "方案",
+    );
+    const labels = Object.values(parsed.document.nodes).map(
+      (node) => node.text,
+    );
+
+    expect(parsed.sourceKind).toBe("rich");
+    expect(labels.filter((label) => label === "***")).toHaveLength(2);
+    expect(labels).toContain("后续");
   });
 
   it("keeps non-tree Markdown as ordinary editable and deletable nodes", () => {
