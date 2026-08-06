@@ -46,6 +46,10 @@ export interface DocumentSaveResult {
   auxiliaryWarning: string | null;
 }
 
+interface DocumentSaveOptions {
+  viewportOnly?: boolean;
+}
+
 export interface DraftDocumentResult {
   documentPath: string;
   sourceHash: string;
@@ -321,7 +325,9 @@ export async function saveLocalDocument(
   documentPath: string | null = null,
   expectedSourceHash: string | null = null,
   protectedSourcePath: string | null = null,
+  options: DocumentSaveOptions = {},
 ): Promise<DocumentSaveResult> {
+  const viewportOnly = options.viewportOnly ?? false;
   const serialized = JSON.stringify(document);
   try {
     if (isDesktopRuntime()) {
@@ -330,7 +336,9 @@ export async function saveLocalDocument(
         documentPath,
         expectedSourceHash,
         protectedSourcePath,
-        markdownContent: isMarkdownDocumentPath(documentPath)
+        viewportOnly,
+        markdownContent:
+          isMarkdownDocumentPath(documentPath) && !viewportOnly
           ? documentToMarkdown(document)
           : null,
       });

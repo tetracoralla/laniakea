@@ -127,11 +127,33 @@ describe("desktop Markdown document persistence", () => {
         documentPath: "/tmp/方案.md",
         expectedSourceHash: "hash-v1",
         protectedSourcePath: null,
+        viewportOnly: false,
         markdownContent: expect.stringContaining(
           "- 做一个思维导图 APP",
         ),
       }),
     );
+  });
+
+  it("saves only Markdown view state for a viewport change", async () => {
+    invoke.mockResolvedValueOnce({ sourceHash: "hash-v1" });
+
+    await saveLocalDocument(
+      createSeedDocument(),
+      "/tmp/方案.md",
+      "hash-v1",
+      null,
+      { viewportOnly: true },
+    );
+
+    expect(invoke).toHaveBeenCalledWith("save_local_document", {
+      documentJson: expect.any(String),
+      documentPath: "/tmp/方案.md",
+      expectedSourceHash: "hash-v1",
+      protectedSourcePath: null,
+      viewportOnly: true,
+      markdownContent: null,
+    });
   });
 
   it("passes a protected rich Markdown source to the native save guard", async () => {

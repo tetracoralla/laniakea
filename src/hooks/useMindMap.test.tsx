@@ -196,6 +196,13 @@ describe("mind map save presentation", () => {
       await Promise.resolve();
     });
     expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(1);
+    expect(persistence.saveLocalDocument).toHaveBeenCalledWith(
+      expect.any(Object),
+      "/tmp/方案.md",
+      "hash-v1",
+      null,
+      { viewportOnly: true },
+    );
     expect(
       container.querySelector("[data-testid='save-state']")?.textContent,
     ).toBe("saved");
@@ -228,6 +235,12 @@ describe("mind map save presentation", () => {
       await Promise.resolve();
     });
     expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(1);
+    expect(persistence.saveLocalDocument).toHaveBeenCalledWith(
+      expect.any(Object),
+      "/tmp/方案.md",
+      "hash-v1",
+      null,
+    );
     expect(
       container.querySelector("[data-testid='save-state']")?.textContent,
     ).toBe("saved");

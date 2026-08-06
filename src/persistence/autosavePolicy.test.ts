@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBlankDocument } from "../data/seed";
 import {
+  sharesDocumentContent,
   shouldDeferUnboundCopyAutosave,
   sourceContentFingerprint,
 } from "./autosavePolicy";
@@ -19,8 +20,10 @@ describe("unbound imported-copy autosave policy", () => {
         moved,
         null,
         protectedContent,
+        imported,
       ),
     ).toBe(true);
+    expect(sharesDocumentContent(moved, imported)).toBe(true);
   });
 
   it("allows recovery autosave after the imported content changes", () => {
@@ -41,8 +44,10 @@ describe("unbound imported-copy autosave policy", () => {
         edited,
         null,
         protectedContent,
+        imported,
       ),
     ).toBe(false);
+    expect(sharesDocumentContent(edited, imported)).toBe(false);
   });
 
   it("never blocks an explicit save to a Markdown path", () => {

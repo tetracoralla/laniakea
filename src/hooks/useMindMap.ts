@@ -13,6 +13,7 @@ import {
 } from "../model/selection";
 import type { DocumentMutation } from "../model/tree";
 import {
+  sharesDocumentContent,
   shouldDeferUnboundCopyAutosave,
   sourceContentFingerprint,
 } from "../persistence/autosavePolicy";
@@ -97,7 +98,13 @@ export function useMindMap({
   const startupModeRef = useRef<StartupMode>("loading");
   const startupReadyWaiters = useRef(new Set<() => void>());
   const skipNextSave = useRef<MindMapDocument | null>(null);
+  const lastPersistedContentDocument = useRef<MindMapDocument | null>(
+    null,
+  );
   const protectedUnboundSourceContent = useRef<string | null>(null);
+  const protectedUnboundSourceDocument = useRef<MindMapDocument | null>(
+    null,
+  );
   const protectedUnboundSourcePath = useRef<string | null>(null);
   const silentAutosaveDocuments = useRef(
     new WeakSet<MindMapDocument>(),
@@ -143,6 +150,7 @@ export function useMindMap({
         target,
         targetPath,
         protectedUnboundSourceContent.current,
+        protectedUnboundSourceDocument.current,
       )
     ) {
       setSaveState("saved");
@@ -155,6 +163,7 @@ export function useMindMap({
     }
     if (protectedUnboundSourceContent.current !== null) {
       protectedUnboundSourceContent.current = null;
+      protectedUnboundSourceDocument.current = null;
     }
     const request = ++saveRequest.current;
     if (!silent) {
@@ -170,12 +179,32 @@ export function useMindMap({
           !newBinding &&
           targetPath !== null &&
           targetPath === documentPathRef.current;
-        const result = await saveLocalDocument(
-          target,
-          targetPath,
-          savingCurrentBinding ? sourceHashRef.current : null,
-          protectedSourceForSave,
+        const expectedSourceHash = savingCurrentBinding
+          ? sourceHashRef.current
+          : null;
+        const viewportOnly = Boolean(
+          silent &&
+          lastPersistedContentDocument.current &&
+          sharesDocumentContent(
+            target,
+            lastPersistedContentDocument.current,
+          ),
         );
+        const result = viewportOnly
+          ? await saveLocalDocument(
+              target,
+              targetPath,
+              expectedSourceHash,
+              protectedSourceForSave,
+              { viewportOnly: true },
+            )
+          : await saveLocalDocument(
+              target,
+              targetPath,
+              expectedSourceHash,
+              protectedSourceForSave,
+            );
+        lastPersistedContentDocument.current = target;
         if (savingCurrentBinding) {
           sourceHashRef.current = result.sourceHash;
         }
@@ -237,6 +266,10 @@ export function useMindMap({
             loaded.importedAsCopy && loaded.sourcePath
               ? sourceContentFingerprint(loaded.document)
               : null;
+          protectedUnboundSourceDocument.current =
+            loaded.importedAsCopy && loaded.sourcePath
+              ? loaded.document
+              : null;
           protectedUnboundSourcePath.current =
             loaded.importedAsCopy ? loaded.sourcePath : null;
           if (
@@ -244,6 +277,9 @@ export function useMindMap({
             protectedUnboundSourceContent.current === null
           ) {
             skipNextSave.current = loaded.document;
+            lastPersistedContentDocument.current = loaded.document;
+          } else {
+            lastPersistedContentDocument.current = null;
           }
           setHistory(
             createEditorHistory({
@@ -269,7 +305,9 @@ export function useMindMap({
           setDocumentPath(null);
           setSourceDocumentPath(null);
           protectedUnboundSourceContent.current = null;
+          protectedUnboundSourceDocument.current = null;
           protectedUnboundSourcePath.current = null;
+          lastPersistedContentDocument.current = null;
           setStartupMode("fresh");
         }
 
@@ -332,6 +370,7 @@ export function useMindMap({
         snapshot.document,
         documentPath,
         protectedUnboundSourceContent.current,
+        protectedUnboundSourceDocument.current,
       )
     ) {
       skipNextSave.current = null;
@@ -342,6 +381,7 @@ export function useMindMap({
     }
     if (protectedUnboundSourceContent.current !== null) {
       protectedUnboundSourceContent.current = null;
+      protectedUnboundSourceDocument.current = null;
     }
     if (skipNextSave.current === snapshot.document) {
       skipNextSave.current = null;
@@ -422,10 +462,15 @@ export function useMindMap({
     protectedUnboundSourceContent.current = protectUnboundCopy
       ? sourceContentFingerprint(document)
       : null;
+    protectedUnboundSourceDocument.current = protectUnboundCopy
+      ? document
+      : null;
     protectedUnboundSourcePath.current = protectUnboundCopy
       ? sourcePath
       : null;
     skipNextSave.current =
+      skipAutosave && !protectUnboundCopy ? document : null;
+    lastPersistedContentDocument.current =
       skipAutosave && !protectUnboundCopy ? document : null;
     const recentPath = sourcePath ?? path;
     if (recentPath) {
@@ -476,7 +521,9 @@ export function useMindMap({
     try {
       const created = await createMarkdownDraft(latestDocument.current);
       protectedUnboundSourceContent.current = null;
+      protectedUnboundSourceDocument.current = null;
       protectedUnboundSourcePath.current = null;
+      lastPersistedContentDocument.current = latestDocument.current;
       documentPathRef.current = created.documentPath;
       sourceHashRef.current = created.sourceHash;
       setDocumentPath(created.documentPath);
@@ -584,7 +631,9 @@ export function useMindMap({
     }
     if (saved) {
       protectedUnboundSourceContent.current = null;
+      protectedUnboundSourceDocument.current = null;
       protectedUnboundSourcePath.current = null;
+      lastPersistedContentDocument.current = latestDocument.current;
       documentPathRef.current = path;
       sourceHashRef.current = saved.sourceHash;
       setDocumentPath(path);

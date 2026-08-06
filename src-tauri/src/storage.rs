@@ -628,6 +628,37 @@ fn save_markdown_document(
     )
 }
 
+fn save_markdown_view_state(
+    app_data: &Path,
+    target: &Path,
+    document_json: &str,
+    expected_source_hash: Option<&str>,
+) -> Result<MarkdownSaveResult, String> {
+    ensure_markdown_path(target)?;
+    validate_document(document_json)?;
+    let expected_source_hash =
+        expected_source_hash.ok_or_else(|| "保存 Markdown 画布状态时缺少源文件版本".to_string())?;
+    let content = fs::read_to_string(target).map_err(|error| {
+        if error.kind() == ErrorKind::NotFound {
+            format!("{EXTERNAL_DOCUMENT_CONFLICT}: Markdown 文件已被移动或删除，画布状态未保存")
+        } else {
+            storage_error("无法读取 Markdown 文件", error)
+        }
+    })?;
+    let source_hash = content_hash_string(&content);
+    if expected_source_hash != source_hash {
+        return Err(format!(
+            "{EXTERNAL_DOCUMENT_CONFLICT}: Markdown 文件已在其他应用中修改，画布状态未保存"
+        ));
+    }
+
+    write_markdown_state(app_data, target, &content, document_json)?;
+    Ok(MarkdownSaveResult {
+        source_hash,
+        auxiliary_warning: None,
+    })
+}
+
 fn canonical_path_for_comparison(path: &Path) -> Result<PathBuf, String> {
     match fs::canonicalize(path) {
         Ok(canonical) => Ok(canonical),
@@ -1114,6 +1145,7 @@ pub(crate) async fn save_local_document(
     markdown_content: Option<String>,
     expected_source_hash: Option<String>,
     protected_source_path: Option<String>,
+    viewport_only: Option<bool>,
 ) -> Result<SaveDocumentResult, String> {
     let app_data = app
         .path()
@@ -1124,17 +1156,26 @@ pub(crate) async fn save_local_document(
         .map_or_else(|| recovery_target(&app_data), PathBuf::from);
     tauri::async_runtime::spawn_blocking(move || {
         if document_path.is_some() && is_markdown_path(&target) {
-            let content = markdown_content
-                .as_deref()
-                .ok_or_else(|| "保存 Markdown 文件时缺少正文内容".to_string())?;
-            let saved = save_markdown_document_with_protected_source(
-                &app_data,
-                &target,
-                content,
-                &document_json,
-                expected_source_hash.as_deref(),
-                protected_source_path.as_deref().map(Path::new),
-            )?;
+            let saved = if viewport_only.unwrap_or(false) {
+                save_markdown_view_state(
+                    &app_data,
+                    &target,
+                    &document_json,
+                    expected_source_hash.as_deref(),
+                )?
+            } else {
+                let content = markdown_content
+                    .as_deref()
+                    .ok_or_else(|| "保存 Markdown 文件时缺少正文内容".to_string())?;
+                save_markdown_document_with_protected_source(
+                    &app_data,
+                    &target,
+                    content,
+                    &document_json,
+                    expected_source_hash.as_deref(),
+                    protected_source_path.as_deref().map(Path::new),
+                )?
+            };
             let mut warnings = saved.auxiliary_warning.into_iter().collect::<Vec<_>>();
             if let Err(error) = set_active_document(&app_data, Some(target.as_path())) {
                 warnings.push(error);
@@ -1439,6 +1480,60 @@ mod tests {
 
         save_to_target(&app_data, &target, &document("内容已变")).unwrap();
         assert_eq!(backup_count(&app_data, &target), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn saves_markdown_view_state_without_rewriting_the_source() {
+        let directory = test_directory("markdown-view-state");
+        let app_data = directory.join("app-data");
+        let target = directory.join("viewport.md");
+        let content = "# 内容未变\n\n- 内容未变\n";
+        let initial =
+            save_markdown_document(&app_data, &target, content, &document("内容未变"), None)
+                .unwrap();
+        let moved_viewport = document("内容未变").replace("\"x\":0", "\"x\":125");
+
+        let saved = save_markdown_view_state(
+            &app_data,
+            &target,
+            &moved_viewport,
+            Some(&initial.source_hash),
+        )
+        .unwrap();
+
+        assert_eq!(saved.source_hash, initial.source_hash);
+        assert_eq!(fs::read_to_string(&target).unwrap(), content);
+        assert!(read_markdown_state(&app_data, &target, content)
+            .unwrap()
+            .contains("\"x\":125"));
+        assert_eq!(markdown_backup_count(&app_data, &target), 0);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn rejects_markdown_view_state_when_the_source_changed_externally() {
+        let directory = test_directory("markdown-view-state-conflict");
+        let app_data = directory.join("app-data");
+        let target = directory.join("viewport.md");
+        let original = "# 原内容\n\n- 原内容\n";
+        let initial =
+            save_markdown_document(&app_data, &target, original, &document("原内容"), None)
+                .unwrap();
+        fs::write(&target, "# 外部修改\n\n- 外部修改\n").unwrap();
+
+        let error = save_markdown_view_state(
+            &app_data,
+            &target,
+            &document("原内容").replace("\"x\":0", "\"x\":125"),
+            Some(&initial.source_hash),
+        )
+        .unwrap_err();
+
+        assert!(error.contains(EXTERNAL_DOCUMENT_CONFLICT));
+        assert!(read_markdown_state(&app_data, &target, original)
+            .unwrap()
+            .contains("\"x\":0"));
         fs::remove_dir_all(directory).unwrap();
     }
 
