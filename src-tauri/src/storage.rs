@@ -779,7 +779,7 @@ fn discard_internal_draft_in(app_data: &Path, source: &Path) -> Result<(), Strin
     let canonical_source =
         fs::canonicalize(source).map_err(|error| storage_error("找不到待清理的本地草稿", error))?;
     if !canonical_source.starts_with(&canonical_drafts) {
-        return Err("只能清理原点管理且尚未启用的本地草稿".to_string());
+        return Err("只能清理 Laniakea 管理且尚未启用的本地草稿".to_string());
     }
     let source_is_active = active_document_path(app_data)
         .and_then(|path| fs::canonicalize(path).ok())
@@ -808,7 +808,7 @@ fn move_internal_draft_in(
     let canonical_source =
         fs::canonicalize(source).map_err(|error| storage_error("找不到要移动的本地草稿", error))?;
     if !canonical_source.starts_with(&canonical_drafts) {
-        return Err("只能移动原点管理的本地草稿".to_string());
+        return Err("只能移动 Laniakea 管理的本地草稿".to_string());
     }
 
     let target_parent = target
@@ -817,7 +817,7 @@ fn move_internal_draft_in(
     let canonical_target_parent = fs::canonicalize(target_parent)
         .map_err(|error| storage_error("无法定位目标文件夹", error))?;
     if canonical_target_parent.starts_with(&canonical_app_data) {
-        return Err("请选择原点数据目录以外的位置".to_string());
+        return Err("请选择 Laniakea 数据目录以外的位置".to_string());
     }
 
     let content = fs::read_to_string(&canonical_source)
@@ -1424,7 +1424,7 @@ mod tests {
 
         let error = move_internal_draft_in(&app_data, &external, &target).unwrap_err();
 
-        assert!(error.contains("只能移动原点管理的本地草稿"));
+        assert!(error.contains("只能移动 Laniakea 管理的本地草稿"));
         assert!(external.exists());
         assert!(!target.exists());
         fs::remove_dir_all(directory).unwrap();

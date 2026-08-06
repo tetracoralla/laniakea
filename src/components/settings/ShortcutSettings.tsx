@@ -97,7 +97,7 @@ export function ShortcutSettings({
             {registered ? "当前可用" : "当前组合被占用"}
           </span>
         </div>
-        <p>在其他应用中按下这个组合，即可立即唤醒原点。</p>
+        <p>在其他应用中按下这个组合，即可立即唤醒 Laniakea。</p>
         <button
           className={`shortcut-recorder ${recording ? "is-recording" : ""}`}
           onClick={() => {

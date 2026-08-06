@@ -97,7 +97,7 @@ export async function chooseDocumentToOpen(
     multiple: false,
     filters: [
       {
-        name: "Markdown 与原点备份",
+        name: "Markdown 与 Laniakea 备份",
         extensions: ["json", "md", "markdown", "txt"],
       },
     ],
@@ -120,7 +120,7 @@ export async function chooseNativeDocumentPath(
     ),
     filters: [
       {
-        name: "原点思维导图",
+        name: "Laniakea 思维导图",
         extensions: ["json"],
       },
     ],

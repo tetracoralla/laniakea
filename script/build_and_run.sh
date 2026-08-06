@@ -2,11 +2,11 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-PROCESS_NAME="origin-mind-mapper"
+PROCESS_NAME="laniakea"
 BUNDLE_ID="com.openadam.origin"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_BUNDLE="$ROOT_DIR/src-tauri/target/release/bundle/macos/原点.app"
+APP_BUNDLE="$ROOT_DIR/src-tauri/target/release/bundle/macos/Laniakea.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$PROCESS_NAME"
 
 pkill -f "${PROCESS_NAME}$" >/dev/null 2>&1 || true

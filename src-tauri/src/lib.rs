@@ -265,7 +265,7 @@ pub fn run() {
             storage::save_local_document,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building 原点")
+        .expect("error while building Laniakea")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             match event {
