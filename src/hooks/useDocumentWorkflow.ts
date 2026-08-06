@@ -9,15 +9,21 @@ import {
   markdownToDocument,
 } from "../model/markdown";
 import {
+  exportBrowserLibrary,
+  restoreBrowserLibrary,
+} from "../persistence/browserDocumentStore";
+import {
   chooseDocumentToOpen,
   chooseMarkdownDocumentPath,
 } from "../persistence/documentFileDialog";
 import type { RecentDocument } from "../persistence/recentDocuments";
 import {
   activateLocalDocument,
+  browserDocumentConflictMessage,
   clearActiveDocument,
   discardInternalDraft,
   externalDocumentConflictMessage,
+  isBrowserDocumentPath,
   isDesktopRuntime,
   openLocalDocument,
   readOutlineFile,
@@ -40,7 +46,7 @@ interface DocumentWorkflowOptions {
   saveError: string | null;
   saveWarning?: string | null;
   notify: (notice: AppNotice) => void;
-  newDocument: () => Promise<{
+  newDocument: (document?: MindMapDocument) => Promise<{
     document: MindMapDocument;
     documentPath: string | null;
     sourceHash: string | null;
@@ -64,6 +70,7 @@ interface DocumentWorkflowOptions {
     targetPath: string,
   ) => Promise<boolean>;
   removeRecentDocument: (path: string) => void;
+  refreshBrowserDocuments?: () => Promise<void>;
 }
 
 function downloadText(filename: string, content: string, type: string) {
@@ -79,6 +86,25 @@ function downloadText(filename: string, content: string, type: string) {
 function safeFilename(value: string): string {
   return value.trim().replace(/[\\/:*?"<>|]+/g, "-") || "未命名思维";
 }
+
+interface BrowserWritableFile {
+  write: (data: string) => Promise<void>;
+  close: () => Promise<void>;
+}
+
+interface BrowserFileHandle {
+  createWritable: () => Promise<BrowserWritableFile>;
+}
+
+type FilePickerWindow = Window & {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: Array<{
+      description: string;
+      accept: Record<string, string[]>;
+    }>;
+  }) => Promise<BrowserFileHandle>;
+};
 
 export function useDocumentWorkflow({
   document,
@@ -101,8 +127,11 @@ export function useDocumentWorkflow({
   finishDocumentSwitch,
   moveRecentDocument,
   removeRecentDocument,
+  refreshBrowserDocuments = async () => undefined,
 }: DocumentWorkflowOptions) {
   const importInputRef: RefObject<HTMLInputElement | null> =
+    useRef<HTMLInputElement>(null);
+  const backupInputRef: RefObject<HTMLInputElement | null> =
     useRef<HTMLInputElement>(null);
   const announcedSaveError = useRef<string | null>(null);
   const announcedSaveWarning = useRef<string | null>(null);
@@ -182,12 +211,16 @@ export function useDocumentWorkflow({
     try {
       if (!(await prepareDocumentSwitch(request))) return false;
       if (!isCurrentRequest()) return false;
-      if (/\.(md|markdown|mindmap\.json)$/i.test(path)) {
+      if (
+        isBrowserDocumentPath(path) ||
+        /\.(md|markdown|mindmap\.json)$/i.test(path)
+      ) {
         const loaded = await openLocalDocument(path);
         if (!isCurrentRequest()) return false;
         if (!loaded.document) throw new Error("原生文件没有可读取的内容");
-        const activationPath =
-          loaded.sourceFormat === "markdown"
+        const activationPath = isBrowserDocumentPath(path)
+          ? loaded.documentPath
+          : loaded.sourceFormat === "markdown"
             ? loaded.sourcePath
             : null;
         if (
@@ -353,12 +386,40 @@ export function useDocumentWorkflow({
   const saveAsMarkdownDocument = useCallback(async (): Promise<boolean> => {
     const operationSessionId = documentSessionId;
     if (!isDesktopRuntime()) {
-      downloadText(
-        `${safeFilename(document.title)}.md`,
-        documentToMarkdown(document),
-        "text/markdown;charset=utf-8",
-      );
-      notify({ message: "Markdown 已保存" });
+      const filename = `${safeFilename(document.title)}.md`;
+      const content = documentToMarkdown(document);
+      const browserWindow = window as FilePickerWindow;
+      if (browserWindow.showSaveFilePicker) {
+        try {
+          const handle = await browserWindow.showSaveFilePicker({
+            suggestedName: filename,
+            types: [
+              {
+                description: "Markdown",
+                accept: { "text/markdown": [".md", ".markdown"] },
+              },
+            ],
+          });
+          if (!isDocumentSessionCurrent(operationSessionId)) return false;
+          const writable = await handle.createWritable();
+          await writable.write(content);
+          await writable.close();
+          notify({ message: "Markdown 已保存到所选文件" });
+          return true;
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return false;
+          }
+          notify({
+            message:
+              error instanceof Error ? error.message : "无法保存 Markdown",
+            tone: "error",
+          });
+          return false;
+        }
+      }
+      downloadText(filename, content, "text/markdown;charset=utf-8");
+      notify({ message: "Markdown 已下载" });
       return true;
     }
 
@@ -401,6 +462,91 @@ export function useDocumentWorkflow({
     saveDocumentAs,
   ]);
 
+  const exportFullBackup = useCallback(async (): Promise<boolean> => {
+    if (isDesktopRuntime()) return false;
+    try {
+      const backup = await exportBrowserLibrary();
+      const date = new Date().toISOString().slice(0, 10);
+      downloadText(
+        `laniakea-backup-${date}.json`,
+        JSON.stringify(backup, null, 2),
+        "application/json;charset=utf-8",
+      );
+      notify({
+        message: `已导出 ${backup.documents.length} 张思维导图的完整备份`,
+      });
+      return true;
+    } catch (error) {
+      notify({
+        message:
+          error instanceof Error ? error.message : "无法导出完整备份",
+        tone: "error",
+      });
+      return false;
+    }
+  }, [notify]);
+
+  const openFullBackupRestore = useCallback(() => {
+    if (!isDesktopRuntime()) backupInputRef.current?.click();
+  }, []);
+
+  const restoreFullBackup = useCallback(async (file: File) => {
+    const request = beginDocumentSwitch();
+    try {
+      if (!(await prepareDocumentSwitch(request))) return false;
+      const rawBackup: unknown = JSON.parse(await file.text());
+      if (!isDocumentSwitchCurrent(request)) return false;
+      const restored = await restoreBrowserLibrary(rawBackup);
+      if (!isDocumentSwitchCurrent(request)) return false;
+      await refreshBrowserDocuments();
+      const active = restored.activeDocument;
+      if (active) {
+        if (
+          !(await activateDocumentForSwitch(
+            request,
+            active.documentPath,
+          ))
+        ) {
+          return false;
+        }
+        if (!isDocumentSwitchCurrent(request)) return false;
+        openDocument(
+          active.document,
+          active.documentPath,
+          active.documentPath,
+          false,
+          false,
+          active.sourceHash,
+        );
+        finishDocumentSwitch(false);
+      }
+      notify({
+        message:
+          restored.count > 0
+            ? `已恢复 ${restored.count} 张思维导图`
+            : "备份中没有思维导图",
+      });
+      return true;
+    } catch (error) {
+      if (!isDocumentSwitchCurrent(request)) return false;
+      notify({
+        message:
+          error instanceof Error ? error.message : "无法恢复完整备份",
+        tone: "error",
+      });
+      return false;
+    }
+  }, [
+    activateDocumentForSwitch,
+    beginDocumentSwitch,
+    finishDocumentSwitch,
+    isDocumentSwitchCurrent,
+    notify,
+    openDocument,
+    prepareDocumentSwitch,
+    refreshBrowserDocuments,
+  ]);
+
   useEffect(() => {
     if (!saveError) {
       announcedSaveError.current = null;
@@ -413,11 +559,17 @@ export function useDocumentWorkflow({
       return;
     }
     announcedSaveError.current = saveError;
-    const conflict = saveError === externalDocumentConflictMessage;
+    const conflict =
+      saveError === externalDocumentConflictMessage ||
+      saveError === browserDocumentConflictMessage;
     notify({
       message: saveError,
       tone: "error",
-      actionLabel: conflict ? "另存为" : "重试",
+      actionLabel: conflict
+        ? isDesktopRuntime()
+          ? "另存为"
+          : "下载 Markdown"
+        : "重试",
       onAction: conflict
         ? () => {
             void saveAsMarkdownDocument();
@@ -547,9 +699,38 @@ export function useDocumentWorkflow({
         const content = await file.text();
         if (!isDocumentSwitchCurrent(request)) return;
         const imported = importDocumentContent(file.name, content);
-        if (!(await activateDocumentForSwitch(request, null))) return;
-        if (!isDocumentSwitchCurrent(request)) return;
-        replaceDocument(imported.document);
+        if (!isDesktopRuntime()) {
+          const stored = await newDocument(imported.document);
+          if (!isDocumentSwitchCurrent(request)) {
+            discardStaleNewDocument(stored.documentPath);
+            return;
+          }
+          if (
+            !(await activateDocumentForSwitch(
+              request,
+              stored.documentPath,
+            ))
+          ) {
+            discardStaleNewDocument(stored.documentPath);
+            return;
+          }
+          if (!isDocumentSwitchCurrent(request)) {
+            discardStaleNewDocument(stored.documentPath);
+            return;
+          }
+          openDocument(
+            stored.document,
+            stored.documentPath,
+            stored.documentPath,
+            false,
+            false,
+            stored.sourceHash,
+          );
+        } else {
+          if (!(await activateDocumentForSwitch(request, null))) return;
+          if (!isDocumentSwitchCurrent(request)) return;
+          replaceDocument(imported.document);
+        }
         notify({
           message:
             imported.kind === "native"
@@ -569,9 +750,12 @@ export function useDocumentWorkflow({
     [
       activateDocumentForSwitch,
       beginDocumentSwitch,
+      discardStaleNewDocument,
       finishDocumentSwitch,
       isDocumentSwitchCurrent,
+      newDocument,
       notify,
+      openDocument,
       prepareDocumentSwitch,
       replaceDocument,
     ],
@@ -579,6 +763,7 @@ export function useDocumentWorkflow({
 
   return {
     importInputRef,
+    backupInputRef,
     openImport,
     openRecentDocument,
     revealRecentDocument,
@@ -589,5 +774,8 @@ export function useDocumentWorkflow({
     saveAsMarkdownDocument,
     saveCurrentDocument,
     importFile,
+    exportFullBackup,
+    openFullBackupRestore,
+    restoreFullBackup,
   };
 }

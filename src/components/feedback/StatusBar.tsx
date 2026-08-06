@@ -16,13 +16,14 @@ interface StatusBarProps {
   onNoticeActionComplete: () => void;
   onPauseNotice: () => void;
   onResumeNotice: () => void;
+  savedLabel?: string;
 }
 
-function saveStateLabel(saveState: SaveState): string {
+function saveStateLabel(saveState: SaveState, savedLabel: string): string {
   if (saveState === "loading") return "正在打开";
   if (saveState === "saving") return "正在保存";
   if (saveState === "error") return "保存失败";
-  return "已保存";
+  return savedLabel;
 }
 
 export function StatusBar({
@@ -33,6 +34,7 @@ export function StatusBar({
   onNoticeActionComplete,
   onPauseNotice,
   onResumeNotice,
+  savedLabel = "已保存",
 }: StatusBarProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [measuredWidth, setMeasuredWidth] = useState<number | null>(
@@ -40,7 +42,7 @@ export function StatusBar({
   );
   const isError =
     saveState === "error" || notice?.tone === "error";
-  const saveLabel = saveStateLabel(saveState);
+  const saveLabel = saveStateLabel(saveState, savedLabel);
 
   const measureWidth = useCallback(() => {
     const contentWidth = contentRef.current?.scrollWidth ?? 0;

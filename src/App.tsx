@@ -26,11 +26,15 @@ import { useKeyboardCommands } from "./hooks/useKeyboardCommands";
 import { useMindMap } from "./hooks/useMindMap";
 import { useMindMapCommands } from "./hooks/useMindMapCommands";
 import {
+  isDesktopRuntime,
+} from "./persistence/localDocumentStore";
+import {
   setDocumentTitle,
   revealNode,
 } from "./model/tree";
 
 export function App() {
+  const desktopRuntime = isDesktopRuntime();
   const prepareForLifecycleSave = useCallback(() => {
     flushSync(() => {
       const activeElement = globalThis.document.activeElement;
@@ -62,6 +66,7 @@ export function App() {
     setSelection,
     setViewport,
     retrySave,
+    refreshBrowserDocuments,
     saveBeforeSwitch,
     undo,
     redo,
@@ -161,7 +166,7 @@ export function App() {
   }, [notify, startupNotice]);
 
   useEffect(() => {
-    if (startupMode === "loading") return;
+    if (startupMode === "loading" || !desktopRuntime) return;
     void readDesktopRuntimeStatus().then((status) => {
       setDesktopRuntimeStatus(status);
       if (status && !status.globalShortcutRegistered) {
@@ -171,10 +176,11 @@ export function App() {
         });
       }
     });
-  }, [notify, startupMode]);
+  }, [desktopRuntime, notify, startupMode]);
 
   const {
     importInputRef,
+    backupInputRef,
     openImport,
     openRecentDocument,
     revealRecentDocument,
@@ -185,6 +191,9 @@ export function App() {
     saveAsMarkdownDocument,
     saveCurrentDocument,
     importFile,
+    exportFullBackup,
+    openFullBackupRestore,
+    restoreFullBackup,
   } = useDocumentWorkflow({
     document: mindMap,
     documentPath,
@@ -206,6 +215,7 @@ export function App() {
     finishDocumentSwitch,
     moveRecentDocument,
     removeRecentDocument,
+    refreshBrowserDocuments,
   });
 
   const { copyDocumentMarkdown, executeCommand } = useMindMapCommands({
@@ -277,9 +287,11 @@ export function App() {
         onNew={createNewDocument}
         onCopyRecentPath={copyRecentDocumentPath}
         onForgetRecent={forgetRecentDocument}
+        onExportFullBackup={() => void exportFullBackup()}
         onMoveRecent={moveRecentDocumentToDirectory}
         onOpenRecent={(path) => void openRecentDocument(path)}
         onRevealRecent={revealRecentDocument}
+        onRestoreFullBackup={openFullBackupRestore}
         onSave={() => void saveCurrentDocument()}
         onSaveAs={() => void saveAsMarkdownDocument()}
         onSearch={(returnFocus) => openOverlay("search", returnFocus)}
@@ -294,6 +306,7 @@ export function App() {
           )
         }
         recentDocuments={recentDocuments}
+        showDesktopActions={desktopRuntime}
         title={mindMap.title}
       />
 
@@ -332,6 +345,7 @@ export function App() {
         onRetrySave={() => void retrySave()}
         saveError={saveError}
         saveState={saveState}
+        savedLabel={desktopRuntime ? "已保存" : "保存在此浏览器"}
       />
 
       {overlay && (
@@ -376,6 +390,18 @@ export function App() {
           event.currentTarget.value = "";
         }}
         ref={importInputRef}
+        tabIndex={-1}
+        type="file"
+      />
+      <input
+        accept="application/json,.json"
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void restoreFullBackup(file);
+          event.currentTarget.value = "";
+        }}
+        ref={backupInputRef}
         tabIndex={-1}
         type="file"
       />

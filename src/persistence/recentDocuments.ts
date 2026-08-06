@@ -1,5 +1,6 @@
 const recentDocumentsKey = "origin.recent-documents.v1";
 const maximumStoredDocuments = 20;
+const browserDocumentPrefix = "browser://laniakea/";
 
 export interface RecentDocument {
   path: string;
@@ -35,6 +36,7 @@ export function isInternalDocumentPath(path: string): boolean {
 }
 
 export function recentDocumentLocation(path: string): string {
+  if (path.startsWith(browserDocumentPrefix)) return "此浏览器";
   if (isInternalDocumentPath(path)) return "本地草稿";
   const parent = documentParentDirectory(path);
   if (!parent) return "本地文件";

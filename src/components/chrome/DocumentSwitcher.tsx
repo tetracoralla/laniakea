@@ -23,6 +23,7 @@ interface DocumentSwitcherProps {
   onCopyRecentPath: (path: string) => void;
   onMoveRecent: (path: string) => void;
   onForgetRecent: (path: string) => void;
+  showFileActions?: boolean;
 }
 
 const actionsHoverOpenDelay = 260;
@@ -56,6 +57,7 @@ export function DocumentSwitcher({
   onCopyRecentPath,
   onMoveRecent,
   onForgetRecent,
+  showFileActions = true,
 }: DocumentSwitcherProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -399,33 +401,35 @@ export function DocumentSwitcher({
                       <small>{metadata}</small>
                     </span>
                   </button>
-                  <button
-                    aria-expanded={actionsOpen}
-                    aria-haspopup="menu"
-                    aria-label={`更多操作：${document.title}`}
-                    className="document-switcher__recent-more"
-                    data-document-switcher-item="true"
-                    onClick={() => {
-                      if (actionsOpen) {
-                        closeActions(false);
-                      } else {
-                        openActions(document.path, true);
+                  {showFileActions && (
+                    <button
+                      aria-expanded={actionsOpen}
+                      aria-haspopup="menu"
+                      aria-label={`更多操作：${document.title}`}
+                      className="document-switcher__recent-more"
+                      data-document-switcher-item="true"
+                      onClick={() => {
+                        if (actionsOpen) {
+                          closeActions(false);
+                        } else {
+                          openActions(document.path, true);
+                        }
+                      }}
+                      onPointerEnter={() =>
+                        scheduleActionsOpen(document.path)
                       }
-                    }}
-                    onPointerEnter={() =>
-                      scheduleActionsOpen(document.path)
-                    }
-                    onPointerLeave={() => {
-                      cancelScheduledActionsOpen();
-                      scheduleActionsClose();
-                    }}
-                    ref={actionsOpen ? actionsTriggerRef : undefined}
-                    role="menuitem"
-                    type="button"
-                  >
-                    <Icon name="more" size={16} />
-                  </button>
-                  {actionsOpen && (
+                      onPointerLeave={() => {
+                        cancelScheduledActionsOpen();
+                        scheduleActionsClose();
+                      }}
+                      ref={actionsOpen ? actionsTriggerRef : undefined}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <Icon name="more" size={16} />
+                    </button>
+                  )}
+                  {showFileActions && actionsOpen && (
                     <div
                       aria-label={`${document.title}的文件操作`}
                       className="document-switcher__actions-menu"

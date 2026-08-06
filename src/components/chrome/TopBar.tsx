@@ -25,6 +25,9 @@ interface TopBarProps {
   onCopyRecentPath: (path: string) => void;
   onMoveRecent: (path: string) => void;
   onForgetRecent: (path: string) => void;
+  showDesktopActions?: boolean;
+  onExportFullBackup?: () => void;
+  onRestoreFullBackup?: () => void;
 }
 
 export function TopBar({
@@ -44,6 +47,9 @@ export function TopBar({
   onCopyRecentPath,
   onMoveRecent,
   onForgetRecent,
+  showDesktopActions = true,
+  onExportFullBackup,
+  onRestoreFullBackup,
 }: TopBarProps) {
   const [draft, setDraft] = useState(title);
   const [openMenu, setOpenMenu] = useState<"documents" | "more" | null>(
@@ -173,6 +179,7 @@ export function TopBar({
           onMoveRecent={onMoveRecent}
           open={openMenu === "documents"}
           recentDocuments={recentDocuments}
+          showFileActions={showDesktopActions}
         />
       </div>
 
@@ -259,20 +266,42 @@ export function TopBar({
                 <Icon name="export" />
                 <span>复制为 Markdown</span>
               </button>
-              <button
-                onClick={() =>
-                  runMenuAction(() => {
-                    if (menuButtonRef.current) {
-                      onShortcutSettings(menuButtonRef.current);
-                    }
-                  }, false)
-                }
-                role="menuitem"
-                type="button"
-              >
-                <Icon name="command" />
-                <span>唤醒快捷键</span>
-              </button>
+              {!showDesktopActions && onExportFullBackup && (
+                <button
+                  onClick={() => runMenuAction(onExportFullBackup)}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="export" />
+                  <span>导出完整备份</span>
+                </button>
+              )}
+              {!showDesktopActions && onRestoreFullBackup && (
+                <button
+                  onClick={() => runMenuAction(onRestoreFullBackup)}
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="folder" />
+                  <span>恢复完整备份</span>
+                </button>
+              )}
+              {showDesktopActions && (
+                <button
+                  onClick={() =>
+                    runMenuAction(() => {
+                      if (menuButtonRef.current) {
+                        onShortcutSettings(menuButtonRef.current);
+                      }
+                    }, false)
+                  }
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="command" />
+                  <span>唤醒快捷键</span>
+                </button>
+              )}
             </div>
           )}
         </div>

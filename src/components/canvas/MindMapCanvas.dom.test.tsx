@@ -292,7 +292,7 @@ describe("rendered interaction regressions", () => {
     ).not.toContain("打开文件");
   });
 
-  it("restores focus to More after closing shortcut settings", async () => {
+  it("shows browser backup actions without desktop-only settings", async () => {
     await act(async () => {
       root.render(<App />);
       await Promise.resolve();
@@ -305,24 +305,10 @@ describe("rendered interaction regressions", () => {
       "button[aria-label='更多']",
     )!;
     await act(async () => more.click());
-    const shortcutSettings = Array.from(
-      container.querySelectorAll<HTMLButtonElement>("[role='menuitem']"),
-    ).find((button) => button.textContent?.includes("唤醒快捷键"))!;
-    await act(async () => shortcutSettings.click());
-
-    const dialog = container.querySelector<HTMLElement>(
-      "[role='dialog'][aria-labelledby='shortcut-settings-title']",
-    );
-    const cancel = Array.from(
-      dialog!.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent === "取消")!;
-    await act(async () => cancel.click());
-    await act(async () => {
-      animationFrames.splice(0).forEach((callback) => callback(0));
-    });
-
-    expect(container.querySelector("[role='dialog']")).toBeNull();
-    expect(document.activeElement).toBe(more);
+    const menuText = container.querySelector(".menu-popover")?.textContent;
+    expect(menuText).toContain("导出完整备份");
+    expect(menuText).toContain("恢复完整备份");
+    expect(menuText).not.toContain("唤醒快捷键");
   });
 
   it("mounts only the visible window of a 5,000-node document", async () => {

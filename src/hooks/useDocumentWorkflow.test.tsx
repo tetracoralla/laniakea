@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   chooseDocumentToOpen: vi.fn(),
   chooseMarkdownDocumentPath: vi.fn(),
   discardInternalDraft: vi.fn(),
+  desktopRuntime: true,
   openLocalDocument: vi.fn(),
   readOutlineFile: vi.fn(),
 }));
@@ -42,8 +43,10 @@ vi.mock("../persistence/localDocumentStore", () => ({
   activateLocalDocument: mocks.activateLocalDocument,
   clearActiveDocument: mocks.clearActiveDocument,
   discardInternalDraft: mocks.discardInternalDraft,
+  browserDocumentConflictMessage: "browser conflict",
   externalDocumentConflictMessage: "external conflict",
-  isDesktopRuntime: () => true,
+  isBrowserDocumentPath: () => false,
+  isDesktopRuntime: () => mocks.desktopRuntime,
   openLocalDocument: mocks.openLocalDocument,
   readOutlineFile: mocks.readOutlineFile,
   shouldFitLoadedDocument: (
@@ -62,6 +65,7 @@ describe("document workflow", () => {
       }
     ).IS_REACT_ACT_ENVIRONMENT = true;
     mocks.chooseDocumentToOpen.mockReset();
+    mocks.desktopRuntime = true;
     mocks.chooseMarkdownDocumentPath.mockReset();
     mocks.activateLocalDocument.mockReset();
     mocks.activateLocalDocument.mockResolvedValue(undefined);
@@ -79,6 +83,8 @@ describe("document workflow", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    delete (window as Window & { showSaveFilePicker?: unknown })
+      .showSaveFilePicker;
   });
 
   it("fits an unbound rich Markdown copy when no viewport was restored", async () => {
@@ -626,6 +632,7 @@ describe("document workflow", () => {
   });
 
   it("lets a browser import invalidate an earlier slow open request", async () => {
+    mocks.desktopRuntime = false;
     let finishOpeningA!: (value: DocumentLoadResult) => void;
     const openingA = new Promise<DocumentLoadResult>((resolve) => {
       finishOpeningA = resolve;
@@ -637,6 +644,11 @@ describe("document workflow", () => {
       text: vi.fn(async () => "# 导入\n\n- 新内容\n"),
     } as unknown as File;
     const openDocument = vi.fn();
+    const newDocument = vi.fn(async (document = createSeedDocument()) => ({
+      document,
+      documentPath: "browser://laniakea/imported",
+      sourceHash: "laniakea-browser:imported:1",
+    }));
 
     function Harness() {
       const workflow = useDocumentWorkflow({
@@ -647,7 +659,7 @@ describe("document workflow", () => {
         saveState: "saved",
         saveError: null,
         notify: vi.fn(),
-        newDocument: async () => preparedNewDocument(),
+        newDocument,
         openDocument,
         replaceDocument,
         saveDocumentAs: vi.fn(async () => true),
@@ -692,7 +704,17 @@ describe("document workflow", () => {
       await Promise.resolve();
     });
 
-    expect(replaceDocument).toHaveBeenCalledTimes(1);
+    expect(newDocument).toHaveBeenCalledTimes(1);
+    expect(replaceDocument).not.toHaveBeenCalled();
+    expect(openDocument).toHaveBeenCalledTimes(1);
+    expect(openDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "导入" }),
+      "browser://laniakea/imported",
+      "browser://laniakea/imported",
+      false,
+      false,
+      "laniakea-browser:imported:1",
+    );
 
     await act(async () => {
       finishOpeningA({
@@ -711,8 +733,8 @@ describe("document workflow", () => {
       await Promise.resolve();
     });
 
-    expect(openDocument).not.toHaveBeenCalled();
-    expect(replaceDocument).toHaveBeenCalledTimes(1);
+    expect(openDocument).toHaveBeenCalledTimes(1);
+    expect(replaceDocument).not.toHaveBeenCalled();
   });
 
   it("discards a prepared new draft when a later import supersedes it", async () => {
@@ -844,6 +866,66 @@ describe("document workflow", () => {
         recentDocuments: [],
       },
     );
+  });
+
+  it("writes Markdown through the browser file picker when available", async () => {
+    mocks.desktopRuntime = false;
+    const write = vi.fn(async () => undefined);
+    const close = vi.fn(async () => undefined);
+    const showSaveFilePicker = vi.fn(async () => ({
+      createWritable: async () => ({ write, close }),
+    }));
+    Object.defineProperty(window, "showSaveFilePicker", {
+      configurable: true,
+      value: showSaveFilePicker,
+    });
+    const notify = vi.fn();
+
+    function Harness() {
+      const workflow = useDocumentWorkflow({
+        document: createSeedDocument(),
+        documentPath: "browser://laniakea/current",
+        currentDocumentPath: "browser://laniakea/current",
+        recentDocuments: [],
+        saveState: "saved",
+        saveError: null,
+        notify,
+        newDocument: async () => preparedNewDocument(),
+        openDocument: vi.fn(),
+        replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true),
+        retrySave: vi.fn(async () => true),
+        saveBeforeSwitch: vi.fn(async () => true),
+        beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true),
+        removeRecentDocument: vi.fn(),
+      });
+      return (
+        <button onClick={() => void workflow.saveAsMarkdownDocument()}>
+          另存为
+        </button>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(showSaveFilePicker).toHaveBeenCalledWith(
+      expect.objectContaining({ suggestedName: "思维导图工具.md" }),
+    );
+    expect(write).toHaveBeenCalledWith(
+      expect.stringContaining("做一个思维导图 APP"),
+    );
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith({
+      message: "Markdown 已保存到所选文件",
+    });
   });
 
   it("does not save a newer document through an older Save As dialog", async () => {

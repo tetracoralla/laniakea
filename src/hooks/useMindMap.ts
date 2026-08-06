@@ -17,6 +17,7 @@ import {
   shouldDeferUnboundCopyAutosave,
   sourceContentFingerprint,
 } from "../persistence/autosavePolicy";
+import { listBrowserDocuments } from "../persistence/browserDocumentStore";
 import {
   createMarkdownDraft,
   isDesktopRuntime,
@@ -251,10 +252,27 @@ export function useMindMap({
     [],
   );
 
+  const refreshBrowserDocuments = useCallback(async () => {
+    if (isDesktopRuntime()) return;
+    try {
+      const documents = await listBrowserDocuments();
+      setRecentDocuments(
+        documents.map((document) => ({
+          path: document.documentPath,
+          title: document.title,
+          lastOpenedAt: document.updatedAt,
+        })),
+      );
+    } catch {
+      // The active document load owns the visible storage error. The recent
+      // list remains a convenience surface and must not replace that result.
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void loadLocalDocument()
-      .then((loaded) => {
+      .then(async (loaded) => {
         if (cancelled) return;
         if (loaded.document) {
           advanceDocumentSession();
@@ -300,14 +318,35 @@ export function useMindMap({
           }
           setStartupMode("restored");
         } else {
-          documentPathRef.current = null;
-          sourceHashRef.current = null;
-          setDocumentPath(null);
-          setSourceDocumentPath(null);
+          let freshPath: string | null = null;
+          let freshSourceHash: string | null = null;
+          if (!isDesktopRuntime() && !loaded.saveError) {
+            const created = await createMarkdownDraft(
+              latestDocument.current,
+            );
+            if (cancelled) return;
+            freshPath = created.documentPath;
+            freshSourceHash = created.sourceHash;
+          }
+          documentPathRef.current = freshPath;
+          sourceHashRef.current = freshSourceHash;
+          setDocumentPath(freshPath);
+          setSourceDocumentPath(freshPath);
           protectedUnboundSourceContent.current = null;
           protectedUnboundSourceDocument.current = null;
           protectedUnboundSourcePath.current = null;
-          lastPersistedContentDocument.current = null;
+          lastPersistedContentDocument.current = freshPath
+            ? latestDocument.current
+            : null;
+          if (freshPath) {
+            setRecentDocuments((current) =>
+              rememberRecentDocument(
+                current,
+                freshPath,
+                latestDocument.current.title,
+              ),
+            );
+          }
           setStartupMode("fresh");
         }
 
@@ -321,6 +360,7 @@ export function useMindMap({
           setSaveError(null);
           setSaveWarning(null);
         }
+        await refreshBrowserDocuments();
       })
       .catch(() => {
         if (cancelled) return;
@@ -333,7 +373,7 @@ export function useMindMap({
     return () => {
       cancelled = true;
     };
-  }, [advanceDocumentSession]);
+  }, [advanceDocumentSession, refreshBrowserDocuments]);
 
   useEffect(() => {
     persistRecentDocuments(recentDocuments);
@@ -408,7 +448,16 @@ export function useMindMap({
   ]);
 
   const saveBrowserNow = useCallback(() => {
-    saveBrowserDocumentSynchronously(latestDocument.current);
+    if (
+      lastPersistedContentDocument.current === latestDocument.current
+    ) {
+      return;
+    }
+    saveBrowserDocumentSynchronously(
+      latestDocument.current,
+      documentPathRef.current,
+      sourceHashRef.current,
+    );
   }, []);
 
   useApplicationSaveLifecycle({
@@ -564,20 +613,14 @@ export function useMindMap({
     return queued;
   }, [performSaveBeforeSwitch]);
 
-  const newDocument = useCallback(async (): Promise<NewDocumentDraft> => {
-    const document = createBlankDocument();
-    if (isDesktopRuntime()) {
-      const created = await createMarkdownDraft(document, false);
-      return {
-        document,
-        documentPath: created.documentPath,
-        sourceHash: created.sourceHash,
-      };
-    }
+  const newDocument = useCallback(async (
+    document: MindMapDocument = createBlankDocument(),
+  ): Promise<NewDocumentDraft> => {
+    const created = await createMarkdownDraft(document, false);
     return {
       document,
-      documentPath: null,
-      sourceHash: null,
+      documentPath: created.documentPath,
+      sourceHash: created.sourceHash,
     };
   }, []);
 
@@ -753,6 +796,7 @@ export function useMindMap({
     setSelection,
     setViewport,
     retrySave: saveNow,
+    refreshBrowserDocuments,
     saveBeforeSwitch,
     undo,
     redo,

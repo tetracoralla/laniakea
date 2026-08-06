@@ -5,8 +5,22 @@ import {
   parseMarkdownDocument,
 } from "../model/markdown";
 import type { MindMapDocument } from "../types/mindmap";
+import {
+  activateBrowserDocument,
+  BrowserDocumentConflictError,
+  clearActiveBrowserDocument,
+  createBrowserDocument,
+  discardBrowserDocument,
+  isBrowserDocumentPath,
+  loadActiveBrowserDocument,
+  openBrowserDocument,
+  requestPersistentBrowserStorage,
+  saveBrowserDocument,
+} from "./browserDocumentStore";
+export { isBrowserDocumentPath } from "./browserDocumentStore";
 
 const legacyStorageKey = "origin.mindmap.v1";
+const browserRecoveryKey = "laniakea.browser-recovery.v1";
 
 interface BackendLoadResult {
   document: string | null;
@@ -70,8 +84,10 @@ export class PersistenceError extends Error {
 
 export const externalDocumentConflictMessage =
   "文件已在外部修改或移动，原文件未被覆盖。";
+export const browserDocumentConflictMessage =
+  "这张思维导图已在另一个标签页更新，当前修改没有覆盖较新的版本。";
 export const protectedSourceOverwriteMessage =
-  "这个文件包含原点无法完整保留的 Markdown 内容，请另存到其他位置。";
+  "这个文件包含 Laniakea 无法完整保留的 Markdown 内容，请另存到其他位置。";
 export const auxiliarySaveWarningMessage =
   "正文已经保存，但本地视图状态或旧备份清理未完成。";
 
@@ -164,7 +180,7 @@ async function parseBackendDocument(
     sourcePath: loaded.documentPath,
     recoveredFromBackup: loaded.recoveredFromBackup,
     notice: openingLegacyNativeFile
-      ? "已打开旧版原点备份；保存时请选择 Markdown 文件，原备份不会被覆盖。"
+      ? "已打开旧版 Laniakea 备份；保存时请选择 Markdown 文件，原备份不会被覆盖。"
       : loaded.notice,
     saveError: null,
     sourceFormat: loaded.documentPath ? "native" : "recovery",
@@ -213,6 +229,12 @@ function readLegacyDocument(): {
 }
 
 function friendlySaveError(error: unknown): PersistenceError {
+  if (error instanceof BrowserDocumentConflictError) {
+    return new PersistenceError(browserDocumentConflictMessage, {
+      cause: error,
+    });
+  }
+  if (error instanceof PersistenceError) return error;
   const rawMessage =
     typeof error === "string"
       ? error
@@ -228,26 +250,85 @@ function friendlySaveError(error: unknown): PersistenceError {
     });
   }
   return new PersistenceError(
-    "无法写入本地文件，请检查磁盘空间或文件权限。",
+    isDesktopRuntime()
+      ? "无法写入本地文件，请检查磁盘空间或文件权限。"
+      : "无法保存到此浏览器，请检查浏览器存储权限或剩余空间。",
     { cause: error },
   );
 }
 
 export async function loadLocalDocument(): Promise<DocumentLoadResult> {
   if (!isDesktopRuntime()) {
-    const legacy = readLegacyDocument();
-    return {
-      document: legacy.document,
-      documentPath: null,
-      sourcePath: null,
-      recoveredFromBackup: false,
-      notice: legacy.notice,
-      saveError: legacy.saveError,
-      sourceFormat: "recovery",
-      importedAsCopy: false,
-      viewStateRestored: Boolean(legacy.document),
-      sourceHash: null,
-    };
+    try {
+      const recovery = readBrowserRecoverySnapshot();
+      if (recovery) {
+        try {
+          const recovered = recovery.documentPath
+            ? await saveBrowserDocument(
+                recovery.document,
+                recovery.documentPath,
+                recovery.sourceHash,
+              )
+            : await createBrowserDocument(recovery.document);
+          await activateBrowserDocument(recovered.documentPath);
+          clearBrowserRecoverySnapshot(recovery.documentPath);
+          return browserLoadResult(
+            recovered,
+            "已恢复关闭页面前尚未写完的内容。",
+            true,
+          );
+        } catch (error) {
+          if (!(error instanceof BrowserDocumentConflictError)) throw error;
+          const recoveredCopy = await createBrowserDocument(recovery.document);
+          clearBrowserRecoverySnapshot(recovery.documentPath);
+          return browserLoadResult(
+            recoveredCopy,
+            "另一标签页已有更新；关闭前的内容已作为独立副本恢复。",
+            true,
+          );
+        }
+      }
+
+      const active = await loadActiveBrowserDocument();
+      if (active) return browserLoadResult(active);
+
+      const legacy = readLegacyDocument();
+      if (!legacy.document) {
+        return {
+          document: null,
+          documentPath: null,
+          sourcePath: null,
+          recoveredFromBackup: false,
+          notice: legacy.notice,
+          saveError: legacy.saveError,
+          sourceFormat: "recovery",
+          importedAsCopy: false,
+          viewStateRestored: false,
+          sourceHash: null,
+        };
+      }
+      const migrated = await createBrowserDocument(legacy.document);
+      localStorage.removeItem(legacyStorageKey);
+      return browserLoadResult(
+        migrated,
+        "已将旧版浏览器数据迁移到 Laniakea 文档库。",
+        true,
+      );
+    } catch (error) {
+      const legacy = readLegacyDocument();
+      return {
+        document: legacy.document,
+        documentPath: null,
+        sourcePath: null,
+        recoveredFromBackup: false,
+        notice: legacy.notice ?? "浏览器文档库当前无法读取。",
+        saveError: friendlySaveError(error).message,
+        sourceFormat: "recovery",
+        importedAsCopy: false,
+        viewStateRestored: Boolean(legacy.document),
+        sourceHash: null,
+      };
+    }
   }
 
   try {
@@ -349,8 +430,17 @@ export async function saveLocalDocument(
           : null,
       };
     }
-    localStorage.setItem(legacyStorageKey, serialized);
-    return { sourceHash: null, auxiliaryWarning: null };
+    if (!documentPath || !isBrowserDocumentPath(documentPath)) {
+      throw new PersistenceError("当前思维导图还没有可用的浏览器文档位置。");
+    }
+    const saved = await saveBrowserDocument(
+      document,
+      documentPath,
+      expectedSourceHash,
+    );
+    clearBrowserRecoverySnapshot(documentPath);
+    requestPersistentBrowserStorage();
+    return { sourceHash: saved.sourceHash, auxiliaryWarning: null };
   } catch (error) {
     throw friendlySaveError(error);
   }
@@ -361,7 +451,16 @@ export async function createMarkdownDraft(
   activateDocument = true,
 ): Promise<DraftDocumentResult> {
   if (!isDesktopRuntime()) {
-    throw new PersistenceError("浏览器预览不支持创建本地 Markdown 草稿");
+    try {
+      const created = await createBrowserDocument(document, activateDocument);
+      requestPersistentBrowserStorage();
+      return {
+        documentPath: created.documentPath,
+        sourceHash: created.sourceHash,
+      };
+    } catch (error) {
+      throw friendlySaveError(error);
+    }
   }
   try {
     return await invoke<BackendCreateDraftResult>("create_markdown_draft", {
@@ -394,7 +493,12 @@ export async function moveInternalDraft(
 export async function discardInternalDraft(
   documentPath: string,
 ): Promise<void> {
-  if (!isDesktopRuntime()) return;
+  if (!isDesktopRuntime()) {
+    if (isBrowserDocumentPath(documentPath)) {
+      await discardBrowserDocument(documentPath);
+    }
+    return;
+  }
   try {
     await invoke("discard_internal_draft", { documentPath });
   } catch {
@@ -407,7 +511,17 @@ export async function openLocalDocument(
   documentPath: string,
 ): Promise<DocumentLoadResult> {
   if (!isDesktopRuntime()) {
-    throw new PersistenceError("浏览器预览不支持按本地路径打开文件");
+    try {
+      const loaded = await openBrowserDocument(documentPath);
+      return browserLoadResult(loaded);
+    } catch (error) {
+      throw new PersistenceError(
+        error instanceof Error
+          ? error.message
+          : "无法打开这张浏览器思维导图。",
+        { cause: error },
+      );
+    }
   }
   try {
     const loaded = await invoke<BackendLoadResult>("open_local_document", {
@@ -452,7 +566,10 @@ export async function readOutlineFile(
 }
 
 export async function clearActiveDocument(): Promise<void> {
-  if (!isDesktopRuntime()) return;
+  if (!isDesktopRuntime()) {
+    await clearActiveBrowserDocument();
+    return;
+  }
   try {
     await invoke("clear_active_document");
   } catch (error) {
@@ -465,7 +582,10 @@ export async function clearActiveDocument(): Promise<void> {
 export async function activateLocalDocument(
   documentPath: string,
 ): Promise<void> {
-  if (!isDesktopRuntime()) return;
+  if (!isDesktopRuntime()) {
+    await activateBrowserDocument(documentPath);
+    return;
+  }
   try {
     await invoke("activate_local_document", { documentPath });
   } catch (error) {
@@ -480,11 +600,97 @@ export async function activateLocalDocument(
 
 export function saveBrowserDocumentSynchronously(
   document: MindMapDocument,
+  documentPath: string | null,
+  sourceHash: string | null,
 ): void {
   if (isDesktopRuntime()) return;
   try {
-    localStorage.setItem(legacyStorageKey, JSON.stringify(document));
+    localStorage.setItem(
+      browserRecoveryKey,
+      JSON.stringify({ document, documentPath, sourceHash }),
+    );
   } catch (error) {
     throw friendlySaveError(error);
+  }
+}
+
+interface BrowserRecoverySnapshot {
+  document: MindMapDocument;
+  documentPath: string | null;
+  sourceHash: string | null;
+}
+
+function browserLoadResult(
+  stored: {
+    document: MindMapDocument;
+    documentPath: string;
+    sourceHash: string;
+  },
+  notice: string | null = null,
+  recoveredFromBackup = false,
+): DocumentLoadResult {
+  return {
+    document: stored.document,
+    documentPath: stored.documentPath,
+    sourcePath: stored.documentPath,
+    recoveredFromBackup,
+    notice,
+    saveError: null,
+    sourceFormat: "native",
+    importedAsCopy: false,
+    viewStateRestored: true,
+    sourceHash: stored.sourceHash,
+  };
+}
+
+function readBrowserRecoverySnapshot(): BrowserRecoverySnapshot | null {
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(browserRecoveryKey);
+  } catch {
+    return null;
+  }
+  if (!stored) return null;
+  try {
+    const candidate = JSON.parse(stored) as Partial<BrowserRecoverySnapshot>;
+    if (
+      candidate.documentPath !== null &&
+      candidate.documentPath !== undefined &&
+      !isBrowserDocumentPath(candidate.documentPath)
+    ) {
+      throw new Error("invalid browser document path");
+    }
+    return {
+      document: parseMindMapDocument(JSON.stringify(candidate.document)),
+      documentPath: candidate.documentPath ?? null,
+      sourceHash:
+        typeof candidate.sourceHash === "string"
+          ? candidate.sourceHash
+          : null,
+    };
+  } catch {
+    try {
+      localStorage.setItem(
+        `${browserRecoveryKey}.corrupt.${Date.now()}`,
+        stored,
+      );
+      localStorage.removeItem(browserRecoveryKey);
+    } catch {
+      // Keep the unreadable recovery value when a recovery copy cannot be made.
+    }
+    return null;
+  }
+}
+
+function clearBrowserRecoverySnapshot(documentPath: string | null): void {
+  try {
+    const stored = localStorage.getItem(browserRecoveryKey);
+    if (!stored) return;
+    const candidate = JSON.parse(stored) as Partial<BrowserRecoverySnapshot>;
+    if ((candidate.documentPath ?? null) === documentPath) {
+      localStorage.removeItem(browserRecoveryKey);
+    }
+  } catch {
+    // Recovery cleanup is best-effort and must not turn a saved document red.
   }
 }
