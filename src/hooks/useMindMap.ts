@@ -19,7 +19,10 @@ import {
 } from "../persistence/autosavePolicy";
 import { listBrowserDocuments } from "../persistence/browserDocumentStore";
 import {
+  activateLocalDocument,
+  clearActiveDocument,
   createMarkdownDraft,
+  discardInternalDraft,
   isDesktopRuntime,
   loadLocalDocument,
   moveInternalDraft,
@@ -70,6 +73,10 @@ export interface NewDocumentDraft {
   sourceHash: string | null;
 }
 
+export interface BrowserSourceProtection {
+  name: string;
+}
+
 interface MindMapOptions {
   prepareForLifecycleSave?: () => void;
 }
@@ -95,6 +102,7 @@ export function useMindMap({
   const snapshot = history.present;
   const latestDocument = useRef(snapshot.document);
   const documentPathRef = useRef<string | null>(null);
+  const sourceDocumentPathRef = useRef<string | null>(null);
   const sourceHashRef = useRef<string | null>(null);
   const startupModeRef = useRef<StartupMode>("loading");
   const startupReadyWaiters = useRef(new Set<() => void>());
@@ -107,6 +115,9 @@ export function useMindMap({
     null,
   );
   const protectedUnboundSourcePath = useRef<string | null>(null);
+  const protectedBrowserSourceNameRef = useRef<string | null>(null);
+  const [protectedBrowserSourceName, setProtectedBrowserSourceName] =
+    useState<string | null>(null);
   const silentAutosaveDocuments = useRef(
     new WeakSet<MindMapDocument>(),
   );
@@ -277,6 +288,7 @@ export function useMindMap({
         if (loaded.document) {
           advanceDocumentSession();
           documentPathRef.current = loaded.documentPath;
+          sourceDocumentPathRef.current = loaded.sourcePath;
           sourceHashRef.current = loaded.sourceHash;
           setDocumentPath(loaded.documentPath);
           setSourceDocumentPath(loaded.sourcePath);
@@ -290,6 +302,9 @@ export function useMindMap({
               : null;
           protectedUnboundSourcePath.current =
             loaded.importedAsCopy ? loaded.sourcePath : null;
+          protectedBrowserSourceNameRef.current =
+            loaded.protectedSourceName ?? null;
+          setProtectedBrowserSourceName(loaded.protectedSourceName ?? null);
           if (
             !loaded.recoveredFromBackup &&
             protectedUnboundSourceContent.current === null
@@ -329,12 +344,15 @@ export function useMindMap({
             freshSourceHash = created.sourceHash;
           }
           documentPathRef.current = freshPath;
+          sourceDocumentPathRef.current = freshPath;
           sourceHashRef.current = freshSourceHash;
           setDocumentPath(freshPath);
           setSourceDocumentPath(freshPath);
           protectedUnboundSourceContent.current = null;
           protectedUnboundSourceDocument.current = null;
           protectedUnboundSourcePath.current = null;
+          protectedBrowserSourceNameRef.current = null;
+          setProtectedBrowserSourceName(null);
           lastPersistedContentDocument.current = freshPath
             ? latestDocument.current
             : null;
@@ -457,6 +475,7 @@ export function useMindMap({
       latestDocument.current,
       documentPathRef.current,
       sourceHashRef.current,
+      protectedBrowserSourceNameRef.current,
     );
   }, []);
 
@@ -502,9 +521,11 @@ export function useMindMap({
     skipAutosave: boolean,
     protectUnboundCopy = false,
     sourceHash: string | null = null,
+    browserSourceName: string | null = null,
   ) => {
     advanceDocumentSession();
     documentPathRef.current = path;
+    sourceDocumentPathRef.current = sourcePath;
     sourceHashRef.current = sourceHash;
     setDocumentPath(path);
     setSourceDocumentPath(sourcePath);
@@ -517,6 +538,8 @@ export function useMindMap({
     protectedUnboundSourcePath.current = protectUnboundCopy
       ? sourcePath
       : null;
+    protectedBrowserSourceNameRef.current = browserSourceName;
+    setProtectedBrowserSourceName(browserSourceName);
     skipNextSave.current =
       skipAutosave && !protectUnboundCopy ? document : null;
     lastPersistedContentDocument.current =
@@ -546,6 +569,7 @@ export function useMindMap({
     recoveredFromBackup = false,
     protectUnboundCopy = false,
     sourceHash: string | null = null,
+    browserSourceName: string | null = null,
   ) => {
     installDocument(
       document,
@@ -554,8 +578,83 @@ export function useMindMap({
       !recoveredFromBackup,
       protectUnboundCopy,
       sourceHash,
+      browserSourceName,
     );
   }, [installDocument]);
+
+  const restoreActiveDocument = useCallback(async (): Promise<void> => {
+    const path = documentPathRef.current ?? sourceDocumentPathRef.current;
+    if (path) {
+      await activateLocalDocument(path);
+    } else {
+      await clearActiveDocument();
+    }
+  }, []);
+
+  const preserveCurrentAsBrowserCopy = useCallback(async () => {
+    if (isDesktopRuntime()) return null;
+    const current = latestDocument.current;
+    const currentSession = documentSessionRef.current;
+    const protectedSourceName = protectedBrowserSourceNameRef.current;
+    try {
+      const created = await createMarkdownDraft(
+        current,
+        false,
+        protectedSourceName,
+      );
+      if (documentSessionRef.current !== currentSession) {
+        await discardInternalDraft(created.documentPath);
+        return null;
+      }
+      await activateLocalDocument(created.documentPath);
+      if (documentSessionRef.current !== currentSession) {
+        await restoreActiveDocument();
+        await discardInternalDraft(created.documentPath);
+        return null;
+      }
+      installDocument(
+        current,
+        created.documentPath,
+        created.documentPath,
+        true,
+        false,
+        created.sourceHash,
+        protectedSourceName,
+      );
+      setSaveState("saved");
+      setSaveError(null);
+      setSaveWarning(null);
+      await refreshBrowserDocuments();
+      return {
+        document: current,
+        documentPath: created.documentPath,
+        sourceHash: created.sourceHash,
+      } satisfies NewDocumentDraft;
+    } catch (error) {
+      setSaveState("error");
+      setSaveWarning(null);
+      setSaveError(
+        error instanceof Error
+          ? error.message
+          : "无法把当前修改保留为独立副本。",
+      );
+      return null;
+    }
+  }, [installDocument, refreshBrowserDocuments, restoreActiveDocument]);
+
+  const deleteBrowserDocument = useCallback(async (
+    path: string,
+  ): Promise<boolean> => {
+    if (isDesktopRuntime() || path === documentPathRef.current) return false;
+    try {
+      await discardInternalDraft(path);
+      setRecentDocuments((current) => forgetRecentDocument(current, path));
+      await refreshBrowserDocuments();
+      return true;
+    } catch {
+      return false;
+    }
+  }, [refreshBrowserDocuments]);
 
   const performSaveBeforeSwitch = useCallback(async (): Promise<boolean> => {
     if (documentPathRef.current || !isDesktopRuntime()) {
@@ -574,6 +673,7 @@ export function useMindMap({
       protectedUnboundSourcePath.current = null;
       lastPersistedContentDocument.current = latestDocument.current;
       documentPathRef.current = created.documentPath;
+      sourceDocumentPathRef.current = created.documentPath;
       sourceHashRef.current = created.sourceHash;
       setDocumentPath(created.documentPath);
       setSourceDocumentPath(created.documentPath);
@@ -615,8 +715,13 @@ export function useMindMap({
 
   const newDocument = useCallback(async (
     document: MindMapDocument = createBlankDocument(),
+    browserSourceProtection: BrowserSourceProtection | null = null,
   ): Promise<NewDocumentDraft> => {
-    const created = await createMarkdownDraft(document, false);
+    const created = await createMarkdownDraft(
+      document,
+      false,
+      browserSourceProtection?.name ?? null,
+    );
     return {
       document,
       documentPath: created.documentPath,
@@ -676,8 +781,11 @@ export function useMindMap({
       protectedUnboundSourceContent.current = null;
       protectedUnboundSourceDocument.current = null;
       protectedUnboundSourcePath.current = null;
+      protectedBrowserSourceNameRef.current = null;
+      setProtectedBrowserSourceName(null);
       lastPersistedContentDocument.current = latestDocument.current;
       documentPathRef.current = path;
+      sourceDocumentPathRef.current = path;
       sourceHashRef.current = saved.sourceHash;
       setDocumentPath(path);
       setSourceDocumentPath(path);
@@ -775,6 +883,7 @@ export function useMindMap({
     snapshot,
     documentPath,
     sourceDocumentPath,
+    protectedBrowserSourceName,
     documentSessionId,
     saveState,
     saveError,
@@ -789,6 +898,7 @@ export function useMindMap({
     newDocument,
     openDocument,
     moveRecentDocument,
+    deleteBrowserDocument,
     removeRecentDocument,
     replaceDocument,
     saveDocumentAs,
@@ -796,7 +906,9 @@ export function useMindMap({
     setSelection,
     setViewport,
     retrySave: saveNow,
+    preserveCurrentAsBrowserCopy,
     refreshBrowserDocuments,
+    restoreActiveDocument,
     saveBeforeSwitch,
     undo,
     redo,

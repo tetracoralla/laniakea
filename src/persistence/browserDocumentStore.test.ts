@@ -5,8 +5,10 @@ import {
   activateBrowserDocument,
   BrowserDocumentConflictError,
   createBrowserDocument,
+  discardBrowserDocument,
   exportBrowserLibrary,
   loadActiveBrowserDocument,
+  listBrowserDocuments,
   openBrowserDocument,
   resetBrowserDocumentStoreForTests,
   restoreBrowserLibrary,
@@ -79,5 +81,31 @@ describe("browser document library", () => {
     expect(
       new Set(after.documents.map((document) => document.id)).size,
     ).toBe(4);
+  });
+
+  it("keeps protected source identity and every document accessible", async () => {
+    const paths: string[] = [];
+    for (let index = 0; index < 7; index += 1) {
+      const document = createBlankDocument();
+      document.title = `文档 ${index + 1}`;
+      const created = await createBrowserDocument(
+        document,
+        index === 6,
+        index === 0 ? "富内容.md" : null,
+      );
+      paths.push(created.documentPath);
+    }
+
+    const library = await listBrowserDocuments();
+    expect(library).toHaveLength(7);
+    expect((await openBrowserDocument(paths[0])).protectedSourceName).toBe(
+      "富内容.md",
+    );
+
+    await discardBrowserDocument(paths[1]);
+    expect(await listBrowserDocuments()).toHaveLength(6);
+    await expect(openBrowserDocument(paths[1])).rejects.toThrow(
+      "已不在此浏览器",
+    );
   });
 });

@@ -109,6 +109,13 @@
   padding: 12px 10px 14px;
 }
 
+.document-switcher__list {
+  max-height: min(420px, calc(100vh - 190px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .document-switcher__popover button {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr);

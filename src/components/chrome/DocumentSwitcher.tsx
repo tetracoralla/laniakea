@@ -23,6 +23,7 @@ interface DocumentSwitcherProps {
   onCopyRecentPath: (path: string) => void;
   onMoveRecent: (path: string) => void;
   onForgetRecent: (path: string) => void;
+  onDeleteDocument?: (path: string) => void;
   showFileActions?: boolean;
 }
 
@@ -57,6 +58,7 @@ export function DocumentSwitcher({
   onCopyRecentPath,
   onMoveRecent,
   onForgetRecent,
+  onDeleteDocument,
   showFileActions = true,
 }: DocumentSwitcherProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -70,6 +72,7 @@ export function DocumentSwitcher({
   const visibleDocuments = visibleRecentDocuments(
     recentDocuments,
     currentPath,
+    showFileActions ? 5 : null,
   );
 
   useEffect(() => {
@@ -359,14 +362,15 @@ export function DocumentSwitcher({
           role="menu"
         >
           <span className="document-switcher__heading">
-            最近编辑
+            {showFileActions ? "最近编辑" : "文档库"}
           </span>
           {visibleDocuments.length === 0 ? (
             <span className="document-switcher__empty">
-              暂无其他最近文档
+              {showFileActions ? "暂无其他最近文档" : "暂无其他文档"}
             </span>
           ) : (
-            visibleDocuments.map((document) => {
+            <div className="document-switcher__list" role="none">
+            {visibleDocuments.map((document) => {
               const internal = isInternalDocumentPath(document.path);
               const time = formatRecentTime(document.lastOpenedAt);
               const metadata = [
@@ -427,6 +431,20 @@ export function DocumentSwitcher({
                       type="button"
                     >
                       <Icon name="more" size={16} />
+                    </button>
+                  )}
+                  {!showFileActions && onDeleteDocument && (
+                    <button
+                      aria-label={`删除：${document.title}`}
+                      className="document-switcher__recent-more"
+                      data-document-switcher-item="true"
+                      onClick={() =>
+                        runRecentAction(document.path, onDeleteDocument)
+                      }
+                      role="menuitem"
+                      type="button"
+                    >
+                      <Icon name="minus" size={16} />
                     </button>
                   )}
                   {showFileActions && actionsOpen && (
@@ -501,7 +519,8 @@ export function DocumentSwitcher({
                   )}
                 </div>
               );
-            })
+            })}
+            </div>
           )}
           <span className="document-switcher__divider" />
           <button

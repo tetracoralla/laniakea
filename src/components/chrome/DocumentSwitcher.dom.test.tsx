@@ -237,4 +237,49 @@ describe("recent document file actions", () => {
 
     vi.useRealTimers();
   });
+
+  it("shows the complete browser library and exposes real deletion", async () => {
+    const onOpenRecent = vi.fn();
+    const onDeleteDocument = vi.fn();
+    const documents = Array.from({ length: 8 }, (_, index) => ({
+      path: `browser://laniakea/document-${index}`,
+      title: `文档 ${index}`,
+      lastOpenedAt: new Date(2026, 6, index + 1).toISOString(),
+    }));
+
+    await act(async () => {
+      root.render(
+        <DocumentSwitcher
+          currentPath={documents[0].path}
+          onCopyRecentPath={vi.fn()}
+          onDeleteDocument={onDeleteDocument}
+          onForgetRecent={vi.fn()}
+          onMoveRecent={vi.fn()}
+          onOpenChange={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenRecent={onOpenRecent}
+          onRevealRecent={vi.fn()}
+          open
+          recentDocuments={documents}
+          showFileActions={false}
+        />,
+      );
+    });
+
+    const libraryItems = container.querySelectorAll(
+      ".document-switcher__recent",
+    );
+    expect(container.textContent).toContain("文档库");
+    expect(libraryItems).toHaveLength(7);
+    await act(async () => {
+      (libraryItems[6] as HTMLButtonElement).click();
+    });
+    expect(onOpenRecent).toHaveBeenCalledWith(documents[7].path);
+
+    const deleteOldest = container.querySelector<HTMLButtonElement>(
+      `button[aria-label='删除：${documents[7].title}']`,
+    )!;
+    await act(async () => deleteOldest.click());
+    expect(onDeleteDocument).toHaveBeenCalledWith(documents[7].path);
+  });
 });

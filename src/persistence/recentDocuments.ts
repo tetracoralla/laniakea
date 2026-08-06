@@ -62,11 +62,16 @@ function normalize(documents: RecentDocument[]): RecentDocument[] {
   for (const document of documents) {
     if (!byPath.has(document.path)) byPath.set(document.path, document);
   }
-  return Array.from(byPath.values())
-    .sort((left, right) =>
-      right.lastOpenedAt.localeCompare(left.lastOpenedAt),
-    )
-    .slice(0, maximumStoredDocuments);
+  const sorted = Array.from(byPath.values()).sort((left, right) =>
+    right.lastOpenedAt.localeCompare(left.lastOpenedAt)
+  );
+  let remainingFileEntries = maximumStoredDocuments;
+  return sorted.filter((document) => {
+    if (document.path.startsWith(browserDocumentPrefix)) return true;
+    if (remainingFileEntries <= 0) return false;
+    remainingFileEntries -= 1;
+    return true;
+  });
 }
 
 export function loadRecentDocuments(): RecentDocument[] {
@@ -157,9 +162,10 @@ export function moveRecentDocumentPath(
 export function visibleRecentDocuments(
   documents: RecentDocument[],
   currentPath: string | null,
-  limit = 5,
+  limit: number | null = 5,
 ): RecentDocument[] {
-  return documents
-    .filter((document) => document.path !== currentPath)
-    .slice(0, limit);
+  const visible = documents.filter(
+    (document) => document.path !== currentPath,
+  );
+  return limit === null ? visible : visible.slice(0, limit);
 }

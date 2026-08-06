@@ -11,6 +11,7 @@ describe("document file import routing", () => {
     );
 
     expect(imported.kind).toBe("native");
+    expect(imported.canOverwriteSource).toBe(false);
     expect(imported.document.rootId).toBe(source.rootId);
     expect(Object.keys(imported.document.nodes)).toHaveLength(
       Object.keys(source.nodes).length,
@@ -28,5 +29,15 @@ describe("document file import routing", () => {
 
     expect(imported.kind).toBe("outline");
     expect(Object.keys(imported.document.nodes)).toHaveLength(3);
+  });
+
+  it("marks rich Markdown as protected from source overwrite", () => {
+    const imported = importDocumentContent(
+      "研究.md",
+      "# 研究\n\n| 项目 | 结论 |\n| --- | --- |\n| A | B |\n",
+    );
+
+    expect(imported.kind).toBe("outline");
+    expect(imported.canOverwriteSource).toBe(false);
   });
 });

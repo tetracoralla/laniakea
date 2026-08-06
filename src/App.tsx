@@ -45,6 +45,7 @@ export function App() {
     snapshot,
     documentPath,
     sourceDocumentPath,
+    protectedBrowserSourceName,
     documentSessionId,
     saveState,
     saveError,
@@ -59,6 +60,7 @@ export function App() {
     newDocument,
     openDocument,
     moveRecentDocument,
+    deleteBrowserDocument,
     removeRecentDocument,
     replaceDocument,
     saveDocumentAs,
@@ -66,7 +68,9 @@ export function App() {
     setSelection,
     setViewport,
     retrySave,
+    preserveCurrentAsBrowserCopy,
     refreshBrowserDocuments,
+    restoreActiveDocument,
     saveBeforeSwitch,
     undo,
     redo,
@@ -194,6 +198,9 @@ export function App() {
     exportFullBackup,
     openFullBackupRestore,
     restoreFullBackup,
+    deleteBrowserLibraryDocument,
+    resolveSaveError,
+    saveErrorActionLabel,
   } = useDocumentWorkflow({
     document: mindMap,
     documentPath,
@@ -204,6 +211,7 @@ export function App() {
     saveState,
     saveError,
     saveWarning,
+    protectedBrowserSourceName,
     notify,
     newDocument,
     openDocument,
@@ -214,8 +222,11 @@ export function App() {
     beginBlankDocument,
     finishDocumentSwitch,
     moveRecentDocument,
+    deleteBrowserDocument,
     removeRecentDocument,
     refreshBrowserDocuments,
+    preserveCurrentAsBrowserCopy,
+    restoreActiveDocument,
   });
 
   const { copyDocumentMarkdown, executeCommand } = useMindMapCommands({
@@ -287,6 +298,9 @@ export function App() {
         onNew={createNewDocument}
         onCopyRecentPath={copyRecentDocumentPath}
         onForgetRecent={forgetRecentDocument}
+        onDeleteDocument={
+          desktopRuntime ? undefined : deleteBrowserLibraryDocument
+        }
         onExportFullBackup={() => void exportFullBackup()}
         onMoveRecent={moveRecentDocumentToDirectory}
         onOpenRecent={(path) => void openRecentDocument(path)}
@@ -342,9 +356,10 @@ export function App() {
         onNoticeActionComplete={dismissAnnouncement}
         onPauseNotice={pauseAnnouncement}
         onResumeNotice={resumeAnnouncement}
-        onRetrySave={() => void retrySave()}
+        onRetrySave={resolveSaveError}
         saveError={saveError}
         saveState={saveState}
+        saveErrorActionLabel={saveErrorActionLabel}
         savedLabel={desktopRuntime ? "已保存" : "保存在此浏览器"}
       />
 

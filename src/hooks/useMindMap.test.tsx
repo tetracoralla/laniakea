@@ -9,9 +9,11 @@ import { setNodeText } from "../model/tree";
 import { useMindMap } from "./useMindMap";
 
 const persistence = vi.hoisted(() => ({
+  activateLocalDocument: vi.fn(),
   clearActiveDocument: vi.fn(),
   createMarkdownDraft: vi.fn(),
   desktopRuntime: false,
+  discardInternalDraft: vi.fn(),
   loadLocalDocument: vi.fn(),
   moveInternalDraft: vi.fn(),
   saveBrowserDocumentSynchronously: vi.fn(),
@@ -42,8 +44,10 @@ const lifecycle = vi.hoisted(() => ({
 }));
 
 vi.mock("../persistence/localDocumentStore", () => ({
+  activateLocalDocument: persistence.activateLocalDocument,
   clearActiveDocument: persistence.clearActiveDocument,
   createMarkdownDraft: persistence.createMarkdownDraft,
+  discardInternalDraft: persistence.discardInternalDraft,
   isDesktopRuntime: () => persistence.desktopRuntime,
   loadLocalDocument: persistence.loadLocalDocument,
   moveInternalDraft: persistence.moveInternalDraft,
@@ -86,8 +90,10 @@ describe("mind map save presentation", () => {
     window.localStorage.clear();
     persistence.desktopRuntime = false;
     persistence.clearActiveDocument.mockReset();
+    persistence.activateLocalDocument.mockReset();
     persistence.createMarkdownDraft.mockReset();
     persistence.moveInternalDraft.mockReset();
+    persistence.discardInternalDraft.mockReset();
     persistence.moveInternalDraft.mockResolvedValue({
       sourceHash: "hash-moved",
     });
@@ -1104,6 +1110,123 @@ describe("mind map save presentation", () => {
     expect(
       container.querySelector("[data-testid='recent']")?.textContent,
     ).toContain("/app-data/drafts/未命名思维-2.md");
+  });
+
+  it("turns a conflicted browser edit into a saved copy and unblocks switching", async () => {
+    const currentPath = "browser://laniakea/current";
+    const copyPath = "browser://laniakea/conflict-copy";
+    const loadedDocument = createSeedDocument();
+    persistence.loadLocalDocument.mockResolvedValue({
+      document: loadedDocument,
+      documentPath: currentPath,
+      sourcePath: currentPath,
+      recoveredFromBackup: false,
+      notice: null,
+      saveError: null,
+      sourceFormat: "native",
+      importedAsCopy: false,
+      viewStateRestored: true,
+      sourceHash: "laniakea-browser:current:1",
+    });
+    persistence.saveLocalDocument.mockImplementation(
+      async (_document, path) => {
+        if (path === currentPath) throw new Error("browser conflict");
+        return { sourceHash: "laniakea-browser:conflict-copy:2" };
+      },
+    );
+    persistence.createMarkdownDraft.mockResolvedValue({
+      documentPath: copyPath,
+      sourceHash: "laniakea-browser:conflict-copy:1",
+    });
+    const saveAfterCopy = vi.fn();
+
+    function Harness() {
+      const mindMap = useMindMap();
+      return (
+        <>
+          <output data-testid="path">{mindMap.documentPath}</output>
+          <output data-testid="error">{mindMap.saveError}</output>
+          <button
+            data-testid="edit-conflict"
+            onClick={() =>
+              mindMap.applyMutation((current) =>
+                setNodeText(
+                  current.document,
+                  current.document.rootId,
+                  "冲突中的修改",
+                )
+              )
+            }
+          >
+            编辑
+          </button>
+          <button
+            data-testid="preserve-copy"
+            onClick={() => void mindMap.preserveCurrentAsBrowserCopy()}
+          >
+            保留副本
+          </button>
+          <button
+            data-testid="save-after-copy"
+            onClick={() => void mindMap.saveBeforeSwitch().then(saveAfterCopy)}
+          >
+            切换前保存
+          </button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='edit-conflict']",
+      )!.click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(320);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector("[data-testid='error']")?.textContent,
+    ).toBe("browser conflict");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='preserve-copy']",
+      )!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector("[data-testid='path']")?.textContent,
+    ).toBe(copyPath);
+    expect(
+      container.querySelector("[data-testid='error']")?.textContent,
+    ).toBe("");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='save-after-copy']",
+      )!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(saveAfterCopy).toHaveBeenCalledWith(true);
+    expect(persistence.saveLocalDocument).toHaveBeenLastCalledWith(
+      expect.objectContaining({ title: loadedDocument.title }),
+      copyPath,
+      "laniakea-browser:conflict-copy:1",
+      null,
+    );
   });
 
   it("keeps saves bound to the active document across edit A -> new B -> edit B", async () => {

@@ -25,6 +25,7 @@ interface TopBarProps {
   onCopyRecentPath: (path: string) => void;
   onMoveRecent: (path: string) => void;
   onForgetRecent: (path: string) => void;
+  onDeleteDocument?: (path: string) => void;
   showDesktopActions?: boolean;
   onExportFullBackup?: () => void;
   onRestoreFullBackup?: () => void;
@@ -47,6 +48,7 @@ export function TopBar({
   onCopyRecentPath,
   onMoveRecent,
   onForgetRecent,
+  onDeleteDocument,
   showDesktopActions = true,
   onExportFullBackup,
   onRestoreFullBackup,
@@ -176,6 +178,7 @@ export function TopBar({
           onRevealRecent={onRevealRecent}
           onCopyRecentPath={onCopyRecentPath}
           onForgetRecent={onForgetRecent}
+          onDeleteDocument={onDeleteDocument}
           onMoveRecent={onMoveRecent}
           open={openMenu === "documents"}
           recentDocuments={recentDocuments}

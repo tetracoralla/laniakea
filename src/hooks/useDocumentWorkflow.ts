@@ -26,6 +26,7 @@ import {
   isBrowserDocumentPath,
   isDesktopRuntime,
   openLocalDocument,
+  protectedSourceOverwriteMessage,
   readOutlineFile,
   shouldFitLoadedDocument,
 } from "../persistence/localDocumentStore";
@@ -45,8 +46,12 @@ interface DocumentWorkflowOptions {
   saveState: SaveState;
   saveError: string | null;
   saveWarning?: string | null;
+  protectedBrowserSourceName?: string | null;
   notify: (notice: AppNotice) => void;
-  newDocument: (document?: MindMapDocument) => Promise<{
+  newDocument: (
+    document?: MindMapDocument,
+    browserSourceProtection?: { name: string } | null,
+  ) => Promise<{
     document: MindMapDocument;
     documentPath: string | null;
     sourceHash: string | null;
@@ -58,6 +63,7 @@ interface DocumentWorkflowOptions {
     recoveredFromBackup?: boolean,
     protectUnboundCopy?: boolean,
     sourceHash?: string | null,
+    protectedBrowserSourceName?: string | null,
   ) => void;
   replaceDocument: (document: MindMapDocument) => void;
   saveDocumentAs: (path: string) => Promise<boolean>;
@@ -71,6 +77,13 @@ interface DocumentWorkflowOptions {
   ) => Promise<boolean>;
   removeRecentDocument: (path: string) => void;
   refreshBrowserDocuments?: () => Promise<void>;
+  restoreActiveDocument?: () => Promise<void>;
+  preserveCurrentAsBrowserCopy?: () => Promise<{
+    document: MindMapDocument;
+    documentPath: string | null;
+    sourceHash: string | null;
+  } | null>;
+  deleteBrowserDocument?: (path: string) => Promise<boolean>;
 }
 
 function downloadText(filename: string, content: string, type: string) {
@@ -93,7 +106,10 @@ interface BrowserWritableFile {
 }
 
 interface BrowserFileHandle {
+  name?: string;
   createWritable: () => Promise<BrowserWritableFile>;
+  getFile?: () => Promise<File>;
+  isSameEntry?: (other: BrowserFileHandle) => Promise<boolean>;
 }
 
 type FilePickerWindow = Window & {
@@ -104,6 +120,13 @@ type FilePickerWindow = Window & {
       accept: Record<string, string[]>;
     }>;
   }) => Promise<BrowserFileHandle>;
+  showOpenFilePicker?: (options: {
+    multiple: false;
+    types: Array<{
+      description: string;
+      accept: Record<string, string[]>;
+    }>;
+  }) => Promise<BrowserFileHandle[]>;
 };
 
 export function useDocumentWorkflow({
@@ -116,6 +139,7 @@ export function useDocumentWorkflow({
   saveState,
   saveError,
   saveWarning = null,
+  protectedBrowserSourceName = null,
   notify,
   newDocument,
   openDocument,
@@ -128,6 +152,9 @@ export function useDocumentWorkflow({
   moveRecentDocument,
   removeRecentDocument,
   refreshBrowserDocuments = async () => undefined,
+  restoreActiveDocument = async () => undefined,
+  preserveCurrentAsBrowserCopy = async () => null,
+  deleteBrowserDocument = async () => false,
 }: DocumentWorkflowOptions) {
   const importInputRef: RefObject<HTMLInputElement | null> =
     useRef<HTMLInputElement>(null);
@@ -137,6 +164,13 @@ export function useDocumentWorkflow({
   const announcedSaveWarning = useRef<string | null>(null);
   const documentSwitchRequest = useRef(0);
   const activationQueue = useRef<Promise<void>>(Promise.resolve());
+  const browserSourceHandles = useRef(new Map<string, BrowserFileHandle>());
+  const importPickedFile = useRef<(
+    file: File,
+    handle?: BrowserFileHandle,
+  ) => Promise<void>>(
+    async (_file: File, _handle?: BrowserFileHandle) => undefined,
+  );
 
   const beginDocumentSwitch = useCallback(
     () => ++documentSwitchRequest.current,
@@ -174,9 +208,10 @@ export function useDocumentWorkflow({
           await clearActiveDocument();
         }
         if (isDocumentSwitchCurrent(request)) return true;
-        // Native activation can finish after a newer user action supersedes
-        // this request. Re-save the still-visible document so the startup
-        // pointer cannot be left on a document the UI never installed.
+        // Activation can finish after a newer user action supersedes this
+        // request. Re-save and explicitly restore the still-visible document;
+        // browser saves do not update the IndexedDB startup pointer by design.
+        await restoreActiveDocument();
         await retrySave();
         return false;
       });
@@ -185,7 +220,7 @@ export function useDocumentWorkflow({
       () => undefined,
     );
     return activation;
-  }, [isDocumentSwitchCurrent, retrySave]);
+  }, [isDocumentSwitchCurrent, restoreActiveDocument, retrySave]);
 
   const discardStaleNewDocument = useCallback(
     (path: string | null) => {
@@ -239,6 +274,7 @@ export function useDocumentWorkflow({
           loaded.recoveredFromBackup,
           loaded.importedAsCopy,
           loaded.sourceHash,
+          loaded.protectedSourceName ?? null,
         );
         notify({
           message:
@@ -299,7 +335,40 @@ export function useDocumentWorkflow({
   const openImport = useCallback(() => {
     const request = beginDocumentSwitch();
     if (!isDesktopRuntime()) {
-      importInputRef.current?.click();
+      const browserWindow = window as FilePickerWindow;
+      if (browserWindow.showOpenFilePicker) {
+        void (async () => {
+          try {
+            const [handle] = await browserWindow.showOpenFilePicker!({
+              multiple: false,
+              types: [
+                {
+                  description: "Markdown 或 Laniakea 文档",
+                  accept: {
+                    "text/markdown": [".md", ".markdown"],
+                    "text/plain": [".txt"],
+                    "application/json": [".mindmap.json"],
+                  },
+                },
+              ],
+            });
+            if (!handle?.getFile || !isDocumentSwitchCurrent(request)) return;
+            await importPickedFile.current(await handle.getFile(), handle);
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") {
+              return;
+            }
+            if (!isDocumentSwitchCurrent(request)) return;
+            notify({
+              message:
+                error instanceof Error ? error.message : "无法打开这个文件",
+              tone: "error",
+            });
+          }
+        })();
+      } else {
+        importInputRef.current?.click();
+      }
       return;
     }
     void (async () => {
@@ -386,7 +455,10 @@ export function useDocumentWorkflow({
   const saveAsMarkdownDocument = useCallback(async (): Promise<boolean> => {
     const operationSessionId = documentSessionId;
     if (!isDesktopRuntime()) {
-      const filename = `${safeFilename(document.title)}.md`;
+      const protectsImportedSource = Boolean(protectedBrowserSourceName);
+      const filename = `${safeFilename(document.title)}${
+        protectsImportedSource ? " - Laniakea" : ""
+      }.md`;
       const content = documentToMarkdown(document);
       const browserWindow = window as FilePickerWindow;
       if (browserWindow.showSaveFilePicker) {
@@ -401,6 +473,20 @@ export function useDocumentWorkflow({
             ],
           });
           if (!isDocumentSessionCurrent(operationSessionId)) return false;
+          const protectedHandle = documentPath
+            ? browserSourceHandles.current.get(documentPath)
+            : undefined;
+          if (
+            protectedHandle &&
+            handle.isSameEntry &&
+            await handle.isSameEntry(protectedHandle)
+          ) {
+            notify({
+              message: protectedSourceOverwriteMessage,
+              tone: "error",
+            });
+            return false;
+          }
           const writable = await handle.createWritable();
           await writable.write(content);
           await writable.close();
@@ -458,6 +544,7 @@ export function useDocumentWorkflow({
     documentSessionId,
     isDocumentSessionCurrent,
     notify,
+    protectedBrowserSourceName,
     recentDocuments,
     saveDocumentAs,
   ]);
@@ -465,6 +552,13 @@ export function useDocumentWorkflow({
   const exportFullBackup = useCallback(async (): Promise<boolean> => {
     if (isDesktopRuntime()) return false;
     try {
+      if (!(await saveBeforeSwitch())) {
+        notify({
+          message: "当前思维导图保存失败，未导出完整备份",
+          tone: "error",
+        });
+        return false;
+      }
       const backup = await exportBrowserLibrary();
       const date = new Date().toISOString().slice(0, 10);
       downloadText(
@@ -484,7 +578,7 @@ export function useDocumentWorkflow({
       });
       return false;
     }
-  }, [notify]);
+  }, [notify, saveBeforeSwitch]);
 
   const openFullBackupRestore = useCallback(() => {
     if (!isDesktopRuntime()) backupInputRef.current?.click();
@@ -517,6 +611,7 @@ export function useDocumentWorkflow({
           false,
           false,
           active.sourceHash,
+          active.protectedSourceName,
         );
         finishDocumentSwitch(false);
       }
@@ -547,6 +642,50 @@ export function useDocumentWorkflow({
     refreshBrowserDocuments,
   ]);
 
+  const preserveBrowserConflict = useCallback(async () => {
+    const previousPath = documentPath;
+    const preserved = await preserveCurrentAsBrowserCopy();
+    if (!preserved?.documentPath) {
+      notify({
+        message: "无法把当前修改保留为独立副本",
+        tone: "error",
+      });
+      return;
+    }
+    if (previousPath) {
+      const handle = browserSourceHandles.current.get(previousPath);
+      if (handle) {
+        browserSourceHandles.current.set(preserved.documentPath, handle);
+      }
+    }
+    notify({ message: "当前修改已保留为独立副本" });
+  }, [documentPath, notify, preserveCurrentAsBrowserCopy]);
+
+  const saveErrorActionLabel =
+    saveError === browserDocumentConflictMessage && !isDesktopRuntime()
+      ? "保留为副本"
+      : saveError === externalDocumentConflictMessage && isDesktopRuntime()
+        ? "另存为"
+        : "重试";
+
+  const resolveSaveError = useCallback(() => {
+    if (
+      saveError === browserDocumentConflictMessage &&
+      !isDesktopRuntime()
+    ) {
+      void preserveBrowserConflict();
+      return;
+    }
+    if (
+      saveError === externalDocumentConflictMessage &&
+      isDesktopRuntime()
+    ) {
+      void saveAsMarkdownDocument();
+      return;
+    }
+    void retrySave();
+  }, [preserveBrowserConflict, retrySave, saveAsMarkdownDocument, saveError]);
+
   useEffect(() => {
     if (!saveError) {
       announcedSaveError.current = null;
@@ -559,29 +698,16 @@ export function useDocumentWorkflow({
       return;
     }
     announcedSaveError.current = saveError;
-    const conflict =
-      saveError === externalDocumentConflictMessage ||
-      saveError === browserDocumentConflictMessage;
     notify({
       message: saveError,
       tone: "error",
-      actionLabel: conflict
-        ? isDesktopRuntime()
-          ? "另存为"
-          : "下载 Markdown"
-        : "重试",
-      onAction: conflict
-        ? () => {
-            void saveAsMarkdownDocument();
-          }
-        : () => {
-            void retrySave();
-          },
+      actionLabel: saveErrorActionLabel,
+      onAction: resolveSaveError,
     });
   }, [
     notify,
-    retrySave,
-    saveAsMarkdownDocument,
+    resolveSaveError,
+    saveErrorActionLabel,
     saveError,
     saveState,
   ]);
@@ -692,7 +818,7 @@ export function useDocumentWorkflow({
   ]);
 
   const importFile = useCallback(
-    async (file: File) => {
+    async (file: File, fileHandle?: BrowserFileHandle) => {
       const request = beginDocumentSwitch();
       try {
         if (!(await prepareDocumentSwitch(request))) return;
@@ -700,7 +826,14 @@ export function useDocumentWorkflow({
         if (!isDocumentSwitchCurrent(request)) return;
         const imported = importDocumentContent(file.name, content);
         if (!isDesktopRuntime()) {
-          const stored = await newDocument(imported.document);
+          const sourceProtection =
+            imported.kind === "outline" && !imported.canOverwriteSource
+              ? { name: file.name }
+              : null;
+          const stored = await newDocument(
+            imported.document,
+            sourceProtection,
+          );
           if (!isDocumentSwitchCurrent(request)) {
             discardStaleNewDocument(stored.documentPath);
             return;
@@ -718,6 +851,12 @@ export function useDocumentWorkflow({
             discardStaleNewDocument(stored.documentPath);
             return;
           }
+          if (sourceProtection && fileHandle && stored.documentPath) {
+            browserSourceHandles.current.set(
+              stored.documentPath,
+              fileHandle,
+            );
+          }
           openDocument(
             stored.document,
             stored.documentPath,
@@ -725,6 +864,7 @@ export function useDocumentWorkflow({
             false,
             false,
             stored.sourceHash,
+            sourceProtection?.name ?? null,
           );
         } else {
           if (!(await activateDocumentForSwitch(request, null))) return;
@@ -761,6 +901,22 @@ export function useDocumentWorkflow({
     ],
   );
 
+  importPickedFile.current = importFile;
+
+  const deleteBrowserLibraryDocument = useCallback((path: string) => {
+    const item = recentDocuments.find((document) => document.path === path);
+    if (!item) return;
+    if (!window.confirm(`确定从此浏览器删除“${item.title}”吗？`)) return;
+    void (async () => {
+      const deleted = await deleteBrowserDocument(path);
+      if (deleted) browserSourceHandles.current.delete(path);
+      notify({
+        message: deleted ? "已从此浏览器删除" : "无法删除这张思维导图",
+        tone: deleted ? "neutral" : "error",
+      });
+    })();
+  }, [deleteBrowserDocument, notify, recentDocuments]);
+
   return {
     importInputRef,
     backupInputRef,
@@ -777,5 +933,8 @@ export function useDocumentWorkflow({
     exportFullBackup,
     openFullBackupRestore,
     restoreFullBackup,
+    deleteBrowserLibraryDocument,
+    resolveSaveError,
+    saveErrorActionLabel,
   };
 }

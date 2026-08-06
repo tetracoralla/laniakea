@@ -13,6 +13,7 @@ interface BrowserDocumentRecord {
   id: string;
   title: string;
   document: MindMapDocument;
+  protectedSourceName?: string;
   createdAt: string;
   updatedAt: string;
   revision: number;
@@ -27,6 +28,7 @@ export interface BrowserStoredDocument {
   document: MindMapDocument;
   documentPath: string;
   sourceHash: string;
+  protectedSourceName: string | null;
 }
 
 export interface BrowserLibraryBackup {
@@ -147,6 +149,7 @@ function recordToStored(record: BrowserDocumentRecord): BrowserStoredDocument {
     document: cloneDocument(record.document),
     documentPath: browserDocumentPath(record.id),
     sourceHash: revisionToken(record.id, record.revision),
+    protectedSourceName: record.protectedSourceName ?? null,
   };
 }
 
@@ -160,6 +163,8 @@ function isRecord(value: unknown): value is BrowserDocumentRecord {
     typeof candidate.updatedAt === "string" &&
     Number.isInteger(candidate.revision) &&
     candidate.revision! > 0 &&
+    (candidate.protectedSourceName === undefined ||
+      typeof candidate.protectedSourceName === "string") &&
     Boolean(candidate.document)
   );
 }
@@ -188,6 +193,7 @@ export function isBrowserDocumentPath(
 export async function createBrowserDocument(
   document: MindMapDocument,
   activateDocument = true,
+  protectedSourceName: string | null = null,
 ): Promise<BrowserStoredDocument> {
   return withDatabase(async (database) => {
     const id = createId();
@@ -196,6 +202,7 @@ export async function createBrowserDocument(
       id,
       title: document.title,
       document: cloneDocument(document),
+      protectedSourceName: protectedSourceName ?? undefined,
       createdAt: now,
       updatedAt: now,
       revision: 1,
@@ -416,6 +423,7 @@ export async function restoreBrowserLibrary(
       id,
       title: document.title,
       document,
+      protectedSourceName: record.protectedSourceName,
       createdAt: now,
       updatedAt: now,
       revision: 1,

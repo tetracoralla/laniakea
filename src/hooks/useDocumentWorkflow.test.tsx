@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
 
+import "fake-indexeddb/auto";
 import { act } from "react";
+import { useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
 import type { DocumentLoadResult } from "../persistence/localDocumentStore";
+import {
+  createBrowserDocument,
+  openBrowserDocument,
+  resetBrowserDocumentStoreForTests,
+  saveBrowserDocument,
+} from "../persistence/browserDocumentStore";
 import { useDocumentWorkflow } from "./useDocumentWorkflow";
 
 function preparedNewDocument() {
@@ -45,6 +53,7 @@ vi.mock("../persistence/localDocumentStore", () => ({
   discardInternalDraft: mocks.discardInternalDraft,
   browserDocumentConflictMessage: "browser conflict",
   externalDocumentConflictMessage: "external conflict",
+  protectedSourceOverwriteMessage: "protected source",
   isBrowserDocumentPath: () => false,
   isDesktopRuntime: () => mocks.desktopRuntime,
   openLocalDocument: mocks.openLocalDocument,
@@ -58,7 +67,7 @@ describe("document workflow", () => {
   let container: HTMLDivElement;
   let root: Root;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     (
       globalThis as typeof globalThis & {
         IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -75,6 +84,7 @@ describe("document workflow", () => {
     mocks.discardInternalDraft.mockResolvedValue(undefined);
     mocks.openLocalDocument.mockReset();
     mocks.readOutlineFile.mockReset();
+    await resetBrowserDocumentStoreForTests();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -83,8 +93,11 @@ describe("document workflow", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    vi.restoreAllMocks();
     delete (window as Window & { showSaveFilePicker?: unknown })
       .showSaveFilePicker;
+    delete (window as Window & { showOpenFilePicker?: unknown })
+      .showOpenFilePicker;
   });
 
   it("fits an unbound rich Markdown copy when no viewport was restored", async () => {
@@ -141,6 +154,7 @@ describe("document workflow", () => {
       "/tmp/复杂方案.md",
       false,
       true,
+      null,
       null,
     );
     expect(mocks.activateLocalDocument).toHaveBeenCalledWith(
@@ -419,6 +433,7 @@ describe("document workflow", () => {
       false,
       false,
       "hash-b",
+      null,
     );
 
     await act(async () => {
@@ -444,6 +459,7 @@ describe("document workflow", () => {
 
   it("restores the visible document when a stale native activation finishes", async () => {
     const activatingA = deferred<void>();
+    let startupPath = "/tmp/当前.md";
     const documentA = createSeedDocument();
     documentA.title = "A";
     mocks.openLocalDocument.mockImplementation((path: string) => {
@@ -463,8 +479,14 @@ describe("document workflow", () => {
       }
       return Promise.reject(new Error("B 无法打开"));
     });
-    mocks.activateLocalDocument.mockReturnValueOnce(activatingA.promise);
+    mocks.activateLocalDocument.mockImplementationOnce(async () => {
+      await activatingA.promise;
+      startupPath = "/tmp/A.md";
+    });
     const retrySave = vi.fn(async () => true);
+    const restoreActiveDocument = vi.fn(async () => {
+      startupPath = "/tmp/当前.md";
+    });
     const openDocument = vi.fn();
 
     function Harness() {
@@ -486,6 +508,7 @@ describe("document workflow", () => {
         finishDocumentSwitch: vi.fn(),
         moveRecentDocument: vi.fn(async () => true),
         removeRecentDocument: vi.fn(),
+        restoreActiveDocument,
       });
       return (
         <>
@@ -531,6 +554,8 @@ describe("document workflow", () => {
 
     expect(openDocument).not.toHaveBeenCalled();
     expect(retrySave).toHaveBeenCalledTimes(1);
+    expect(restoreActiveDocument).toHaveBeenCalledTimes(1);
+    expect(startupPath).toBe("/tmp/当前.md");
   });
 
   it("lets a new document invalidate an earlier slow open request", async () => {
@@ -714,6 +739,7 @@ describe("document workflow", () => {
       false,
       false,
       "laniakea-browser:imported:1",
+      null,
     );
 
     await act(async () => {
@@ -821,6 +847,187 @@ describe("document workflow", () => {
     );
   });
 
+  it("saves the current edit before exporting a complete browser backup", async () => {
+    mocks.desktopRuntime = false;
+    const created = await createBrowserDocument(createSeedDocument());
+    const edited = { ...created.document, title: "刚刚修改" };
+    const saveBeforeSwitch = vi.fn(async () => {
+      await saveBrowserDocument(
+        edited,
+        created.documentPath,
+        created.sourceHash,
+      );
+      return true;
+    });
+    const notify = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(
+      () => undefined,
+    );
+    const createObjectURL = vi.fn(() => "blob:backup");
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    function Harness() {
+      const workflow = useDocumentWorkflow({
+        document: edited,
+        documentPath: created.documentPath,
+        currentDocumentPath: created.documentPath,
+        recentDocuments: [],
+        saveState: "saving",
+        saveError: null,
+        notify,
+        newDocument: async () => preparedNewDocument(),
+        openDocument: vi.fn(),
+        replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true),
+        retrySave: vi.fn(async () => true),
+        saveBeforeSwitch,
+        beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true),
+        removeRecentDocument: vi.fn(),
+      });
+      return (
+        <button onClick={() => void workflow.exportFullBackup()}>
+          导出完整备份
+        </button>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(saveBeforeSwitch).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+    });
+    expect((await openBrowserDocument(created.documentPath)).document.title)
+      .toBe("刚刚修改");
+    expect(notify).toHaveBeenCalledWith({
+      message: "已导出 1 张思维导图的完整备份",
+    });
+  });
+
+  it("stops complete backup export when the current save fails", async () => {
+    mocks.desktopRuntime = false;
+    const notify = vi.fn();
+    const createObjectURL = vi.fn(() => "blob:backup");
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+
+    function Harness() {
+      const workflow = useDocumentWorkflow({
+        document: createSeedDocument(),
+        documentPath: "browser://laniakea/current",
+        currentDocumentPath: "browser://laniakea/current",
+        recentDocuments: [],
+        saveState: "error",
+        saveError: "无法保存",
+        notify,
+        newDocument: async () => preparedNewDocument(),
+        openDocument: vi.fn(),
+        replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true),
+        retrySave: vi.fn(async () => false),
+        saveBeforeSwitch: vi.fn(async () => false),
+        beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true),
+        removeRecentDocument: vi.fn(),
+      });
+      return (
+        <button onClick={() => void workflow.exportFullBackup()}>
+          导出完整备份
+        </button>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith({
+      message: "当前思维导图保存失败，未导出完整备份",
+      tone: "error",
+    });
+  });
+
+  it("keeps a browser conflict as a copy and then allows a new document", async () => {
+    mocks.desktopRuntime = false;
+    let preserved = false;
+    const preserveCurrentAsBrowserCopy = vi.fn(async () => {
+      preserved = true;
+      return {
+        document: createSeedDocument(),
+        documentPath: "browser://laniakea/conflict-copy",
+        sourceHash: "laniakea-browser:conflict-copy:1",
+      };
+    });
+    const newDocument = vi.fn(async () => preparedNewDocument());
+    const notify = vi.fn();
+
+    function Harness() {
+      const workflow = useDocumentWorkflow({
+        document: createSeedDocument(),
+        documentPath: "browser://laniakea/stale",
+        currentDocumentPath: "browser://laniakea/stale",
+        recentDocuments: [],
+        saveState: "error",
+        saveError: "browser conflict",
+        notify,
+        newDocument,
+        openDocument: vi.fn(),
+        replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true),
+        retrySave: vi.fn(async () => false),
+        saveBeforeSwitch: vi.fn(async () => preserved),
+        beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true),
+        removeRecentDocument: vi.fn(),
+        preserveCurrentAsBrowserCopy,
+      });
+      return <button onClick={workflow.createNewDocument}>新建</button>;
+    }
+
+    await act(async () => root.render(<Harness />));
+    const conflictNotice = notify.mock.calls
+      .map(([notice]) => notice)
+      .find((notice) => notice.actionLabel === "保留为副本");
+    expect(conflictNotice).toBeTruthy();
+    await act(async () => {
+      conflictNotice.onAction();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(preserveCurrentAsBrowserCopy).toHaveBeenCalledTimes(1);
+    expect(newDocument).toHaveBeenCalledTimes(1);
+  });
+
   it("suggests a different Save As filename for a protected rich Markdown source", async () => {
     const document = createSeedDocument();
     document.title = "复杂方案";
@@ -925,6 +1132,127 @@ describe("document workflow", () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledWith({
       message: "Markdown 已保存到所选文件",
+    });
+  });
+
+  it("keeps rich Markdown source protection and rejects the same browser file", async () => {
+    mocks.desktopRuntime = false;
+    const importedFile = {
+      name: "研究.md",
+      text: vi.fn(async () =>
+        "# 研究\n\n| 项目 | 结论 |\n| --- | --- |\n| A | B |\n"
+      ),
+    } as unknown as File;
+    const sourceHandle = {
+      createWritable: vi.fn(),
+    };
+    const createWritable = vi.fn();
+    const targetHandle = {
+      createWritable,
+      isSameEntry: vi.fn(async (other: unknown) => other === sourceHandle),
+    };
+    const showSaveFilePicker = vi.fn(async () => targetHandle);
+    Object.defineProperty(window, "showSaveFilePicker", {
+      configurable: true,
+      value: showSaveFilePicker,
+    });
+    const newDocument = vi.fn(async (
+      document = createSeedDocument(),
+    ) => ({
+      document,
+      documentPath: "browser://laniakea/imported-rich",
+      sourceHash: "laniakea-browser:imported-rich:1",
+    }));
+    const notify = vi.fn();
+
+    function Harness() {
+      const [active, setActive] = useState({
+        document: createSeedDocument(),
+        path: "browser://laniakea/current",
+        protectedSourceName: null as string | null,
+      });
+      const workflow = useDocumentWorkflow({
+        document: active.document,
+        documentPath: active.path,
+        currentDocumentPath: active.path,
+        protectedBrowserSourceName: active.protectedSourceName,
+        recentDocuments: [],
+        saveState: "saved",
+        saveError: null,
+        notify,
+        newDocument,
+        openDocument: (
+          document,
+          path,
+          _sourcePath,
+          _recovered,
+          _protectedCopy,
+          _sourceHash,
+          protectedSourceName,
+        ) => setActive({
+          document,
+          path: path!,
+          protectedSourceName: protectedSourceName ?? null,
+        }),
+        replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true),
+        retrySave: vi.fn(async () => true),
+        saveBeforeSwitch: vi.fn(async () => true),
+        beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true),
+        removeRecentDocument: vi.fn(),
+      });
+      return (
+        <>
+          <button
+            data-testid="import-rich"
+            onClick={() =>
+              void workflow.importFile(importedFile, sourceHandle)
+            }
+          >
+            导入
+          </button>
+          <button
+            data-testid="save-rich"
+            onClick={() => void workflow.saveAsMarkdownDocument()}
+          >
+            另存为
+          </button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='import-rich']",
+      )!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='save-rich']",
+      )!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(newDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "研究" }),
+      { name: "研究.md" },
+    );
+    expect(showSaveFilePicker).toHaveBeenCalledWith(
+      expect.objectContaining({ suggestedName: "研究 - Laniakea.md" }),
+    );
+    expect(targetHandle.isSameEntry).toHaveBeenCalledWith(sourceHandle);
+    expect(createWritable).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith({
+      message: "protected source",
+      tone: "error",
     });
   });
 

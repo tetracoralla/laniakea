@@ -44,6 +44,28 @@ describe("recent document index", () => {
     ]);
   });
 
+  it("does not truncate the browser document library", () => {
+    let documents: RecentDocument[] = [];
+    for (let index = 0; index < 24; index += 1) {
+      documents = rememberRecentDocument(
+        documents,
+        `browser://laniakea/${index}`,
+        `文档 ${index}`,
+        new Date(2026, 6, index + 1).toISOString(),
+      );
+    }
+
+    persistRecentDocuments(documents);
+    expect(loadRecentDocuments()).toHaveLength(24);
+    expect(
+      visibleRecentDocuments(
+        documents,
+        "browser://laniakea/23",
+        null,
+      ),
+    ).toHaveLength(23);
+  });
+
   it("updates titles without changing recency and can forget a rebound path", () => {
     const documents = [
       {

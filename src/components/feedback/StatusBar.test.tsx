@@ -138,10 +138,30 @@ describe("StatusBar", () => {
     const retry = container.querySelector<HTMLButtonElement>(
       ".status-bar__save--error",
     );
-    expect(retry?.textContent).toBe("保存失败");
+    expect(retry?.textContent).toBe("保存失败 · 重试");
     expect(retry?.title).toBe("磁盘暂时不可写");
 
     act(() => retry?.click());
     expect(onRetrySave).toHaveBeenCalledOnce();
+  });
+
+  it("keeps conflict resolution visible after its notice disappears", () => {
+    const onResolve = vi.fn();
+    renderStatusBar({
+      saveError: "另一个标签页已有更新",
+      saveErrorActionLabel: "保留为副本",
+      saveState: "error",
+      onRetrySave: onResolve,
+    });
+
+    const resolve = container.querySelector<HTMLButtonElement>(
+      ".status-bar__save--error",
+    )!;
+    expect(resolve.textContent).toBe("保存失败 · 保留为副本");
+    expect(resolve.getAttribute("aria-label")).toBe(
+      "保存失败，保留为副本",
+    );
+    act(() => resolve.click());
+    expect(onResolve).toHaveBeenCalledOnce();
   });
 });

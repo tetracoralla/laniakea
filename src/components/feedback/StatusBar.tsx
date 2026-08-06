@@ -17,12 +17,19 @@ interface StatusBarProps {
   onPauseNotice: () => void;
   onResumeNotice: () => void;
   savedLabel?: string;
+  saveErrorActionLabel?: string;
 }
 
-function saveStateLabel(saveState: SaveState, savedLabel: string): string {
+function saveStateLabel(
+  saveState: SaveState,
+  savedLabel: string,
+  saveErrorActionLabel: string,
+): string {
   if (saveState === "loading") return "正在打开";
   if (saveState === "saving") return "正在保存";
-  if (saveState === "error") return "保存失败";
+  if (saveState === "error") {
+    return `保存失败 · ${saveErrorActionLabel}`;
+  }
   return savedLabel;
 }
 
@@ -35,6 +42,7 @@ export function StatusBar({
   onPauseNotice,
   onResumeNotice,
   savedLabel = "已保存",
+  saveErrorActionLabel = "重试",
 }: StatusBarProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [measuredWidth, setMeasuredWidth] = useState<number | null>(
@@ -42,7 +50,11 @@ export function StatusBar({
   );
   const isError =
     saveState === "error" || notice?.tone === "error";
-  const saveLabel = saveStateLabel(saveState, savedLabel);
+  const saveLabel = saveStateLabel(
+    saveState,
+    savedLabel,
+    saveErrorActionLabel,
+  );
 
   const measureWidth = useCallback(() => {
     const contentWidth = contentRef.current?.scrollWidth ?? 0;
@@ -108,7 +120,7 @@ export function StatusBar({
       <div className="status-bar__content" ref={contentRef}>
         {saveState === "error" ? (
           <button
-            aria-label="保存失败，重试"
+            aria-label={`保存失败，${saveErrorActionLabel}`}
             className="status-bar__save status-bar__save--error"
             onClick={onRetrySave}
             title={saveError ?? "保存失败"}

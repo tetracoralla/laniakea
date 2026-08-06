@@ -20,7 +20,10 @@ import {
 export { isBrowserDocumentPath } from "./browserDocumentStore";
 
 const legacyStorageKey = "origin.mindmap.v1";
-const browserRecoveryKey = "laniakea.browser-recovery.v1";
+const legacyBrowserRecoveryKey = "laniakea.browser-recovery.v1";
+const browserRecoveryPrefix = "laniakea.browser-recovery.v2.";
+const browserTabStorageKey = "laniakea.browser-tab.v1";
+let fallbackBrowserTabId: string | null = null;
 
 interface BackendLoadResult {
   document: string | null;
@@ -53,6 +56,7 @@ export interface DocumentLoadResult {
   importedAsCopy: boolean;
   viewStateRestored: boolean;
   sourceHash: string | null;
+  protectedSourceName?: string | null;
 }
 
 export interface DocumentSaveResult {
@@ -260,33 +264,56 @@ function friendlySaveError(error: unknown): PersistenceError {
 export async function loadLocalDocument(): Promise<DocumentLoadResult> {
   if (!isDesktopRuntime()) {
     try {
-      const recovery = readBrowserRecoverySnapshot();
-      if (recovery) {
-        try {
-          const recovered = recovery.documentPath
-            ? await saveBrowserDocument(
-                recovery.document,
-                recovery.documentPath,
-                recovery.sourceHash,
-              )
-            : await createBrowserDocument(recovery.document);
-          await activateBrowserDocument(recovered.documentPath);
-          clearBrowserRecoverySnapshot(recovery.documentPath);
-          return browserLoadResult(
-            recovered,
-            "已恢复关闭页面前尚未写完的内容。",
-            true,
-          );
-        } catch (error) {
-          if (!(error instanceof BrowserDocumentConflictError)) throw error;
-          const recoveredCopy = await createBrowserDocument(recovery.document);
-          clearBrowserRecoverySnapshot(recovery.documentPath);
-          return browserLoadResult(
-            recoveredCopy,
-            "另一标签页已有更新；关闭前的内容已作为独立副本恢复。",
-            true,
-          );
+      const recoveries = readBrowserRecoverySnapshots();
+      if (recoveries.length > 0) {
+        const currentTabId = browserTabId();
+        const ordered = [...recoveries].sort((left, right) => {
+          const leftOwn = left.snapshot.tabId === currentTabId ? 1 : 0;
+          const rightOwn = right.snapshot.tabId === currentTabId ? 1 : 0;
+          if (leftOwn !== rightOwn) return rightOwn - leftOwn;
+          return right.snapshot.savedAt.localeCompare(left.snapshot.savedAt);
+        });
+        let selected: ReturnType<typeof browserLoadResult> | null = null;
+        let firstError: unknown = null;
+        let recoveredAsCopy = 0;
+        for (const recovery of ordered) {
+          try {
+            let recovered;
+            try {
+              recovered = recovery.snapshot.documentPath
+                ? await saveBrowserDocument(
+                    recovery.snapshot.document,
+                    recovery.snapshot.documentPath,
+                    recovery.snapshot.sourceHash,
+                  )
+                : await createBrowserDocument(
+                    recovery.snapshot.document,
+                    false,
+                    recovery.snapshot.protectedSourceName,
+                  );
+            } catch (error) {
+              if (!(error instanceof BrowserDocumentConflictError)) throw error;
+              recovered = await createBrowserDocument(
+                recovery.snapshot.document,
+                false,
+                recovery.snapshot.protectedSourceName,
+              );
+              recoveredAsCopy += 1;
+            }
+            clearBrowserRecoveryRecord(recovery.storageKey);
+            selected ??= browserLoadResult(recovered, null, true);
+          } catch (error) {
+            firstError ??= error;
+          }
         }
+        if (selected) {
+          await activateBrowserDocument(selected.documentPath!);
+          selected.notice = recoveredAsCopy > 0
+            ? "已恢复关闭前的内容；发生冲突的修改已保留为独立副本。"
+            : "已恢复关闭页面前尚未写完的内容。";
+          return selected;
+        }
+        if (firstError) throw firstError;
       }
 
       const active = await loadActiveBrowserDocument();
@@ -449,10 +476,15 @@ export async function saveLocalDocument(
 export async function createMarkdownDraft(
   document: MindMapDocument,
   activateDocument = true,
+  protectedSourceName: string | null = null,
 ): Promise<DraftDocumentResult> {
   if (!isDesktopRuntime()) {
     try {
-      const created = await createBrowserDocument(document, activateDocument);
+      const created = await createBrowserDocument(
+        document,
+        activateDocument,
+        protectedSourceName,
+      );
       requestPersistentBrowserStorage();
       return {
         documentPath: created.documentPath,
@@ -602,12 +634,21 @@ export function saveBrowserDocumentSynchronously(
   document: MindMapDocument,
   documentPath: string | null,
   sourceHash: string | null,
+  protectedSourceName: string | null = null,
 ): void {
   if (isDesktopRuntime()) return;
   try {
     localStorage.setItem(
-      browserRecoveryKey,
-      JSON.stringify({ document, documentPath, sourceHash }),
+      browserRecoveryKey(documentPath),
+      JSON.stringify({
+        version: 2,
+        tabId: browserTabId(),
+        savedAt: new Date().toISOString(),
+        document,
+        documentPath,
+        sourceHash,
+        protectedSourceName,
+      } satisfies BrowserRecoverySnapshot),
     );
   } catch (error) {
     throw friendlySaveError(error);
@@ -615,9 +656,13 @@ export function saveBrowserDocumentSynchronously(
 }
 
 interface BrowserRecoverySnapshot {
+  version: 2;
+  tabId: string | null;
+  savedAt: string;
   document: MindMapDocument;
   documentPath: string | null;
   sourceHash: string | null;
+  protectedSourceName: string | null;
 }
 
 function browserLoadResult(
@@ -625,6 +670,7 @@ function browserLoadResult(
     document: MindMapDocument;
     documentPath: string;
     sourceHash: string;
+    protectedSourceName?: string | null;
   },
   notice: string | null = null,
   recoveredFromBackup = false,
@@ -640,57 +686,136 @@ function browserLoadResult(
     importedAsCopy: false,
     viewStateRestored: true,
     sourceHash: stored.sourceHash,
+    protectedSourceName: stored.protectedSourceName,
   };
 }
 
-function readBrowserRecoverySnapshot(): BrowserRecoverySnapshot | null {
-  let stored: string | null = null;
+function browserTabId(): string {
+  if (fallbackBrowserTabId) return fallbackBrowserTabId;
   try {
-    stored = localStorage.getItem(browserRecoveryKey);
+    const stored = sessionStorage.getItem(browserTabStorageKey);
+    if (stored) return stored;
+    const created = globalThis.crypto?.randomUUID?.() ??
+      `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    sessionStorage.setItem(browserTabStorageKey, created);
+    return created;
   } catch {
-    return null;
+    fallbackBrowserTabId = globalThis.crypto?.randomUUID?.() ??
+      `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return fallbackBrowserTabId;
   }
-  if (!stored) return null;
+}
+
+function browserRecoveryKey(documentPath: string | null): string {
+  const documentToken = encodeURIComponent(documentPath ?? "unbound");
+  return `${browserRecoveryPrefix}${browserTabId()}.${documentToken}`;
+}
+
+function parseBrowserRecoverySnapshot(
+  stored: string,
+  legacy = false,
+): BrowserRecoverySnapshot {
+  const candidate = JSON.parse(stored) as Partial<BrowserRecoverySnapshot>;
+  if (
+    candidate.documentPath !== null &&
+    candidate.documentPath !== undefined &&
+    !isBrowserDocumentPath(candidate.documentPath)
+  ) {
+    throw new Error("invalid browser document path");
+  }
+  return {
+    version: 2,
+    tabId: legacy
+      ? null
+      : typeof candidate.tabId === "string"
+        ? candidate.tabId
+        : null,
+    savedAt:
+      typeof candidate.savedAt === "string"
+        ? candidate.savedAt
+        : new Date(0).toISOString(),
+    document: parseMindMapDocument(JSON.stringify(candidate.document)),
+    documentPath: candidate.documentPath ?? null,
+    sourceHash:
+      typeof candidate.sourceHash === "string"
+        ? candidate.sourceHash
+        : null,
+    protectedSourceName:
+      typeof candidate.protectedSourceName === "string"
+        ? candidate.protectedSourceName
+        : null,
+  };
+}
+
+function readBrowserRecoverySnapshots(): Array<{
+  storageKey: string;
+  snapshot: BrowserRecoverySnapshot;
+}> {
+  const keys: string[] = [];
   try {
-    const candidate = JSON.parse(stored) as Partial<BrowserRecoverySnapshot>;
-    if (
-      candidate.documentPath !== null &&
-      candidate.documentPath !== undefined &&
-      !isBrowserDocumentPath(candidate.documentPath)
-    ) {
-      throw new Error("invalid browser document path");
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (
+        key &&
+        !key.includes(".corrupt.") &&
+        (key.startsWith(browserRecoveryPrefix) ||
+          key === legacyBrowserRecoveryKey)
+      ) {
+        keys.push(key);
+      }
     }
-    return {
-      document: parseMindMapDocument(JSON.stringify(candidate.document)),
-      documentPath: candidate.documentPath ?? null,
-      sourceHash:
-        typeof candidate.sourceHash === "string"
-          ? candidate.sourceHash
-          : null,
-    };
   } catch {
+    return [];
+  }
+
+  const snapshots: Array<{
+    storageKey: string;
+    snapshot: BrowserRecoverySnapshot;
+  }> = [];
+  for (const key of keys) {
+    const stored = localStorage.getItem(key);
+    if (!stored) continue;
     try {
-      localStorage.setItem(
-        `${browserRecoveryKey}.corrupt.${Date.now()}`,
-        stored,
-      );
-      localStorage.removeItem(browserRecoveryKey);
+      snapshots.push({
+        storageKey: key,
+        snapshot: parseBrowserRecoverySnapshot(
+          stored,
+          key === legacyBrowserRecoveryKey,
+        ),
+      });
     } catch {
-      // Keep the unreadable recovery value when a recovery copy cannot be made.
+      try {
+        localStorage.setItem(`${key}.corrupt.${Date.now()}`, stored);
+        localStorage.removeItem(key);
+      } catch {
+        // Keep the unreadable recovery value when a recovery copy cannot be made.
+      }
     }
-    return null;
   }
+  return snapshots;
 }
 
 function clearBrowserRecoverySnapshot(documentPath: string | null): void {
   try {
-    const stored = localStorage.getItem(browserRecoveryKey);
-    if (!stored) return;
-    const candidate = JSON.parse(stored) as Partial<BrowserRecoverySnapshot>;
-    if ((candidate.documentPath ?? null) === documentPath) {
-      localStorage.removeItem(browserRecoveryKey);
-    }
+    localStorage.removeItem(browserRecoveryKey(documentPath));
   } catch {
     // Recovery cleanup is best-effort and must not turn a saved document red.
+  }
+}
+
+function clearBrowserRecoveryRecord(storageKey: string): void {
+  try {
+    localStorage.removeItem(storageKey);
+  } catch {
+    // A committed recovery is safe even if best-effort cleanup is unavailable.
+  }
+}
+
+export function resetBrowserRecoveryTabForTests(): void {
+  fallbackBrowserTabId = null;
+  try {
+    sessionStorage.removeItem(browserTabStorageKey);
+  } catch {
+    // Tests without sessionStorage use the in-memory tab identity above.
   }
 }

@@ -10,6 +10,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 import {
   isDesktopRuntime,
   loadLocalDocument,
+  resetBrowserRecoveryTabForTests,
   saveBrowserDocumentSynchronously,
   saveLocalDocument,
 } from "./localDocumentStore";
@@ -43,6 +44,7 @@ Object.defineProperty(globalThis, "localStorage", {
 describe("local document persistence errors", () => {
   beforeEach(async () => {
     await resetBrowserDocumentStoreForTests();
+    resetBrowserRecoveryTabForTests();
     values.clear();
     delete (
       globalThis as typeof globalThis & {
@@ -113,6 +115,45 @@ describe("local document persistence errors", () => {
     expect(recovered.notice).toContain("独立副本");
     expect((await openBrowserDocument(created.documentPath)).document.title)
       .toBe("较新版本");
+  });
+
+  it("keeps each tab recovery record and only clears the tab that saved", async () => {
+    const created = await createBrowserDocument(createSeedDocument());
+    const tabA = { ...created.document, title: "标签页 A 未提交" };
+    saveBrowserDocumentSynchronously(
+      tabA,
+      created.documentPath,
+      created.sourceHash,
+    );
+
+    resetBrowserRecoveryTabForTests();
+    const tabB = { ...created.document, title: "标签页 B 已保存" };
+    saveBrowserDocumentSynchronously(
+      tabB,
+      created.documentPath,
+      created.sourceHash,
+    );
+    await saveLocalDocument(
+      tabB,
+      created.documentPath,
+      created.sourceHash,
+    );
+
+    const recoveryKeys = [...values.keys()].filter((key) =>
+      key.startsWith("laniakea.browser-recovery.v2."),
+    );
+    expect(recoveryKeys).toHaveLength(1);
+
+    const recovered = await loadLocalDocument();
+    expect(recovered.document?.title).toBe("标签页 A 未提交");
+    expect(recovered.documentPath).not.toBe(created.documentPath);
+    expect((await openBrowserDocument(created.documentPath)).document.title)
+      .toBe("标签页 B 已保存");
+    expect(
+      [...values.keys()].filter((key) =>
+        key.startsWith("laniakea.browser-recovery.v2."),
+      ),
+    ).toHaveLength(0);
   });
 
   it("recognizes the injected desktop bridge even without the legacy flag", () => {
