@@ -1,7 +1,6 @@
 import {
   forwardRef,
   useCallback,
-  useDeferredValue,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -141,11 +140,10 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       editingLayout && draft === ""
         ? (nodePlaceholder(editingLayout) ?? "")
         : draft;
-    const deferredDraftSizingText = useDeferredValue(draftSizingText);
     const draftSize = editingLayout
       ? sizeForNode(
           editingLayout.depth,
-          deferredDraftSizingText,
+          draftSizingText,
           editingLayout.rootKind,
         )
       : null;
@@ -169,7 +167,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           height: draftSize.height,
           layout: computeLayout(document, {
             id: editingId,
-            text: deferredDraftSizingText,
+            text: draftSizingText,
           }),
         };
       }
@@ -184,9 +182,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           heightAwareLayout,
           document,
           editingId,
-          deferredDraftSizingText,
+          draftSizingText,
         ),
-      [document, deferredDraftSizingText, editingId, heightAwareLayout],
+      [document, draftSizingText, editingId, heightAwareLayout],
     );
     visibleIdsRef.current = layout.visibleIds;
     const viewport = document.viewport;

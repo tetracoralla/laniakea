@@ -147,6 +147,53 @@ describe("node editor input method handling", () => {
     ).toBe("中文 English 后续");
   });
 
+  it("keeps the native draft and caret stable while canvas sizing catches up", async () => {
+    const mindMapDocument = createBlankDocument();
+    const node = mindMapDocument.nodes[mindMapDocument.rootId];
+    const layout = computeLayout(mindMapDocument).nodes[mindMapDocument.rootId];
+    const onDraftChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <MindMapNode
+          draft="初始"
+          dragging={false}
+          dropTarget={false}
+          editing
+          layout={layout}
+          node={node}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDraftChange={onDraftChange}
+          onDragPointerDown={() => undefined}
+          onPasteStructured={() => false}
+          onSelect={() => undefined}
+          onToggle={() => undefined}
+          primary
+          selected
+        />,
+      );
+    });
+
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='编辑节点']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(editor, "初始长文本输入");
+      editor.setSelectionRange(5, 5);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(onDraftChange).toHaveBeenCalledWith("初始长文本输入");
+    expect(editor.value).toBe("初始长文本输入");
+    expect(editor.selectionStart).toBe(5);
+    expect(editor.selectionEnd).toBe(5);
+  });
+
   it("renders a Markdown thematic break as a divider while keeping it editable", async () => {
     const mindMapDocument = createBlankDocument();
     const node = mindMapDocument.nodes[mindMapDocument.rootId];
