@@ -654,9 +654,7 @@
 }
 
 .mind-node__editor {
-  padding-block:
-    calc(var(--node-padding-block) + 2px)
-    calc(var(--node-padding-block) - 2px);
+  padding-block: var(--node-padding-block);
   overflow: auto;
   color: var(--ink);
   border-color: var(--violet);
@@ -664,7 +662,6 @@
 }
 
 .mind-node--root .mind-node__editor {
-  padding-block: var(--node-padding-block);
   color: white;
   caret-color: white;
 }

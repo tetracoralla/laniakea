@@ -57,8 +57,10 @@ export const MindMapNode = memo(function MindMapNode({
 
   useLayoutEffect(() => {
     if (!editing) return;
-    editorRef.current?.focus();
-    editorRef.current?.setSelectionRange(draft.length, draft.length);
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
   }, [editing]);
 
   return (
@@ -77,11 +79,13 @@ export const MindMapNode = memo(function MindMapNode({
         <textarea
           aria-label="编辑节点"
           className="mind-node__editor"
+          defaultValue={draft}
           placeholder={placeholder}
           ref={editorRef}
           rows={1}
-          value={draft}
-          onBlur={() => onCommitEdit(node.id, draft)}
+          onBlur={(event) =>
+            onCommitEdit(node.id, event.currentTarget.value)
+          }
           onChange={(event) => onDraftChange(event.target.value)}
           onCompositionEnd={() => {
             inputMethodComposingRef.current = false;
@@ -106,7 +110,7 @@ export const MindMapNode = memo(function MindMapNode({
             }
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              onCommitEdit(node.id, draft);
+              onCommitEdit(node.id, event.currentTarget.value);
             }
             if (event.key === "Escape") {
               event.preventDefault();

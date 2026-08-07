@@ -1,0 +1,44 @@
+name: 报告问题
+description: 告诉我们哪里没有按预期工作
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你帮助改进 Laniakea。请不要在公开 Issue 中提交私密文档或安全漏洞。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 发生了什么？
+      description: 请说明你原本想做什么，以及实际发生了什么。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 如何复现？
+      description: 请按顺序写下操作步骤；如果是偶发问题，也请说明大概多久出现一次。
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: 使用环境
+      options:
+        - 网页版
+        - macOS 桌面版
+        - 两者都有
+    validations:
+      required: true
+  - type: input
+    id: browser_or_system
+    attributes:
+      label: 浏览器或系统版本
+      placeholder: 例如 Chrome 138 / macOS 15.5
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 可以添加不含私密内容的截图或录屏。

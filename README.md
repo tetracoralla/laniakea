@@ -31,7 +31,7 @@ npm run preview
 
 请定期使用“更多 → 导出完整备份”，也可以把单张图另存为 Markdown。清除网站数据、使用无痕窗口或更换浏览器后，未另行备份的数据可能消失。支持 File System Access API 的浏览器会直接写入用户选择的 Markdown 文件；其他浏览器使用普通下载。
 
-公开发布后，GitHub Pages 地址将是 <https://tetracoralla.github.io/laniakea/>。部署说明见 [`docs/deployment.md`](docs/deployment.md)。
+在线使用：<https://tetracoralla.github.io/laniakea/>。部署说明见 [`docs/deployment.md`](docs/deployment.md)。
 
 ## macOS 桌面版
 
@@ -79,7 +79,10 @@ npm run check:desktop-runtime
 
 ## 参与贡献
 
-请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 和 [`SECURITY.md`](SECURITY.md)。依赖许可概览见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+- [报告问题](https://github.com/tetracoralla/laniakea/issues/new?template=bug_report.yml)
+- [提出建议](https://github.com/tetracoralla/laniakea/issues/new?template=feature_request.yml)
+
+准备参与开发时，请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 和 [`SECURITY.md`](SECURITY.md)。依赖许可概览见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
 ## 许可
 

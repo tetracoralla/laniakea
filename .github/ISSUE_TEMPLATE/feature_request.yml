@@ -1,0 +1,35 @@
+name: 提出建议
+description: 分享你希望 Laniakea 改进的体验
+title: "[建议] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: situation
+    attributes:
+      label: 你想解决什么问题？
+      description: 请先描述使用场景和遇到的困难。
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你希望它怎样工作？
+      description: 不需要懂技术，描述理想操作方式即可。
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: 主要使用环境
+      options:
+        - 网页版
+        - macOS 桌面版
+        - 两者都需要
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 可以添加参考产品、草图或不含私密内容的截图。

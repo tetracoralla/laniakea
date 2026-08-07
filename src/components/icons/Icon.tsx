@@ -68,8 +68,9 @@ export function Icon({ name, size = 18, ...props }: IconProps) {
     ),
     newMindMap: (
       <>
-        <path d="M3.5 5h10v4h7v11H3.5z" />
-        <path d="M17 2.5v5M14.5 5h5" />
+        <path d="M6 3.5h8l4 4v13H6z" />
+        <path d="M14 3.5v4h4" />
+        <path d="M9 13h6M12 10v6" />
       </>
     ),
     folder: <path d="M3 6.5h7l2 2h9v10.5H3z" />,

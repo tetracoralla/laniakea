@@ -193,7 +193,7 @@ export function TopBar({
           onClick={onNew}
           type="button"
         >
-          <Icon height={18} name="newMindMap" width={20} />
+          <Icon name="newMindMap" />
           <span className="toolbar-button__label">新建</span>
         </button>
         <span

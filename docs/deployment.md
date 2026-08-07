@@ -2,15 +2,15 @@
 
 ## GitHub Pages
 
-计划公开仓库：<https://github.com/tetracoralla/laniakea>
+公开仓库：<https://github.com/tetracoralla/laniakea>
 
-计划网页地址：<https://tetracoralla.github.io/laniakea/>
+网页地址：<https://tetracoralla.github.io/laniakea/>
 
 `.github/workflows/deploy-pages.yml` 在 `main` 更新时执行依赖安装、前端测试和构建，然后发布 `dist/`。Vite 使用相对资源路径，因此应用可以在 GitHub Pages 的 `/laniakea/` 子路径运行。
 
 项目不依赖外部 CDN、账号、数据库或应用服务器。浏览器文档使用 IndexedDB，Service Worker 只缓存应用外壳以便离线重新打开。
 
-## 首次公开发布
+## 首次公开发布（已完成）
 
 1. 创建公开仓库 `tetracoralla/laniakea`，默认分支为 `main`。
 2. 推送已经通过验证的提交。
@@ -18,7 +18,7 @@
 4. 等待 `Deploy to GitHub Pages` 工作流完成。
 5. 在正式 HTTPS 地址执行下面的发布验收。
 
-仓库创建、首次推送和公开 Pages 启用会改变外部公开状态，必须由项目所有者最终确认后执行。
+当前公开版不附带 macOS 安装包。本地构建仍采用临时签名；待 Apple Developer 签名和公证流程完成后，再提供可供普通用户安装的桌面包。
 
 ## 发布验收
 
