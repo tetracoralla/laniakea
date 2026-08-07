@@ -408,6 +408,123 @@ describe("rendered interaction regressions", () => {
     ).not.toBeNull();
   });
 
+  it("reports live zoom feedback without waiting for viewport persistence", async () => {
+    const document = largeDocument(3);
+    const onZoomPreview = vi.fn();
+    const onViewportChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft=""
+          editingId={null}
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={onViewportChange}
+          onZoomPreview={onZoomPreview}
+          selection={singleSelection(document.rootId)}
+        />,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    const viewportCallsBeforeZoom = onViewportChange.mock.calls.length;
+
+    await act(async () => {
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: true,
+          deltaY: 100,
+        }),
+      );
+    });
+
+    expect(onZoomPreview).toHaveBeenCalledOnce();
+    expect(onZoomPreview.mock.calls[0][0]).toBeCloseTo(
+      0.9201876506,
+      10,
+    );
+    expect(onViewportChange).toHaveBeenCalledTimes(viewportCallsBeforeZoom);
+  });
+
+  it("preserves fine wheel deltas and avoids layout reads in the zoom hot path", async () => {
+    const document = largeDocument(3);
+    const onZoomPreview = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft=""
+          editingId={null}
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          onZoomPreview={onZoomPreview}
+          selection={singleSelection(document.rootId)}
+        />,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    const content = container.querySelector<HTMLElement>(
+      ".mindmap-canvas__content",
+    )!;
+    const boundsReadsBeforeZoom = vi.mocked(
+      HTMLElement.prototype.getBoundingClientRect,
+    ).mock.calls.length;
+
+    for (let index = 0; index < 4; index += 1) {
+      await act(async () => {
+        canvas.dispatchEvent(
+          new WheelEvent("wheel", {
+            bubbles: true,
+            cancelable: true,
+            ctrlKey: true,
+            deltaY: 1,
+          }),
+        );
+      });
+    }
+
+    const zooms = onZoomPreview.mock.calls.map(([zoom]) => zoom);
+    expect(zooms).toHaveLength(4);
+    expect(
+      zooms.every(
+        (zoom, index) => index === 0 || zoom < zooms[index - 1],
+      ),
+    ).toBe(true);
+    expect(
+      zooms.every(
+        (zoom, index) =>
+          index === 0 || zooms[index - 1] - zoom < 0.002,
+      ),
+    ).toBe(true);
+    expect(content.style.transform).toContain(`scale(${zooms.at(-1)})`);
+    expect(
+      vi.mocked(HTMLElement.prototype.getBoundingClientRect).mock.calls.length,
+    ).toBe(boundsReadsBeforeZoom);
+  });
+
   it("keeps small pans compositor-only until the mounted window needs refreshing", async () => {
     const document = largeDocument(5_000);
     let commits = 0;

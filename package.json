@@ -1,7 +1,7 @@
 {
   "name": "laniakea",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "快速、轻量的思维导图",
   "author": "openAdam",
   "license": "Apache-2.0",

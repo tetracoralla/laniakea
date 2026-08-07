@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -16,13 +17,58 @@ interface StatusBarProps {
   onNoticeActionComplete: () => void;
   onPauseNotice: () => void;
   onResumeNotice: () => void;
-  savedLabel?: string;
   saveErrorActionLabel?: string;
+}
+
+interface DisplayedSaveStatus {
+  actionLabel: string;
+  error: string | null;
+  state: Exclude<SaveState, "saved">;
+}
+
+const contentExitDuration = 160;
+const shellExitDuration = 240;
+const collapsedShellWidth = 38;
+
+function useAnimatedPresence<T>(value: T | null) {
+  const [displayedValue, setDisplayedValue] = useState<T | null>(value);
+  const [visible, setVisible] = useState(false);
+  const displayedValueRef = useRef(displayedValue);
+
+  displayedValueRef.current = displayedValue;
+
+  useEffect(() => {
+    let animationFrame: number | null = null;
+    let exitTimer: number | null = null;
+
+    if (value !== null) {
+      setDisplayedValue(value);
+      setVisible(false);
+      animationFrame = window.requestAnimationFrame(() => {
+        setVisible(true);
+      });
+    } else if (displayedValueRef.current !== null) {
+      setVisible(false);
+      exitTimer = window.setTimeout(() => {
+        setDisplayedValue(null);
+      }, contentExitDuration);
+    }
+
+    return () => {
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+      if (exitTimer !== null) {
+        window.clearTimeout(exitTimer);
+      }
+    };
+  }, [value]);
+
+  return { displayedValue, visible };
 }
 
 function saveStateLabel(
   saveState: SaveState,
-  savedLabel: string,
   saveErrorActionLabel: string,
 ): string {
   if (saveState === "loading") return "正在打开";
@@ -30,7 +76,7 @@ function saveStateLabel(
   if (saveState === "error") {
     return `保存失败 · ${saveErrorActionLabel}`;
   }
-  return savedLabel;
+  return "";
 }
 
 export function StatusBar({
@@ -41,20 +87,86 @@ export function StatusBar({
   onNoticeActionComplete,
   onPauseNotice,
   onResumeNotice,
-  savedLabel = "已保存",
   saveErrorActionLabel = "重试",
 }: StatusBarProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const [measuredWidth, setMeasuredWidth] = useState<number | null>(
     null,
   );
-  const isError =
-    saveState === "error" || notice?.tone === "error";
-  const saveLabel = saveStateLabel(
-    saveState,
-    savedLabel,
-    saveErrorActionLabel,
+  const [progressVisible, setProgressVisible] = useState(false);
+  const nextSaveStatus = useMemo<DisplayedSaveStatus | null>(
+    () =>
+      saveState === "error" ||
+      (progressVisible &&
+        (saveState === "saving" || saveState === "loading"))
+        ? {
+            actionLabel: saveErrorActionLabel,
+            error: saveError,
+            state: saveState,
+          }
+        : null,
+    [progressVisible, saveError, saveErrorActionLabel, saveState],
   );
+  const {
+    displayedValue: displayedSaveStatus,
+    visible: saveStatusVisible,
+  } = useAnimatedPresence(nextSaveStatus);
+  const {
+    displayedValue: displayedNotice,
+    visible: noticeVisible,
+  } = useAnimatedPresence(notice);
+  const contentPresent =
+    displayedSaveStatus !== null || displayedNotice !== null;
+  const [shellMounted, setShellMounted] = useState(contentPresent);
+  const [shellExpanded, setShellExpanded] = useState(false);
+  const isError =
+    displayedSaveStatus?.state === "error" ||
+    displayedNotice?.tone === "error";
+  const saveLabel = displayedSaveStatus
+    ? saveStateLabel(
+        displayedSaveStatus.state,
+        displayedSaveStatus.actionLabel,
+      )
+    : "";
+
+  useEffect(() => {
+    if (saveState !== "saving" && saveState !== "loading") {
+      setProgressVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setProgressVisible(true);
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [saveState]);
+
+  useEffect(() => {
+    let animationFrame: number | null = null;
+    let exitTimer: number | null = null;
+
+    if (contentPresent) {
+      setShellMounted(true);
+      animationFrame = window.requestAnimationFrame(() => {
+        setShellExpanded(true);
+      });
+    } else {
+      setShellExpanded(false);
+      if (shellMounted) {
+        exitTimer = window.setTimeout(() => {
+          setShellMounted(false);
+        }, shellExitDuration);
+      }
+    }
+
+    return () => {
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+      }
+      if (exitTimer !== null) {
+        window.clearTimeout(exitTimer);
+      }
+    };
+  }, [contentPresent, shellMounted]);
 
   const measureWidth = useCallback(() => {
     const contentWidth = contentRef.current?.scrollWidth ?? 0;
@@ -68,11 +180,13 @@ export function StatusBar({
   useLayoutEffect(() => {
     measureWidth();
   }, [
+    displayedNotice?.actionLabel,
+    displayedNotice?.message,
+    displayedNotice?.onAction,
+    displayedSaveStatus,
     measureWidth,
-    notice?.actionLabel,
-    notice?.message,
-    notice?.onAction,
     saveLabel,
+    shellMounted,
   ]);
 
   useEffect(() => {
@@ -81,73 +195,91 @@ export function StatusBar({
   }, [measureWidth]);
 
   const runNoticeAction = () => {
-    notice?.onAction?.();
+    displayedNotice?.onAction?.();
     onNoticeActionComplete();
   };
 
-  const saveContent = (
+  const renderedSaveState = displayedSaveStatus?.state;
+  const saveContent = displayedSaveStatus ? (
     <>
-      <span
-        className={`status-bar__dot ${
-          saveState === "saving" || saveState === "loading"
-            ? "is-saving"
-            : saveState === "error"
-              ? "is-error"
-              : ""
-        }`}
-      />
+      {renderedSaveState === "error" ? (
+        <span aria-hidden="true" className="status-bar__error-icon" />
+      ) : (
+        <span aria-hidden="true" className="status-bar__spinner" />
+      )}
       <span>{saveLabel}</span>
     </>
-  );
+  ) : null;
+
+  if (!shellMounted) return null;
 
   return (
     <div
       aria-live={isError ? "assertive" : "polite"}
       className={`status-bar ${
         measuredWidth === null ? "" : "is-measured"
-      } ${isError ? "status-bar--error" : ""}`}
+      } ${shellExpanded ? "is-expanded" : ""} ${
+        isError ? "status-bar--error" : ""
+      }`}
       onBlurCapture={onResumeNotice}
       onFocusCapture={onPauseNotice}
       onPointerEnter={onPauseNotice}
       onPointerLeave={onResumeNotice}
       role={isError ? "alert" : "status"}
       style={
-        measuredWidth === null
-          ? undefined
-          : { width: `${measuredWidth}px` }
+        {
+          width:
+            shellExpanded && measuredWidth !== null
+              ? `${measuredWidth}px`
+              : `${collapsedShellWidth}px`,
+        }
       }
     >
       <div className="status-bar__content" ref={contentRef}>
-        {saveState === "error" ? (
+        {displayedSaveStatus && renderedSaveState === "error" ? (
           <button
-            aria-label={`保存失败，${saveErrorActionLabel}`}
-            className="status-bar__save status-bar__save--error"
+            aria-label={`保存失败，${displayedSaveStatus.actionLabel}`}
+            className={`status-bar__save status-bar__save--error ${
+              saveStatusVisible ? "is-visible" : ""
+            }`}
             onClick={onRetrySave}
-            title={saveError ?? "保存失败"}
+            title={displayedSaveStatus.error ?? "保存失败"}
             type="button"
           >
             {saveContent}
           </button>
-        ) : (
-          <span className="status-bar__save">{saveContent}</span>
-        )}
+        ) : displayedSaveStatus ? (
+          <span
+            className={`status-bar__save ${
+              saveStatusVisible ? "is-visible" : ""
+            }`}
+          >
+            {saveContent}
+          </span>
+        ) : null}
 
-        {notice && (
-          <>
-            <span aria-hidden="true" className="status-bar__divider" />
+        {displayedNotice && (
+          <span
+            className={`status-bar__notice ${
+              noticeVisible ? "is-visible" : ""
+            }`}
+          >
+            {displayedSaveStatus && (
+              <span aria-hidden="true" className="status-bar__divider" />
+            )}
             <span className="status-bar__message">
-              {notice.message}
+              {displayedNotice.message}
             </span>
-            {notice.actionLabel && notice.onAction && (
+            {displayedNotice.actionLabel && displayedNotice.onAction && (
               <button
                 className="status-bar__action"
                 onClick={runNoticeAction}
                 type="button"
               >
-                {notice.actionLabel}
+                {displayedNotice.actionLabel}
               </button>
             )}
-          </>
+          </span>
         )}
       </div>
     </div>

@@ -357,6 +357,9 @@ export function DocumentSwitcher({
 
       {open && (
         <div
+          aria-describedby={
+            showFileActions ? undefined : "browser-storage-note"
+          }
           className="document-switcher__popover"
           onKeyDown={handleMenuKeyDown}
           role="menu"
@@ -535,6 +538,16 @@ export function DocumentSwitcher({
             <Icon name="folder" size={17} />
             <span>打开文件…</span>
           </button>
+          {!showFileActions && (
+            <div role="none">
+              <p
+                className="document-switcher__storage-note"
+                id="browser-storage-note"
+              >
+                内容保存在此浏览器，建议定期导出完整备份
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>

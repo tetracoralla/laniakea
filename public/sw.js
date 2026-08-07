@@ -1,7 +1,8 @@
 const CACHE_PREFIX = 'laniakea-'
-const CACHE_NAME = `${CACHE_PREFIX}v3`
+const CACHE_NAME = `${CACHE_PREFIX}v4`
 const SCOPE_URL = new URL('./', self.location.href)
 const INDEX_URL = new URL('index.html', SCOPE_URL)
+const IS_DESKTOP_RUNTIME = self.location.protocol === 'tauri:'
 
 async function cacheAppShell() {
   const cache = await caches.open(CACHE_NAME)
@@ -26,11 +27,34 @@ async function cacheAppShell() {
 }
 
 self.addEventListener('install', (event) => {
+  if (IS_DESKTOP_RUNTIME) {
+    event.waitUntil(self.skipWaiting())
+    return
+  }
   event.waitUntil(cacheAppShell())
   self.skipWaiting()
 })
 
 self.addEventListener('activate', (event) => {
+  if (IS_DESKTOP_RUNTIME) {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((keys) =>
+          Promise.all(
+            keys
+              .filter((key) => key.startsWith(CACHE_PREFIX))
+              .map((key) => caches.delete(key)),
+          ),
+        )
+        .then(() => self.registration.unregister())
+        .then(() => self.clients.matchAll({ type: 'window' }))
+        .then((clients) =>
+          Promise.all(clients.map((client) => client.navigate(client.url))),
+        ),
+    )
+    return
+  }
   event.waitUntil(
     caches
       .keys()
@@ -48,6 +72,7 @@ self.addEventListener('activate', (event) => {
 })
 
 self.addEventListener('fetch', (event) => {
+  if (IS_DESKTOP_RUNTIME) return
   if (event.request.method !== 'GET') return
   const isDocumentNavigation =
     event.request.mode === 'navigate' ||

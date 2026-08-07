@@ -35,6 +35,10 @@ import {
   viewportNeedsRenderWindowRefresh,
   visibleLayoutNodeIds,
 } from "../../model/viewportCulling";
+import {
+  canvasZoomFromWheel,
+  clampCanvasZoom,
+} from "../../model/zoom";
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
 import { SelectionMarquee } from "./SelectionMarquee";
@@ -67,13 +71,7 @@ interface MindMapCanvasProps {
     position: { x: number; y: number },
   ) => void;
   onViewportChange: (viewport: Viewport) => void;
-}
-
-const minZoom = 0.52;
-const maxZoom = 1.8;
-
-function clampZoom(value: number): number {
-  return Math.min(maxZoom, Math.max(minZoom, value));
+  onZoomPreview?: (zoom: number) => void;
 }
 
 export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
@@ -94,6 +92,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onAttachNode,
       onDetachNode,
       onViewportChange,
+      onZoomPreview,
     },
     ref,
   ) {
@@ -103,6 +102,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const persistTimer = useRef<number | null>(null);
     const viewportFrame = useRef<number | null>(null);
     const liveViewport = useRef(document.viewport);
+    const containerBoundsRef = useRef<{
+      height: number;
+      left: number;
+      top: number;
+      width: number;
+    } | null>(null);
     const previousLayoutRef = useRef<LayoutResult | null>(null);
     const draftHeightLayoutRef = useRef<{
       base: LayoutResult;
@@ -225,21 +230,31 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const handleWheel = useCallback((event: WheelEvent) => {
       event.preventDefault();
       if (event.metaKey || event.ctrlKey) {
-        const bounds = containerRef.current?.getBoundingClientRect();
+        const bounds =
+          containerBoundsRef.current ??
+          containerRef.current?.getBoundingClientRect();
         if (!bounds) return;
         const current = liveViewport.current;
-        const nextZoom = clampZoom(
-          current.zoom * (event.deltaY > 0 ? 0.92 : 1.08),
+        const nextZoom = canvasZoomFromWheel(
+          current.zoom,
+          event.deltaY,
+          event.deltaMode,
+          bounds.height,
         );
         const pointX = event.clientX - bounds.left;
         const pointY = event.clientY - bounds.top;
         const contentX = (pointX - current.x) / current.zoom;
         const contentY = (pointY - current.y) / current.zoom;
+        if (nextZoom === current.zoom) {
+          onZoomPreview?.(nextZoom);
+          return;
+        }
         scheduleViewportCommit({
           zoom: nextZoom,
           x: pointX - contentX * nextZoom,
           y: pointY - contentY * nextZoom,
         });
+        onZoomPreview?.(nextZoom);
         return;
       }
       const current = liveViewport.current;
@@ -248,7 +263,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         x: current.x - event.deltaX,
         y: current.y - event.deltaY,
       });
-    }, [scheduleViewportCommit]);
+    }, [onZoomPreview, scheduleViewportCommit]);
 
     const {
       activeSelection,
@@ -330,12 +345,13 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const zoomAtCenter = (nextZoom: number) => {
       const bounds = containerRef.current?.getBoundingClientRect();
       if (!bounds) return;
-      const clamped = clampZoom(nextZoom);
+      const clamped = clampCanvasZoom(nextZoom);
       const centerX = bounds.width / 2;
       const centerY = bounds.height / 2;
       const current = liveViewport.current;
       const contentX = (centerX - current.x) / current.zoom;
       const contentY = (centerY - current.y) / current.zoom;
+      onZoomPreview?.(clamped);
       onViewportChange({
         zoom: clamped,
         x: centerX - contentX * clamped,
@@ -348,13 +364,14 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       if (!bounds) return;
       const paddingX = 112;
       const paddingY = 96;
-      const zoom = clampZoom(
+      const zoom = clampCanvasZoom(
         Math.min(
           1,
           (bounds.width - paddingX * 2) / layout.width,
           (bounds.height - paddingY * 2) / layout.height,
         ),
       );
+      onZoomPreview?.(zoom);
       onViewportChange({
         zoom,
         x: (bounds.width - layout.width * zoom) / 2,
@@ -387,16 +404,18 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         focusCanvas: () =>
           containerRef.current?.focus({ preventScroll: true }),
         focusSelected,
-        zoomIn: () => zoomAtCenter(viewport.zoom + 0.1),
-        zoomOut: () => zoomAtCenter(viewport.zoom - 0.1),
-        resetZoom: () =>
+        zoomIn: () => zoomAtCenter(liveViewport.current.zoom + 0.1),
+        zoomOut: () => zoomAtCenter(liveViewport.current.zoom - 0.1),
+        resetZoom: () => {
+          onZoomPreview?.(1);
           onViewportChange({
             zoom: 1,
             x: 96,
             y: -24,
-          }),
+          });
+        },
       }),
-      [layout, selection.primaryId, viewport],
+      [layout, onZoomPreview, selection.primaryId, viewport],
     );
 
     useLayoutEffect(() => {
@@ -421,10 +440,21 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       if (!container) return;
       const updateSize = () => {
         const bounds = container.getBoundingClientRect();
-        setContainerSize({
+        const nextSize = {
           width: bounds.width,
           height: bounds.height,
-        });
+        };
+        containerBoundsRef.current = {
+          ...nextSize,
+          left: bounds.left,
+          top: bounds.top,
+        };
+        setContainerSize((current) =>
+          current.width === nextSize.width &&
+          current.height === nextSize.height
+            ? current
+            : nextSize,
+        );
       };
       updateSize();
       const observer = new ResizeObserver(updateSize);

@@ -1,6 +1,6 @@
 [package]
 name = "laniakea"
-version = "0.1.0"
+version = "0.1.1"
 description = "快速、轻量的思维导图"
 authors = ["openAdam"]
 edition = "2021"

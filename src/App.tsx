@@ -4,7 +4,10 @@ import {
   type CanvasHandle,
   MindMapCanvas,
 } from "./components/canvas/MindMapCanvas";
-import { CanvasControls } from "./components/chrome/CanvasControls";
+import {
+  CanvasControls,
+  type CanvasControlsHandle,
+} from "./components/chrome/CanvasControls";
 import { TopBar } from "./components/chrome/TopBar";
 import {
   type OverlayMode,
@@ -20,6 +23,7 @@ import {
 } from "./desktop/runtime";
 import { displayGlobalShortcut } from "./desktop/shortcut";
 import { useAppNotice } from "./hooks/useAppNotice";
+import { useBrowserStorageNotice } from "./hooks/useBrowserStorageNotice";
 import { useDocumentWorkflow } from "./hooks/useDocumentWorkflow";
 import { useEditorSession } from "./hooks/useEditorSession";
 import { useKeyboardCommands } from "./hooks/useKeyboardCommands";
@@ -80,6 +84,10 @@ export function App() {
   const hasSingleSelection =
     selection.selectedIds.length === 1 && selectedId !== null;
   const canvasRef = useRef<CanvasHandle>(null);
+  const canvasControlsRef = useRef<CanvasControlsHandle>(null);
+  const showZoomPreview = useCallback((zoom: number) => {
+    canvasControlsRef.current?.showZoom(zoom);
+  }, []);
   const overlayReturnFocusRef = useRef<HTMLElement | null>(null);
   const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
   const initialEditStarted = useRef(false);
@@ -95,6 +103,12 @@ export function App() {
     pause: pauseAnnouncement,
     resume: resumeAnnouncement,
   } = useAppNotice();
+  useBrowserStorageNotice({
+    announcement,
+    desktopRuntime,
+    notify,
+    saveState,
+  });
   const {
     editingId,
     draft,
@@ -339,6 +353,7 @@ export function App() {
         onSpaceTap={editSelectedFromSpace}
         onToggle={toggleNode}
         onViewportChange={setViewport}
+        onZoomPreview={showZoomPreview}
         ref={canvasRef}
         selection={selection}
       />
@@ -348,7 +363,7 @@ export function App() {
         onReset={() => canvasRef.current?.resetZoom()}
         onZoomIn={() => canvasRef.current?.zoomIn()}
         onZoomOut={() => canvasRef.current?.zoomOut()}
-        zoom={mindMap.viewport.zoom}
+        ref={canvasControlsRef}
       />
 
       <StatusBar
@@ -360,7 +375,6 @@ export function App() {
         saveError={saveError}
         saveState={saveState}
         saveErrorActionLabel={saveErrorActionLabel}
-        savedLabel={desktopRuntime ? "已保存" : "保存在此浏览器"}
       />
 
       {overlay && (

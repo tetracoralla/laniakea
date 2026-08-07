@@ -29,7 +29,8 @@
 
 .topbar__identity,
 .topbar__actions,
-.canvas-controls,
+.canvas-controls__touch-actions,
+.canvas-controls__feedback,
 .status-bar {
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid var(--line);
@@ -244,6 +245,14 @@
   background: var(--line);
 }
 
+.document-switcher__storage-note {
+  padding: 8px 10px 5px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .document-title {
   display: flex;
   min-width: 0;
@@ -273,15 +282,6 @@
 .document-title input:focus {
   background: var(--surface);
   border-color: var(--line-strong);
-}
-
-@keyframes pulse {
-  from {
-    opacity: 0.4;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 .topbar__actions {
@@ -717,12 +717,20 @@
   right: 27px;
   bottom: 26px;
   display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.canvas-controls__touch-actions {
+  display: none;
   height: 42px;
   align-items: center;
   padding: 0 7px;
+  pointer-events: auto;
 }
 
-.canvas-controls button {
+.canvas-controls__touch-actions button {
   display: grid;
   width: 34px;
   height: 30px;
@@ -733,21 +741,36 @@
   place-items: center;
 }
 
-.canvas-controls button:hover {
+.canvas-controls__touch-actions button:hover {
   background: #f3f3f8;
 }
 
-.canvas-controls .canvas-controls__zoom {
-  width: 56px;
-  font-size: 13px;
-  font-weight: 560;
+.canvas-controls__touch-actions button span {
+  font-size: 11px;
+  font-weight: 620;
 }
 
-.canvas-controls__divider {
-  width: 1px;
-  height: 20px;
-  margin: 0 5px;
-  background: var(--line);
+.canvas-controls__feedback {
+  display: grid;
+  min-width: 64px;
+  height: 38px;
+  padding: 0 11px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 580;
+  opacity: 0;
+  place-items: center;
+  transform: translateY(4px);
+  transition:
+    opacity var(--motion-fast) ease,
+    transform var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1);
+  white-space: nowrap;
+}
+
+.canvas-controls.is-feedback-visible .canvas-controls__feedback {
+  opacity: 1;
+  transform: translateY(0);
+  transition: none;
 }
 
 .status-bar {
@@ -760,13 +783,25 @@
   max-width: min(420px, calc(100vw - 220px));
   overflow: hidden;
   color: var(--ink);
+  opacity: 0;
+  transform: translateY(5px);
+  transition:
+    opacity var(--motion-fast) ease,
+    transform var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1);
+}
+
+.status-bar.is-expanded {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .status-bar.is-measured {
   transition:
     width var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1),
-    color var(--motion-fast) ease;
-  will-change: width;
+    color var(--motion-fast) ease,
+    opacity var(--motion-fast) ease,
+    transform var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1);
+  will-change: width, opacity, transform;
 }
 
 .status-bar__content {
@@ -787,7 +822,18 @@
   align-items: center;
   gap: 7px;
   color: var(--muted);
+  opacity: 0;
+  transform: translateX(-3px);
+  transition:
+    opacity var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
   white-space: nowrap;
+}
+
+.status-bar__save.is-visible {
+  opacity: 1;
+  transform: translateX(0);
+  transition-delay: 70ms;
 }
 
 .status-bar__save--error {
@@ -804,21 +850,38 @@
   background: color-mix(in srgb, var(--danger) 7%, transparent);
 }
 
-.status-bar__dot {
-  width: 6px;
-  height: 6px;
+.status-bar__spinner {
+  width: 12px;
+  height: 12px;
   flex: none;
-  background: #6dcb9a;
+  border: 1.8px solid color-mix(in srgb, var(--violet) 24%, transparent);
+  border-top-color: var(--violet);
   border-radius: 50%;
+  animation: status-spin 780ms linear infinite;
 }
 
-.status-bar__dot.is-saving {
-  background: var(--amber);
-  animation: pulse 900ms ease-in-out infinite alternate;
-}
-
-.status-bar__dot.is-error {
+.status-bar__error-icon {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: white;
   background: var(--danger);
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  place-items: center;
+}
+
+.status-bar__error-icon::after {
+  content: "!";
+}
+
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .status-bar__divider {
@@ -826,6 +889,26 @@
   height: 18px;
   flex: none;
   background: var(--line);
+}
+
+.status-bar__notice {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-3px);
+  transition:
+    opacity var(--motion-fast) ease,
+    transform var(--motion-fast) ease;
+}
+
+.status-bar__notice.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+  transition-delay: 100ms;
 }
 
 .status-bar__message {
@@ -854,8 +937,22 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .status-bar.is-measured {
+  .canvas-controls__feedback,
+  .status-bar,
+  .status-bar.is-measured,
+  .status-bar__notice,
+  .status-bar__save {
     transition: none;
+  }
+
+  .status-bar__spinner {
+    animation-duration: 1.5s;
+  }
+}
+
+@media (pointer: coarse) {
+  .canvas-controls__touch-actions {
+    display: flex;
   }
 }
 

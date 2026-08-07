@@ -270,6 +270,9 @@ describe("recent document file actions", () => {
       ".document-switcher__recent",
     );
     expect(container.textContent).toContain("文档库");
+    expect(container.textContent).toContain(
+      "内容保存在此浏览器，建议定期导出完整备份",
+    );
     expect(libraryItems).toHaveLength(7);
     await act(async () => {
       (libraryItems[6] as HTMLButtonElement).click();
