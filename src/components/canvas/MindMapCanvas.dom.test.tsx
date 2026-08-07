@@ -408,6 +408,52 @@ describe("rendered interaction regressions", () => {
     ).not.toBeNull();
   });
 
+  it("leaves wheel scrolling inside an overflowing node editor to the browser", async () => {
+    const document = largeDocument(3);
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft={"😀".repeat(800)}
+          editingId="node-1"
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          selection={singleSelection("node-1")}
+        />,
+      );
+    });
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      ".mind-node__editor",
+    )!;
+    Object.defineProperties(editor, {
+      clientHeight: { configurable: true, value: 120 },
+      scrollHeight: { configurable: true, value: 480 },
+    });
+    const content = container.querySelector<HTMLElement>(
+      ".mindmap-canvas__content",
+    )!;
+    const transformBeforeWheel = content.style.transform;
+    const wheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaY: 90,
+    });
+
+    await act(async () => editor.dispatchEvent(wheel));
+
+    expect(wheel.defaultPrevented).toBe(false);
+    expect(content.style.transform).toBe(transformBeforeWheel);
+  });
+
   it("reports live zoom feedback without waiting for viewport persistence", async () => {
     const document = largeDocument(3);
     const onZoomPreview = vi.fn();
@@ -452,7 +498,7 @@ describe("rendered interaction regressions", () => {
 
     expect(onZoomPreview).toHaveBeenCalledOnce();
     expect(onZoomPreview.mock.calls[0][0]).toBeCloseTo(
-      0.9201876506,
+      0.8705505633,
       10,
     );
     expect(onViewportChange).toHaveBeenCalledTimes(viewportCallsBeforeZoom);
@@ -516,7 +562,7 @@ describe("rendered interaction regressions", () => {
     expect(
       zooms.every(
         (zoom, index) =>
-          index === 0 || zooms[index - 1] - zoom < 0.002,
+          index === 0 || zooms[index - 1] - zoom < 0.003,
       ),
     ).toBe(true);
     expect(content.style.transform).toContain(`scale(${zooms.at(-1)})`);

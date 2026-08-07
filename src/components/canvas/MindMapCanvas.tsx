@@ -228,6 +228,14 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     }, [onViewportChange, renderViewport]);
 
     const handleWheel = useCallback((event: WheelEvent) => {
+      const editor =
+        event.target instanceof HTMLTextAreaElement &&
+        event.target.classList.contains("mind-node__editor")
+          ? event.target
+          : null;
+      if (editor && editor.scrollHeight > editor.clientHeight) {
+        return;
+      }
       event.preventDefault();
       if (event.metaKey || event.ctrlKey) {
         const bounds =

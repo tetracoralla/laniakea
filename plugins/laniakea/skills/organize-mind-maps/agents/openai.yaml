@@ -1,0 +1,4 @@
+interface:
+  display_name: "Organize Mind Maps"
+  short_description: "Create and safely revise structured Markdown mind maps."
+  default_prompt: "Use $organize-mind-maps to turn this material into a clear, editable Laniakea mind map."

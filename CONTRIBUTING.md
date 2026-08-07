@@ -7,7 +7,10 @@
 1. Fork 仓库并从 `main` 创建分支。
 2. 运行 `npm install`。
 3. 使用 `npm run dev` 开发网页界面，或使用 `npm run desktop:dev` 开发桌面版。
-4. 提交前运行 `npm run check:regression`。
+4. 使用 `npm run build` 构建网页版与 Agent MCP；需要桌面安装包时运行 `npm run desktop:build`。
+5. 提交前运行 `npm run check:regression`。
+
+修改 MCP、Codex Plugin 或 Agent 内容模型时，可以先运行 `npm run check:mcp` 做针对性检查。涉及桌面文件、窗口、快捷键或打包行为时，还应运行 `npm run check:desktop-runtime`。
 
 ## 变更原则
 

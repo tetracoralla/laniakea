@@ -1,7 +1,7 @@
 {
   "name": "laniakea",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "快速、轻量的思维导图",
   "author": "openAdam",
   "license": "Apache-2.0",
@@ -13,16 +13,21 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run build:web && npm run build:mcp",
+    "build:web": "tsc -b && vite build",
+    "build:mcp": "node scripts/buildMcp.mjs",
+    "check:mcp": "npm run typecheck:mcp && npm run build:mcp && node scripts/checkMcp.mjs",
+    "typecheck:mcp": "tsc --noEmit -p tsconfig.mcp.json",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "test": "vitest run --maxWorkers=2",
     "test:watch": "vitest",
-    "check:regression": "npm test && npm run build && cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:regression": "npm test && npm run build:web && npm run check:mcp && cargo test --manifest-path src-tauri/Cargo.toml",
     "check:desktop-runtime": "./script/build_and_run.sh --verify",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "mdast-util-to-string": "^4.0.0",
@@ -31,14 +36,17 @@
     "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.4",
     "@types/mdast": "^4.0.4",
+    "@types/node": "^26.1.2",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.4",
+    "esbuild": "^0.28.1",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
     "typescript": "^5.9.3",

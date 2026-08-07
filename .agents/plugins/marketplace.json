@@ -1,0 +1,20 @@
+{
+  "name": "laniakea",
+  "interface": {
+    "displayName": "Laniakea"
+  },
+  "plugins": [
+    {
+      "name": "laniakea",
+      "source": {
+        "source": "local",
+        "path": "./plugins/laniakea"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

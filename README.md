@@ -2,51 +2,52 @@
 
 快速、轻量的思维导图。打开即写，用键盘或鼠标把一个想法连续展开，不需要先创建账号、工作区或知识库。
 
-![Laniakea 主界面](docs/design/origin-browser-final.jpg)
+<p align="center">
+  <a href="https://tetracoralla.github.io/laniakea/"><strong>立即使用网页版</strong></a>
+  ·
+  <a href="https://github.com/tetracoralla/laniakea/releases/latest">查看最新版本</a>
+  ·
+  <a href="https://github.com/tetracoralla/laniakea/issues">反馈问题</a>
+</p>
+
+![Laniakea 最新界面](docs/design/laniakea-overview.jpg)
+
+## 开始使用
+
+### 网页版
+
+[直接打开 Laniakea](https://tetracoralla.github.io/laniakea/)，不需要安装或登录。思维导图保存在当前浏览器中，不会上传到服务器；建议定期使用“更多 → 导出完整备份”，也可以把单张图另存为 Markdown。
+
+清除网站数据、使用无痕窗口或更换浏览器后，未另行备份的内容可能消失。首次成功打开后，网页版也可以离线重新使用。
+
+### macOS
+
+当前公开版本暂未提供面向普通用户的 macOS 安装包。完成 Apple Developer 签名和公证后，DMG 会发布到 [Releases](https://github.com/tetracoralla/laniakea/releases)；在此之前请使用网页版。
 
 ## 主要能力
 
-- 稳定的树形自动布局，以及适合大图的视口裁剪和画布移动
-- 键盘创建、导航、调整层级、重排、折叠和删除节点
+- 键盘与鼠标驱动的创建、导航、调整层级、重排、折叠和删除
+- 稳定的树形自动布局，以及适合大图的流畅画布与视口裁剪
 - 搜索、撤销与重做、多选、拖放分支和浮动分支
-- CommonMark/GFM Markdown 渲染、导入、导出和结构化粘贴
-- 网页版多文档浏览器存储、自动保存、完整备份和离线安装
-- 桌面版 Markdown 工作文件、最近文档、全局快捷键和本地恢复
+- CommonMark / GFM Markdown 导入、导出、渲染和结构化粘贴
+- 网页版多文档、本地自动保存、完整备份与离线使用
+- 桌面版 Markdown 工作文件、最近文档、全局快捷键与本地恢复
 
-## 网页版
+## Agent 与 Codex Plugin
 
-```bash
-npm install
-npm run dev
-```
+Laniakea 也可以成为 Agent 与人共同维护的结构化思考界面。Codex 插件能够读取、搜索、新建和安全更新同一份 Markdown 思维导图；更新带有版本冲突保护，也不会把富 Markdown 静默改写成普通大纲。
 
-打开 <http://127.0.0.1:4173/>。正式构建：
+<details>
+<summary>为 Codex 添加 Laniakea</summary>
 
 ```bash
-npm run build
-npm run preview
+codex plugin marketplace add https://github.com/tetracoralla/laniakea.git
+codex plugin add laniakea@laniakea
 ```
 
-网页版将多张思维导图和画布状态保存在当前浏览器的 IndexedDB 中，不上传服务器，也不需要账号。界面的“保存在此浏览器”只表示浏览器存储已经写入，不表示文件已经下载或同步到云端。
+安装后请新建一个 Codex 任务，让宿主载入插件。工具边界见 [`docs/agent-tool-model.md`](docs/agent-tool-model.md)。
 
-请定期使用“更多 → 导出完整备份”，也可以把单张图另存为 Markdown。清除网站数据、使用无痕窗口或更换浏览器后，未另行备份的数据可能消失。支持 File System Access API 的浏览器会直接写入用户选择的 Markdown 文件；其他浏览器使用普通下载。
-
-在线使用：<https://tetracoralla.github.io/laniakea/>。部署说明见 [`docs/deployment.md`](docs/deployment.md)。
-
-## macOS 桌面版
-
-```bash
-npm install
-npm run desktop:dev
-```
-
-构建应用与 DMG：
-
-```bash
-npm run desktop:build
-```
-
-桌面版把可持续编辑的 Markdown 作为工作文件，并在应用数据目录保存画布位置、折叠状态和恢复信息。当前本机构建采用临时签名；面向其他 Mac 分发前仍需 Apple Developer 签名与公证。
+</details>
 
 ## 高频快捷键
 
@@ -60,32 +61,14 @@ npm run desktop:build
 | 折叠或展开 | `⌘/` |
 | 撤销 / 重做 | `⌘Z` / `⇧⌘Z` |
 | 搜索节点 | `⌘F` |
-| 打开 / 保存 / 另存为 | `⌘O` / `⌘S` / `⇧⌘S` |
 | 命令面板 | `⌘K` |
 
-## 验证
+## 开源与参与
 
-```bash
-npm run check:regression
-```
-
-涉及桌面文件、窗口、快捷键或打包行为时，再运行：
-
-```bash
-npm run check:desktop-runtime
-```
-
-开发回归、真实运行流程和产品体验验收是三个独立结论。详细产品模型见 [`docs/product-model.md`](docs/product-model.md)。
-
-## 参与贡献
+Laniakea 使用 [Apache License 2.0](LICENSE) 开源。开发、构建和验证方式见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，网页部署说明见 [`docs/deployment.md`](docs/deployment.md)。
 
 - [报告问题](https://github.com/tetracoralla/laniakea/issues/new?template=bug_report.yml)
 - [提出建议](https://github.com/tetracoralla/laniakea/issues/new?template=feature_request.yml)
-
-准备参与开发时，请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 和 [`SECURITY.md`](SECURITY.md)。依赖许可概览见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
-
-## 许可
-
-Laniakea 使用 [Apache License 2.0](LICENSE)。
+- [安全问题说明](SECURITY.md)
 
 <sub>Created by openAdam.</sub>

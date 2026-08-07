@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "laniakea": {
+      "args": [
+        "./server/index.mjs"
+      ],
+      "command": "node",
+      "cwd": "."
+    }
+  }
+}

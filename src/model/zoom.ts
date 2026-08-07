@@ -3,7 +3,7 @@ export const maxCanvasZoom = 1.8;
 
 const wheelLineHeight = 16;
 const maxWheelZoomDelta = 60;
-const wheelPixelsPerZoomDoubling = 500;
+const wheelPixelsPerZoomDoubling = 300;
 
 export function clampCanvasZoom(value: number): number {
   return Math.min(maxCanvasZoom, Math.max(minCanvasZoom, value));

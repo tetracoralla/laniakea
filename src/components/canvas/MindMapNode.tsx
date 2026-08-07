@@ -55,17 +55,59 @@ export const MindMapNode = memo(function MindMapNode({
   const empty = node.text.length === 0;
   const markdownDivider = isMarkdownThematicBreak(node.text);
 
+  const fitEditorToText = (editor: HTMLTextAreaElement) => {
+    const previousScrollTop = editor.scrollTop;
+    const selectionAtEnd = editor.selectionEnd === editor.value.length;
+    const lineHeight = Number.parseFloat(
+      editor.ownerDocument.defaultView?.getComputedStyle(editor)
+        .lineHeight ?? "",
+    );
+    editor.style.height = "0px";
+    const scrollHeight = editor.scrollHeight;
+    if (lineHeight > 0 && scrollHeight > 0) {
+      editor.style.height =
+        scrollHeight > lineHeight * 1.5 ? "100%" : `${lineHeight}px`;
+      editor.scrollTop = selectionAtEnd
+        ? editor.scrollHeight
+        : previousScrollTop;
+      return;
+    }
+    editor.style.height = "1.35em";
+    editor.scrollTop = selectionAtEnd
+      ? editor.scrollHeight
+      : previousScrollTop;
+  };
+
   useLayoutEffect(() => {
     if (!editing) return;
     const editor = editorRef.current;
     if (!editor) return;
-    editor.focus();
+    fitEditorToText(editor);
+    editor.focus({ preventScroll: true });
     editor.setSelectionRange(editor.value.length, editor.value.length);
+    editor.scrollTop = editor.scrollHeight;
   }, [editing]);
+
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const editor = editorRef.current;
+    if (!editor || editor.selectionEnd !== editor.value.length) return;
+    const keepCaretVisible = () => {
+      if (editor.selectionEnd === editor.value.length) {
+        editor.scrollTop = editor.scrollHeight;
+      }
+    };
+    keepCaretVisible();
+    const view = editor.ownerDocument.defaultView;
+    const frame = view?.requestAnimationFrame(keepCaretVisible);
+    return () => {
+      if (frame !== undefined) view?.cancelAnimationFrame(frame);
+    };
+  }, [draft, editing, layout.height]);
 
   return (
     <div
-      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${dragging ? "is-dragging" : ""} ${dropTarget ? "is-drop-target" : ""}`}
+      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${editing ? "is-editing" : ""} ${dragging ? "is-dragging" : ""} ${dropTarget ? "is-drop-target" : ""}`}
       data-node-id={node.id}
       onPointerDown={onDragPointerDown}
       style={{
@@ -76,48 +118,65 @@ export const MindMapNode = memo(function MindMapNode({
       }}
     >
       {editing ? (
-        <textarea
-          aria-label="编辑节点"
-          className="mind-node__editor"
-          defaultValue={draft}
-          placeholder={placeholder}
-          ref={editorRef}
-          rows={1}
-          onBlur={(event) =>
-            onCommitEdit(node.id, event.currentTarget.value)
-          }
-          onChange={(event) => onDraftChange(event.target.value)}
-          onCompositionEnd={() => {
-            inputMethodComposingRef.current = false;
-          }}
-          onCompositionStart={() => {
-            inputMethodComposingRef.current = true;
-          }}
-          onPaste={(event) => {
-            const value = event.clipboardData.getData("text/plain");
-            if (onPasteStructured(node.id, value)) {
-              event.preventDefault();
+        <div className="mind-node__editor-shell">
+          <textarea
+            aria-label="编辑节点"
+            className="mind-node__editor"
+            defaultValue={draft}
+            placeholder={placeholder}
+            ref={editorRef}
+            rows={1}
+            onBlur={(event) =>
+              onCommitEdit(node.id, event.currentTarget.value)
             }
-          }}
-          onKeyDown={(event) => {
-            event.stopPropagation();
-            if (
-              inputMethodComposingRef.current ||
-              event.nativeEvent.isComposing ||
-              event.nativeEvent.keyCode === 229
-            ) {
-              return;
-            }
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              onCommitEdit(node.id, event.currentTarget.value);
-            }
-            if (event.key === "Escape") {
-              event.preventDefault();
-              onCancelEdit(node.id);
-            }
-          }}
-        />
+            onChange={(event) => {
+              const editor = event.currentTarget;
+              const selectionAtEnd = editor.selectionEnd === editor.value.length;
+              fitEditorToText(editor);
+              onDraftChange(editor.value);
+              if (selectionAtEnd) {
+                editor.ownerDocument.defaultView?.setTimeout(() => {
+                  if (
+                    editor.isConnected &&
+                    editor.selectionEnd === editor.value.length
+                  ) {
+                    editor.scrollTop = editor.scrollHeight;
+                  }
+                }, 0);
+              }
+            }}
+            onCompositionEnd={() => {
+              inputMethodComposingRef.current = false;
+            }}
+            onCompositionStart={() => {
+              inputMethodComposingRef.current = true;
+            }}
+            onPaste={(event) => {
+              const value = event.clipboardData.getData("text/plain");
+              if (onPasteStructured(node.id, value)) {
+                event.preventDefault();
+              }
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (
+                inputMethodComposingRef.current ||
+                event.nativeEvent.isComposing ||
+                event.nativeEvent.keyCode === 229
+              ) {
+                return;
+              }
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                onCommitEdit(node.id, event.currentTarget.value);
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onCancelEdit(node.id);
+              }
+            }}
+          />
+        </div>
       ) : (
         <button
           aria-label={

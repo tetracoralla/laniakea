@@ -396,7 +396,7 @@
 .mindmap-canvas {
   position: absolute;
   inset: 0;
-  overflow: hidden;
+  overflow: clip;
   cursor: default;
   background-color: var(--canvas);
   background-image: radial-gradient(#dfe1e9 0.65px, transparent 0.65px);
@@ -507,7 +507,7 @@
 }
 
 .mind-node__content,
-.mind-node__editor {
+.mind-node__editor-shell {
   width: 100%;
   height: 100%;
   margin: 0;
@@ -523,10 +523,10 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
-  resize: none;
 }
 
-.mind-node__content {
+.mind-node__content,
+.mind-node__editor-shell {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -549,11 +549,30 @@
 }
 
 .mind-node--branch .mind-node__content,
-.mind-node--branch .mind-node__editor {
+.mind-node--branch .mind-node__editor-shell {
   --node-padding-inline: 20px;
-  border-color: color-mix(in srgb, var(--branch-tone) 55%, white);
   font-size: 16px;
   font-weight: 620;
+}
+
+.mind-node--branch::before {
+  position: absolute;
+  top: 50%;
+  left: -3px;
+  width: 3px;
+  min-height: 16px;
+  height: 50%;
+  max-height: 22px;
+  background: var(--branch-tone);
+  content: "";
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.mind-node--branch.is-selected::before,
+.mind-node--branch.is-primary::before,
+.mind-node--branch.is-editing::before {
+  display: none;
 }
 
 .mind-node.is-markdown-divider .mind-node__content {
@@ -573,12 +592,8 @@
   background: var(--violet);
 }
 
-.mind-node--branch .mind-node__content {
-  box-shadow: inset 3px 0 0 var(--branch-tone);
-}
-
 .mind-node--floating .mind-node__content,
-.mind-node--floating .mind-node__editor {
+.mind-node--floating .mind-node__editor-shell {
   --node-padding-inline: 22px;
   border-color: color-mix(in srgb, var(--branch-tone) 68%, white);
   box-shadow: inset 4px 0 0 var(--branch-tone);
@@ -587,7 +602,7 @@
 }
 
 .mind-node--root .mind-node__content,
-.mind-node--root .mind-node__editor {
+.mind-node--root .mind-node__editor-shell {
   --node-padding-inline: 25px;
   color: white;
   background: var(--violet-deep);
@@ -653,12 +668,40 @@
   border-color: #a991ff;
 }
 
-.mind-node__editor {
-  padding-block: var(--node-padding-block);
-  overflow: auto;
+.mind-node__editor-shell {
   color: var(--ink);
   border-color: var(--violet);
   box-shadow: var(--shadow-selection);
+}
+
+.mind-node__editor {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 1.35em;
+  max-height: 100%;
+  padding: 0;
+  margin: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  caret-color: currentColor;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-align: center;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  resize: none;
+}
+
+.mind-node__editor::-webkit-scrollbar {
+  display: none;
 }
 
 .mind-node--root .mind-node__editor {

@@ -3,7 +3,7 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createBlankDocument } from "../../data/seed";
+import { createBlankDocument, createSeedDocument } from "../../data/seed";
 import { computeLayout } from "../../model/layout";
 import { MindMapNode } from "./MindMapNode";
 
@@ -152,6 +152,7 @@ describe("node editor input method handling", () => {
     const node = mindMapDocument.nodes[mindMapDocument.rootId];
     const layout = computeLayout(mindMapDocument).nodes[mindMapDocument.rootId];
     const onDraftChange = vi.fn();
+    const focus = vi.spyOn(HTMLTextAreaElement.prototype, "focus");
 
     await act(async () => {
       root.render(
@@ -179,6 +180,10 @@ describe("node editor input method handling", () => {
     const editor = container.querySelector<HTMLTextAreaElement>(
       "textarea[aria-label='编辑节点']",
     )!;
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(editor.parentElement?.classList).toContain(
+      "mind-node__editor-shell",
+    );
     await act(async () => {
       Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
@@ -192,6 +197,58 @@ describe("node editor input method handling", () => {
     expect(editor.value).toBe("初始长文本输入");
     expect(editor.selectionStart).toBe(5);
     expect(editor.selectionEnd).toBe(5);
+    focus.mockRestore();
+  });
+
+  it("keeps an end-of-text caret visible after editor height fitting", async () => {
+    const mindMapDocument = createBlankDocument();
+    const node = mindMapDocument.nodes[mindMapDocument.rootId];
+    const layout = computeLayout(mindMapDocument).nodes[mindMapDocument.rootId];
+
+    await act(async () => {
+      root.render(
+        <MindMapNode
+          draft=""
+          dragging={false}
+          dropTarget={false}
+          editing
+          layout={layout}
+          node={node}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDraftChange={() => undefined}
+          onDragPointerDown={() => undefined}
+          onPasteStructured={() => false}
+          onSelect={() => undefined}
+          onToggle={() => undefined}
+          primary
+          selected
+        />,
+      );
+    });
+
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='编辑节点']",
+    )!;
+    Object.defineProperty(editor, "scrollHeight", {
+      configurable: true,
+      get: () => 240,
+    });
+    const value = "😀".repeat(100);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(editor, value);
+      editor.setSelectionRange(value.length, value.length);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(editor.scrollTop).toBe(240);
+    expect(editor.selectionStart).toBe(value.length);
+    expect(editor.selectionEnd).toBe(value.length);
   });
 
   it("renders a Markdown thematic break as a divider while keeping it editable", async () => {
@@ -238,5 +295,40 @@ describe("node editor input method handling", () => {
       content?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
     expect(onBeginEdit).toHaveBeenCalledWith(node.id);
+  });
+
+  it("marks an edited second-level node so its connector terminal is hidden", async () => {
+    const mindMapDocument = createSeedDocument();
+    const node = mindMapDocument.nodes.scenario;
+    const layout = computeLayout(mindMapDocument).nodes.scenario;
+
+    await act(async () => {
+      root.render(
+        <MindMapNode
+          draft={node.text}
+          dragging={false}
+          dropTarget={false}
+          editing
+          layout={layout}
+          node={node}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDraftChange={() => undefined}
+          onDragPointerDown={() => undefined}
+          onPasteStructured={() => false}
+          onSelect={() => undefined}
+          onToggle={() => undefined}
+          primary={false}
+          selected={false}
+        />,
+      );
+    });
+
+    const branch = container.querySelector<HTMLElement>(
+      `[data-node-id="${node.id}"]`,
+    );
+    expect(branch?.classList.contains("mind-node--branch")).toBe(true);
+    expect(branch?.classList.contains("is-editing")).toBe(true);
   });
 });

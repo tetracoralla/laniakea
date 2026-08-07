@@ -136,6 +136,14 @@ describe("automatic layout", () => {
     expect(sizeForNode(2, "第一行\n第二行\n第三行").height).toBe(83);
   });
 
+  it("budgets continuous emoji text as wide glyphs", () => {
+    const emoji = sizeForNode(2, "😀".repeat(800));
+    const latin = sizeForNode(2, "a".repeat(800));
+
+    expect(emoji.height).toBeGreaterThan(latin.height);
+    expect(emoji.height).toBeGreaterThan(400);
+  });
+
   it("keeps a short connector gap and pushes descendants when a parent widens", () => {
     const document = largeDocument(3);
     document.nodes.root.children = ["node-1"];

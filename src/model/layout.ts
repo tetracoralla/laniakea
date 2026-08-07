@@ -25,6 +25,9 @@ export interface LayoutTextOverride {
 function textUnits(text: string): number {
   return Array.from(text).reduce((total, character) => {
     if (character === " ") return total + 0.32;
+    if (/\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(character)) {
+      return total + 1.1;
+    }
     if (/[\u2e80-\u9fff\uf900-\ufaff]/u.test(character)) {
       return total + 1;
     }

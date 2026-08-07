@@ -1,0 +1,38 @@
+{
+  "name": "laniakea",
+  "version": "0.1.0+codex.20260807140418",
+  "description": "Create, inspect, and safely revise hierarchical Markdown mind maps.",
+  "author": {
+    "name": "openAdam",
+    "url": "https://github.com/tetracoralla"
+  },
+  "homepage": "https://tetracoralla.github.io/laniakea/",
+  "repository": "https://github.com/tetracoralla/laniakea",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mind-map",
+    "markdown",
+    "outline",
+    "structured-thinking"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Laniakea",
+    "shortDescription": "Work with durable Markdown mind maps.",
+    "longDescription": "Give Codex a shared, human-readable Markdown structure it can inspect, search, create, and revise with conflict and rich-source protection.",
+    "developerName": "openAdam",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://tetracoralla.github.io/laniakea/",
+    "brandColor": "#7467FF",
+    "defaultPrompt": [
+      "Turn these notes into a Laniakea mind map.",
+      "Read this mind map and expand the risks branch.",
+      "Find repeated ideas in this Laniakea map."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}
