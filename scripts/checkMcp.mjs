@@ -6,6 +6,18 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const pluginRoot = resolve(process.argv[2] ?? "plugins/laniakea");
+const packageManifest = JSON.parse(
+  await readFile(resolve("package.json"), "utf8"),
+);
+const tauriManifest = JSON.parse(
+  await readFile(resolve("src-tauri/tauri.conf.json"), "utf8"),
+);
+const pluginManifest = JSON.parse(
+  await readFile(resolve(pluginRoot, ".codex-plugin/plugin.json"), "utf8"),
+);
+const packageVersion = packageManifest.version;
+assert.equal(tauriManifest.version, packageVersion);
+assert.equal(pluginManifest.version.split("+")[0], packageVersion);
 const workspace = await mkdtemp(join(tmpdir(), "laniakea-mcp-check-"));
 const mapPath = join(workspace, "launch-plan.md");
 const richPath = join(workspace, "rich-source.md");
@@ -17,7 +29,7 @@ const transport = new StdioClientTransport({
   cwd: pluginRoot,
   stderr: "pipe",
 });
-const client = new Client({ name: "laniakea-check", version: "0.1.0" });
+const client = new Client({ name: "laniakea-check", version: packageVersion });
 const concurrentTransport = new StdioClientTransport({
   args: ["./server/index.mjs"],
   command: process.execPath,
@@ -26,12 +38,13 @@ const concurrentTransport = new StdioClientTransport({
 });
 const concurrentClient = new Client({
   name: "laniakea-concurrency-check",
-  version: "0.1.0",
+  version: packageVersion,
 });
 
 try {
   await client.connect(transport);
   await concurrentClient.connect(concurrentTransport);
+  assert.equal(client.getServerVersion()?.version, packageVersion);
   const listed = await client.listTools();
   assert.deepEqual(
     listed.tools.map((tool) => tool.name).sort(),

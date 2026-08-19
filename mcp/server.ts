@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import packageManifest from "../package.json";
 import {
   mindMapToAgentView,
   searchAgentMindMap,
@@ -135,7 +136,7 @@ function errorResult(error: unknown) {
 
 export function createLaniakeaServer() {
   const server = new McpServer(
-    { name: "laniakea", version: "0.1.0" },
+    { name: "laniakea", version: packageManifest.version },
     {
       instructions:
         "Use Laniakea for durable, user-visible hierarchical artifacts, not as private scratch reasoning. Read before updating, pass the exact revision, and never rewrite a rich Markdown source in place.",

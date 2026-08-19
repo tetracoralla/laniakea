@@ -45,7 +45,9 @@ jobs:
         run: |
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
           TAURI_VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          PLUGIN_VERSION="$(node -p "require('./plugins/laniakea/.codex-plugin/plugin.json').version.split('+')[0]")"
           test "$PACKAGE_VERSION" = "$TAURI_VERSION"
+          test "$PACKAGE_VERSION" = "$PLUGIN_VERSION"
           test "$RELEASE_TAG" = "v$PACKAGE_VERSION"
 
       - name: Verify Apple release credentials
