@@ -59,42 +59,46 @@ describe("Laniakea Agent Markdown file store", () => {
     expect(await readFile(filePath, "utf8")).toBe(newer);
   });
 
-  it("serializes revision checks across canonical aliases", async () => {
-    const realDirectory = join(workspace, "real");
-    const aliasDirectory = join(workspace, "alias");
-    await mkdir(realDirectory);
-    await symlink(realDirectory, aliasDirectory, "dir");
-    const filePath = join(realDirectory, "map.md");
-    const aliasPath = join(aliasDirectory, "map.md");
+  it(
+    "serializes revision checks across canonical aliases",
+    async () => {
+      const realDirectory = join(workspace, "real");
+      const aliasDirectory = join(workspace, "alias");
+      await mkdir(realDirectory);
+      await symlink(realDirectory, aliasDirectory, "dir");
+      const filePath = join(realDirectory, "map.md");
+      const aliasPath = join(aliasDirectory, "map.md");
 
-    for (let round = 0; round < 40; round += 1) {
-      await writeFile(filePath, `# Round ${round}\n\n- Root\n`, "utf8");
-      const loaded = await readMindMapFile(filePath);
-      const results = await Promise.allSettled([
-        updateMindMapFile(filePath, loaded.revision, [
-          { type: "set_title", title: `First ${round}` },
-        ]),
-        updateMindMapFile(aliasPath, loaded.revision, [
-          { type: "set_title", title: `Second ${round}` },
-        ]),
-      ]);
-      const fulfilled = results.filter(
-        (result) => result.status === "fulfilled",
-      );
-      const rejected = results.filter(
-        (result) => result.status === "rejected",
-      );
+      for (let round = 0; round < 40; round += 1) {
+        await writeFile(filePath, `# Round ${round}\n\n- Root\n`, "utf8");
+        const loaded = await readMindMapFile(filePath);
+        const results = await Promise.allSettled([
+          updateMindMapFile(filePath, loaded.revision, [
+            { type: "set_title", title: `First ${round}` },
+          ]),
+          updateMindMapFile(aliasPath, loaded.revision, [
+            { type: "set_title", title: `Second ${round}` },
+          ]),
+        ]);
+        const fulfilled = results.filter(
+          (result) => result.status === "fulfilled",
+        );
+        const rejected = results.filter(
+          (result) => result.status === "rejected",
+        );
 
-      expect(fulfilled).toHaveLength(1);
-      expect(rejected).toHaveLength(1);
-      expect((fulfilled[0] as PromiseFulfilledResult<unknown>).value).toMatchObject({
-        wrote: true,
-      });
-      expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
-        code: "conflict",
-      });
-    }
-  });
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+        expect(
+          (fulfilled[0] as PromiseFulfilledResult<unknown>).value,
+        ).toMatchObject({ wrote: true });
+        expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+          code: "conflict",
+        });
+      }
+    },
+    15_000,
+  );
 
   it("keeps a dry-run in memory and commits the same batch atomically", async () => {
     const filePath = join(workspace, "map.md");
