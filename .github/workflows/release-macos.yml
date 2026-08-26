@@ -1,28 +1,24 @@
 name: Publish signed macOS DMG
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing GitHub Release tag
+        description: Existing GitHub Release tag to augment with a signed DMG
         required: true
-        default: v0.2.0
 
 permissions:
   contents: write
 
 concurrency:
-  group: macos-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  group: macos-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
   publish-macos:
     runs-on: macos-latest
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
