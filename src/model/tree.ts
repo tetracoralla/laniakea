@@ -14,6 +14,7 @@ import {
   singleSelection,
   visibleNodeIds,
 } from "./selection";
+import { createRuntimeId } from "./runtimeId";
 
 export interface DocumentMutation {
   document: MindMapDocument;
@@ -21,9 +22,7 @@ export interface DocumentMutation {
 }
 
 export function createNodeId(): string {
-  const uuid = globalThis.crypto?.randomUUID?.();
-  if (uuid) return `node-${uuid}`;
-  return `node-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  return createRuntimeId("node");
 }
 
 function reserveUniqueNodeId(reservedIds: Set<string>): string {

@@ -1,4 +1,5 @@
 import { parseMindMapDocument } from "../model/document";
+import { createRuntimeId } from "../model/runtimeId";
 import type { MindMapDocument } from "../types/mindmap";
 
 const databaseName = "laniakea";
@@ -123,8 +124,7 @@ async function withDatabase<T>(
 }
 
 function createId(): string {
-  return globalThis.crypto?.randomUUID?.() ??
-    `document-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return createRuntimeId();
 }
 
 function cloneDocument(document: MindMapDocument): MindMapDocument {

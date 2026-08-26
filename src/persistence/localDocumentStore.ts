@@ -7,6 +7,7 @@ import {
   documentToMarkdown,
   parseMarkdownDocument,
 } from "../model/markdown";
+import { createRuntimeId } from "../model/runtimeId";
 import type { MindMapDocument } from "../types/mindmap";
 import { isInternalDocumentPath } from "./recentDocuments";
 import {
@@ -708,13 +709,11 @@ function browserTabId(): string {
   try {
     const stored = sessionStorage.getItem(browserTabStorageKey);
     if (stored) return stored;
-    const created = globalThis.crypto?.randomUUID?.() ??
-      `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const created = createRuntimeId();
     sessionStorage.setItem(browserTabStorageKey, created);
     return created;
   } catch {
-    fallbackBrowserTabId = globalThis.crypto?.randomUUID?.() ??
-      `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    fallbackBrowserTabId = createRuntimeId();
     return fallbackBrowserTabId;
   }
 }

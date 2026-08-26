@@ -299,7 +299,6 @@ describe("tree mutations", () => {
   it("keeps every pasted node unique even when the id source collides", () => {
     vi.stubGlobal("crypto", undefined);
     const now = vi.spyOn(Date, "now").mockReturnValue(123);
-    const random = vi.spyOn(Math, "random").mockReturnValue(0.25);
     try {
       const document = createSeedDocument();
       const sourceIds = [
@@ -329,7 +328,6 @@ describe("tree mutations", () => {
       ]);
     } finally {
       now.mockRestore();
-      random.mockRestore();
       vi.unstubAllGlobals();
     }
   });
