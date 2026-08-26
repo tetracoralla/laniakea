@@ -67,10 +67,22 @@ fn show_main_window(app: &AppHandle) {
 struct DesktopRuntimeStatus {
     global_shortcut_registered: bool,
     global_shortcut: String,
+    window_focused: bool,
 }
 
 #[tauri::command]
-fn desktop_runtime_status(state: State<'_, DesktopRuntimeState>) -> DesktopRuntimeStatus {
+fn desktop_runtime_status(
+    app: AppHandle,
+    state: State<'_, DesktopRuntimeState>,
+) -> DesktopRuntimeStatus {
+    #[cfg(desktop)]
+    let window_focused = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    #[cfg(not(desktop))]
+    let window_focused = true;
+
     DesktopRuntimeStatus {
         global_shortcut_registered: state.global_shortcut_registered.load(Ordering::Relaxed),
         global_shortcut: state
@@ -78,6 +90,7 @@ fn desktop_runtime_status(state: State<'_, DesktopRuntimeState>) -> DesktopRunti
             .lock()
             .map(|shortcut| shortcut.clone())
             .unwrap_or_else(|_| DEFAULT_GLOBAL_SHORTCUT.to_string()),
+        window_focused,
     }
 }
 
@@ -144,7 +157,7 @@ fn set_global_shortcut(
         .map_err(|_| "无法读取当前全局快捷键".to_string())?
         .clone();
     if current == global_shortcut && state.global_shortcut_registered.load(Ordering::Relaxed) {
-        return Ok(desktop_runtime_status(state));
+        return Ok(desktop_runtime_status(app, state));
     }
 
     #[cfg(desktop)]
@@ -177,7 +190,7 @@ fn set_global_shortcut(
     state
         .global_shortcut_registered
         .store(true, Ordering::Relaxed);
-    Ok(desktop_runtime_status(state))
+    Ok(desktop_runtime_status(app, state))
 }
 
 fn validate_reveal_target(document_path: &str) -> Result<PathBuf, String> {

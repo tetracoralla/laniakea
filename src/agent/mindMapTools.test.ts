@@ -63,6 +63,21 @@ describe("Laniakea Agent mind-map tools", () => {
 
     expect(view.nodes.map((node) => node.text)).toEqual(["First", "Detail"]);
     expect(view.truncated).toBe(false);
+    expect(view.truncationReasons).toEqual([]);
+  });
+
+  it("reports the exact structural reason when a read is truncated", () => {
+    const parsed = parseAgentMindMap(
+      "# Map\n\n- Root\n  - First\n    - Detail\n  - Second\n",
+      "ignored",
+    );
+
+    expect(
+      mindMapToAgentView(parsed, { maxDepth: 1 }).truncationReasons,
+    ).toEqual(["max_depth"]);
+    expect(
+      mindMapToAgentView(parsed, { maxNodes: 2 }).truncationReasons,
+    ).toEqual(["max_nodes"]);
   });
 
   it("keeps original refs valid throughout one coherent mutation batch", () => {
@@ -217,5 +232,6 @@ describe("Laniakea Agent mind-map tools", () => {
     ]);
     expect(result.nodeCount).toBe(10_002);
     expect(result.truncated).toBe(false);
+    expect(result.truncationReasons).toEqual([]);
   });
 });

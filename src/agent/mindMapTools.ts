@@ -27,6 +27,11 @@ export interface AgentNodeView {
   breadcrumb: string[];
 }
 
+export type AgentViewTruncationReason =
+  | "max_depth"
+  | "max_nodes"
+  | "max_results";
+
 export interface AgentMapView {
   title: string;
   sourceKind: "outline" | "rich";
@@ -34,6 +39,7 @@ export interface AgentMapView {
   nodeCount: number;
   nodes: AgentNodeView[];
   truncated: boolean;
+  truncationReasons: AgentViewTruncationReason[];
 }
 
 export interface AgentViewOptions {
@@ -331,6 +337,7 @@ export function mindMapToAgentView(
     : topLevelRootIds(document);
   const nodes: AgentNodeView[] = [];
   let truncated = false;
+  const truncationReasons = new Set<AgentViewTruncationReason>();
   const stack = startIds
     .map((id) => ({ id, depth: 0, breadcrumb: [] as string[] }))
     .reverse();
@@ -338,6 +345,7 @@ export function mindMapToAgentView(
   while (stack.length > 0) {
     if (nodes.length >= maxNodes) {
       truncated = true;
+      truncationReasons.add("max_nodes");
       break;
     }
     const { id, depth, breadcrumb } = stack.pop()!;
@@ -353,7 +361,10 @@ export function mindMapToAgentView(
       breadcrumb: nextBreadcrumb,
     });
     if (depth >= maxDepth) {
-      if (node.children.length > 0) truncated = true;
+      if (node.children.length > 0) {
+        truncated = true;
+        truncationReasons.add("max_depth");
+      }
       continue;
     }
     for (let index = node.children.length - 1; index >= 0; index -= 1) {
@@ -372,6 +383,7 @@ export function mindMapToAgentView(
     nodeCount: Object.keys(document.nodes).length,
     nodes,
     truncated,
+    truncationReasons: [...truncationReasons],
   };
 }
 
@@ -440,6 +452,8 @@ export function searchAgentMindMap(
     nodeCount: Object.keys(document.nodes).length,
     nodes,
     truncated: matchingCount > maxResults,
+    truncationReasons:
+      matchingCount > maxResults ? ["max_results"] : [],
   };
 }
 

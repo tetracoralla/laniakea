@@ -27,6 +27,25 @@
 保持可见的工具调用和宿主审批。插件不扫描目录，也不自动选择文件，只处理调用方
 明确给出的绝对 `.md` 或 `.markdown` 路径。
 
+## 结果、错误与上下文预算
+
+- 所有结构化结果都用 `status: "ok" | "error"` 区分分支。成功结果继续在
+  `structuredContent` 顶层返回可操作的 revision、ref 和节点；文本载体
+  只保留最多 12 个节点的短预览，不再复制整份结构化大纲。
+- 每个工具结果声明 `responseLimitBytes: 262144`。实现把工具结果控制在 240 KiB
+  以内，为 MCP/JSON-RPC 包装预留 16 KiB；超出时只在节点边界缩短返回内容，并以
+  `truncated: true` 与 `truncationReasons: ["response_bytes"]` 明确说明。标题、节点
+  文字或 breadcrumb 单项若过大也会带对应的 `*Truncated` 标记，不能把前缀当作全文。
+- 结构读取还会用 `max_depth`、`max_nodes` 或 `max_results` 说明调用方上限造成的截断。
+  Agent 应优先通过 `rootRef`、更小深度、搜索或更窄的节点数继续读取。
+- 可预期的工具失败返回 `isError: true`，同时在 `structuredContent.error` 提供稳定
+  `code` 与有界 `message`。当前 code 集合为 `already_exists`、`busy`、`conflict`、
+  `file_too_large`、`invalid_path`、`not_found`、`invalid_ref`、`invalid_operation`、
+  `protected_source`、`too_deep`、`too_large`、`permission_denied` 与 `io_error`。
+  MCP 输入 schema 拒绝仍使用协议标准的 invalid-params 错误。
+- 完整工具请求上限是 524,288 UTF-8 JSON bytes；这个累计预算覆盖整棵创建输入或
+  全部 update operations，超限返回 `request_too_large`，并且在任何文件副作用前停止。
+
 ## 复用清单
 
 - `src/model/markdown.ts`：Markdown 解析、丰富内容保护和规范化输出。

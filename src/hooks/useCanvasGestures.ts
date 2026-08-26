@@ -7,6 +7,9 @@ import {
   type RefObject,
 } from "react";
 import {
+  canvasPointToContent,
+  contentPointToCanvas,
+  marqueeAutoPanVelocity,
   nodesInsideMarquee,
   passedDragThreshold,
   rectFromPoints,
@@ -28,10 +31,14 @@ interface SelectGesture {
   kind: "select";
   pointerId: number;
   start: CanvasPoint;
+  anchor: CanvasPoint;
   current: CanvasPoint;
   additive: boolean;
   baseSelection: SelectionState;
+  clickSelection: SelectionState;
   previewSelection: SelectionState;
+  viewportMoved: boolean;
+  canvasSize: { width: number; height: number };
 }
 
 interface PanGesture {
@@ -47,7 +54,6 @@ interface PanGesture {
 type CanvasGesture = SelectGesture | PanGesture;
 
 interface CanvasGestureOptions {
-  containerRef: RefObject<HTMLDivElement | null>;
   layout: LayoutResult;
   selection: SelectionState;
   editingId: string | null;
@@ -94,7 +100,6 @@ export function ignoresSpaceShortcut(target: EventTarget | null): boolean {
 }
 
 export function useCanvasGestures({
-  containerRef,
   layout,
   selection,
   editingId,
@@ -108,12 +113,100 @@ export function useCanvasGestures({
   const spaceUsedForPan = useRef(false);
   const suppressNextClick = useRef(false);
   const gestureRef = useRef<CanvasGesture | null>(null);
+  const marqueeAutoPanFrame = useRef<number | null>(null);
+  const marqueeAutoPanTimestamp = useRef<number | null>(null);
   const [spaceMode, setSpaceMode] = useState(false);
   const [gesture, setGestureState] = useState<CanvasGesture | null>(null);
 
   const setGesture = (next: CanvasGesture | null) => {
     gestureRef.current = next;
     setGestureState(next);
+  };
+
+  const stopMarqueeAutoPan = () => {
+    if (marqueeAutoPanFrame.current !== null) {
+      window.cancelAnimationFrame(marqueeAutoPanFrame.current);
+      marqueeAutoPanFrame.current = null;
+    }
+    marqueeAutoPanTimestamp.current = null;
+  };
+
+  const marqueeRectForGesture = (
+    currentGesture: SelectGesture,
+    viewport: Viewport,
+  ) =>
+    rectFromPoints(
+      contentPointToCanvas(currentGesture.anchor, viewport),
+      currentGesture.current,
+    );
+
+  const previewMarqueeSelection = (
+    currentGesture: SelectGesture,
+    viewport: Viewport,
+  ) => {
+    const hits = nodesInsideMarquee(
+      layout,
+      viewport,
+      marqueeRectForGesture(currentGesture, viewport),
+    );
+    return currentGesture.additive
+      ? addToSelection(
+          currentGesture.baseSelection,
+          hits,
+          layout.visibleIds,
+        )
+      : createSelection(hits, layout.visibleIds, hits[0]);
+  };
+
+  const startMarqueeAutoPan = () => {
+    if (marqueeAutoPanFrame.current !== null) return;
+    const step = (timestamp: number) => {
+      marqueeAutoPanFrame.current = null;
+      const currentGesture = gestureRef.current;
+      if (
+        currentGesture?.kind !== "select" ||
+        !passedDragThreshold(
+          currentGesture.start,
+          currentGesture.current,
+        )
+      ) {
+        marqueeAutoPanTimestamp.current = null;
+        return;
+      }
+
+      const velocity = marqueeAutoPanVelocity(
+        currentGesture.current,
+        currentGesture.canvasSize,
+      );
+      if (velocity.x === 0 && velocity.y === 0) {
+        marqueeAutoPanTimestamp.current = null;
+        return;
+      }
+
+      const previousTimestamp =
+        marqueeAutoPanTimestamp.current ?? timestamp - 1000 / 60;
+      const elapsedSeconds =
+        Math.min(32, Math.max(0, timestamp - previousTimestamp)) /
+        1000;
+      marqueeAutoPanTimestamp.current = timestamp;
+      const currentViewport = liveViewport.current;
+      const nextViewport = {
+        ...currentViewport,
+        x: currentViewport.x - velocity.x * elapsedSeconds,
+        y: currentViewport.y - velocity.y * elapsedSeconds,
+      };
+      renderViewport(nextViewport);
+      setGesture({
+        ...currentGesture,
+        previewSelection: previewMarqueeSelection(
+          currentGesture,
+          nextViewport,
+        ),
+        viewportMoved: true,
+      });
+      marqueeAutoPanFrame.current = window.requestAnimationFrame(step);
+    };
+    marqueeAutoPanFrame.current = window.requestAnimationFrame(step);
   };
 
   useEffect(() => {
@@ -144,9 +237,14 @@ export function useCanvasGestures({
       if (shouldEdit) onSpaceTap();
     };
     const handleBlur = () => {
-      if (gestureRef.current?.kind === "pan") {
+      if (
+        gestureRef.current?.kind === "pan" ||
+        (gestureRef.current?.kind === "select" &&
+          gestureRef.current.viewportMoved)
+      ) {
         onViewportChange(liveViewport.current);
       }
+      stopMarqueeAutoPan();
       spaceHeld.current = false;
       spaceUsedForPan.current = false;
       setSpaceMode(false);
@@ -159,6 +257,7 @@ export function useCanvasGestures({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", handleBlur);
+      stopMarqueeAutoPan();
     };
   }, [
     editingId,
@@ -209,10 +308,14 @@ export function useCanvasGestures({
         kind: "select",
         pointerId: event.pointerId,
         start: point,
+        anchor: canvasPointToContent(point, liveViewport.current),
         current: point,
         additive: event.shiftKey,
         baseSelection: selection,
+        clickSelection: editingId === null ? emptySelection() : selection,
         previewSelection: selection,
+        viewportMoved: false,
+        canvasSize: { width: bounds.width, height: bounds.height },
       });
     },
     onPointerMove: (event) => {
@@ -253,26 +356,31 @@ export function useCanvasGestures({
         y: event.clientY - bounds.top,
       };
       if (!passedDragThreshold(currentGesture.start, current)) {
+        stopMarqueeAutoPan();
         setGesture({ ...currentGesture, current });
         return;
       }
-      const hits = nodesInsideMarquee(
-        layout,
-        liveViewport.current,
-        rectFromPoints(currentGesture.start, current),
-      );
-      const previewSelection = currentGesture.additive
-        ? addToSelection(
-            currentGesture.baseSelection,
-            hits,
-            layout.visibleIds,
-          )
-        : createSelection(hits, layout.visibleIds, hits[0]);
-      setGesture({
+      const nextGesture = {
         ...currentGesture,
         current,
-        previewSelection,
+        canvasSize: { width: bounds.width, height: bounds.height },
+      };
+      setGesture({
+        ...nextGesture,
+        previewSelection: previewMarqueeSelection(
+          nextGesture,
+          liveViewport.current,
+        ),
       });
+      const velocity = marqueeAutoPanVelocity(
+        current,
+        nextGesture.canvasSize,
+      );
+      if (velocity.x === 0 && velocity.y === 0) {
+        stopMarqueeAutoPan();
+      } else {
+        startMarqueeAutoPan();
+      }
     },
     onPointerUp: (event) => {
       const currentGesture = gestureRef.current;
@@ -285,6 +393,7 @@ export function useCanvasGestures({
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
+      stopMarqueeAutoPan();
       if (currentGesture.kind === "pan") {
         suppressNextClick.current = currentGesture.moved;
         onViewportChange(liveViewport.current);
@@ -294,9 +403,12 @@ export function useCanvasGestures({
           currentGesture.current,
         )
       ) {
+        if (currentGesture.viewportMoved) {
+          onViewportChange(liveViewport.current);
+        }
         onSelectionChange(currentGesture.previewSelection);
       } else {
-        onSelectionChange(emptySelection());
+        onSelectionChange(currentGesture.clickSelection);
       }
       setGesture(null);
     },
@@ -310,7 +422,10 @@ export function useCanvasGestures({
       }
       if (currentGesture.kind === "pan") {
         onViewportChange(liveViewport.current);
+      } else if (currentGesture.viewportMoved) {
+        onViewportChange(liveViewport.current);
       }
+      stopMarqueeAutoPan();
       setGesture(null);
     },
   };
@@ -323,7 +438,7 @@ export function useCanvasGestures({
     : selection;
   const marqueeRect =
     selecting && gesture.kind === "select"
-      ? rectFromPoints(gesture.start, gesture.current)
+      ? marqueeRectForGesture(gesture, liveViewport.current)
       : null;
   const className = [
     "mindmap-canvas",

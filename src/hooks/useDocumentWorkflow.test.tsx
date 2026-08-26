@@ -100,6 +100,47 @@ describe("document workflow", () => {
       .showOpenFilePicker;
   });
 
+  it("confirms a successful explicit save through the shared notice surface", async () => {
+    const notify = vi.fn();
+    const retrySave = vi.fn(async () => true);
+
+    function Harness() {
+      const workflow = useDocumentWorkflow({
+        document: createSeedDocument(),
+        documentPath: "/tmp/当前.md",
+        currentDocumentPath: "/tmp/当前.md",
+        recentDocuments: [],
+        saveState: "saved",
+        saveError: null,
+        notify,
+        newDocument: async () => preparedNewDocument(),
+        openDocument: vi.fn(),
+        replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true),
+        retrySave,
+        saveBeforeSwitch: vi.fn(async () => true),
+        beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true),
+        removeRecentDocument: vi.fn(),
+      });
+      return (
+        <button onClick={() => void workflow.saveCurrentDocument()}>
+          保存
+        </button>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button")!.click();
+      await Promise.resolve();
+    });
+
+    expect(retrySave).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledWith({ message: "已保存" });
+  });
+
   it("fits an unbound rich Markdown copy when no viewport was restored", async () => {
     const loaded: DocumentLoadResult = {
       document: createSeedDocument(),
@@ -272,8 +313,8 @@ describe("document workflow", () => {
 
   it("moves an inactive local draft directly from the recent menu", async () => {
     const sourcePath =
-      "/Users/adam/Library/Application Support/com.openadam.origin/drafts/想法.md";
-    const targetPath = "/Users/adam/Documents/想法.md";
+      "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/想法.md";
+    const targetPath = "/Volumes/Workspace/Documents/想法.md";
     const moveRecentDocument = vi.fn(async () => true);
     const notify = vi.fn();
     mocks.chooseMarkdownDocumentPath.mockResolvedValue(targetPath);
@@ -1339,7 +1380,7 @@ describe("document workflow", () => {
 
   it("does not move a recent draft after the active document changed", async () => {
     const sourcePath =
-      "/Users/adam/Library/Application Support/com.openadam.origin/drafts/A.md";
+      "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/A.md";
     const choosingPath = deferred<string | null>();
     mocks.chooseMarkdownDocumentPath.mockReturnValue(choosingPath.promise);
     const moveRecentDocument = vi.fn(async () => true);

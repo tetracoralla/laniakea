@@ -40,9 +40,9 @@ describe("recent document file actions", () => {
     const onCopyRecentPath = vi.fn();
     const onForgetRecent = vi.fn();
     const externalPath =
-      "/Users/adam/Documents/客户项目/验收想法.md";
+      "/Volumes/Workspace/Documents/客户项目/验收想法.md";
     const internalPath =
-      "/Users/adam/Library/Application Support/com.openadam.origin/drafts/未命名.md";
+      "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/未命名.md";
 
     await act(async () => {
       root.render(
@@ -137,7 +137,7 @@ describe("recent document file actions", () => {
 
   it("opens actions after hover intent and closes after leaving or clicking elsewhere", async () => {
     vi.useFakeTimers();
-    const externalPath = "/Users/adam/Documents/验收想法.md";
+    const externalPath = "/Volumes/Workspace/Documents/验收想法.md";
 
     await act(async () => {
       root.render(

@@ -130,136 +130,149 @@ export function computeLayout(
   const nodeSizes = new Map<string, { width: number; height: number }>();
   const textForNode = (id: string, text: string) =>
     textOverride?.id === id ? textOverride.text : text;
-  const measure = (
-    id: string,
-    depth: number,
-    rootKind: NodeRootKind = null,
+  interface MeasureFrame {
+    depth: number;
+    expanded: boolean;
+    id: string;
+    rootKind: NodeRootKind;
+  }
+  const measureSubtree = (
+    rootId: string,
+    rootKind: NodeRootKind,
   ): number => {
-    const current = document.nodes[id];
-    if (!current) return 0;
-    const size = sizeForNode(
-      depth,
-      textForNode(id, current.text),
-      rootKind,
-    );
-    nodeSizes.set(id, size);
-    if (current.collapsed || current.children.length === 0) {
-      subtreeHeights.set(id, size.height);
-      return size.height;
+    const pending: MeasureFrame[] = [
+      { id: rootId, depth: 0, rootKind, expanded: false },
+    ];
+    while (pending.length > 0) {
+      const frame = pending.pop();
+      if (!frame) continue;
+      const current = document.nodes[frame.id];
+      if (!current) continue;
+      if (!frame.expanded) {
+        const size = sizeForNode(
+          frame.depth,
+          textForNode(frame.id, current.text),
+          frame.rootKind,
+        );
+        nodeSizes.set(frame.id, size);
+        if (current.collapsed || current.children.length === 0) {
+          subtreeHeights.set(frame.id, size.height);
+          continue;
+        }
+        pending.push({ ...frame, expanded: true });
+        for (let index = current.children.length - 1; index >= 0; index -= 1) {
+          pending.push({
+            id: current.children[index],
+            depth: frame.depth + 1,
+            rootKind: null,
+            expanded: false,
+          });
+        }
+        continue;
+      }
+
+      const size = nodeSizes.get(frame.id);
+      if (!size) continue;
+      const gap = frame.depth === 0 ? branchGap : siblingGap;
+      const childrenHeight =
+        current.children.reduce(
+          (sum, childId) => sum + (subtreeHeights.get(childId) ?? 0),
+          0,
+        ) +
+        gap * Math.max(0, current.children.length - 1);
+      subtreeHeights.set(
+        frame.id,
+        Math.max(size.height, childrenHeight),
+      );
     }
-    const gap = depth === 0 ? branchGap : siblingGap;
-    const childrenHeight =
-      current.children.reduce(
-        (sum, childId) => sum + measure(childId, depth + 1),
-        0,
-      ) +
-      gap * Math.max(0, current.children.length - 1);
-    const value = Math.max(size.height, childrenHeight);
-    subtreeHeights.set(id, value);
-    return value;
+    return subtreeHeights.get(rootId) ?? 0;
   };
 
-  const mainHeight = measure(document.rootId, 0, "main");
+  const mainHeight = measureSubtree(document.rootId, "main");
   document.floatingRoots.forEach(({ id }) =>
-    measure(id, 0, "floating"),
+    measureSubtree(id, "floating"),
   );
   const top = Math.max(56, (900 - mainHeight) / 2);
 
-  const placeMain = (
-    id: string,
-    depth: number,
-    slotTop: number,
-    x: number,
-    inheritedTone: BranchTone,
+  interface PlacementFrame {
+    depth: number;
+    id: string;
+    rootKind: NodeRootKind;
+    slotTop: number;
+    tone: BranchTone;
+    x: number;
+  }
+  const placeAutomaticSubtree = (
+    initial: PlacementFrame,
+    mainTree: boolean,
   ) => {
-    const current = document.nodes[id];
-    if (!current) return;
-    const rootKind = depth === 0 ? "main" : null;
-    const size =
-      nodeSizes.get(id) ??
-      sizeForNode(
-        depth,
-        textForNode(id, current.text),
-        rootKind,
-      );
-    const subtreeHeight = subtreeHeights.get(id) ?? size.height;
-    const y = slotTop + (subtreeHeight - size.height) / 2;
-    const tone = depth === 0 ? "violet" : inheritedTone;
-
-    result[id] = {
-      id,
-      x,
-      y,
-      width: size.width,
-      height: size.height,
-      depth,
-      tone,
-      rootKind,
-    };
-    visibleIds.push(id);
-
-    if (current.collapsed) return;
-    const gap = depth === 0 ? branchGap : siblingGap;
-    const childX = x + size.width + connectorGapAfter(depth);
-    let childTop = slotTop;
-    current.children.forEach((childId, index) => {
-      const childTone =
-        depth === 0 ? tones[index % tones.length] : inheritedTone;
-      placeMain(
-        childId,
-        depth + 1,
-        childTop,
-        childX,
-        childTone,
-      );
-      childTop +=
-        (subtreeHeights.get(childId) ?? emphasizedNodeHeight) + gap;
-    });
-  };
-
-  placeMain(document.rootId, 0, top, rootX, "violet");
-
-  const placeFloatingDescendant = (
-    id: string,
-    depth: number,
-    slotTop: number,
-    x: number,
-    tone: BranchTone,
-  ) => {
-    const current = document.nodes[id];
-    if (!current) return;
-    const size =
-      nodeSizes.get(id) ??
-      sizeForNode(depth, textForNode(id, current.text));
-    const subtreeHeight = subtreeHeights.get(id) ?? size.height;
-    const y = slotTop + (subtreeHeight - size.height) / 2;
-    result[id] = {
-      id,
-      x,
-      y,
-      width: size.width,
-      height: size.height,
-      depth,
-      tone,
-      rootKind: null,
-    };
-    visibleIds.push(id);
-    if (current.collapsed) return;
-    const gap = siblingGap;
-    const childX = x + size.width + connectorGapAfter(depth);
-    let childTop = slotTop;
-    current.children.forEach((childId) => {
-      placeFloatingDescendant(
-        childId,
-        depth + 1,
-        childTop,
-        childX,
+    const pending = [initial];
+    while (pending.length > 0) {
+      const frame = pending.pop();
+      if (!frame) continue;
+      const current = document.nodes[frame.id];
+      if (!current) continue;
+      const size =
+        nodeSizes.get(frame.id) ??
+        sizeForNode(
+          frame.depth,
+          textForNode(frame.id, current.text),
+          frame.rootKind,
+        );
+      const subtreeHeight = subtreeHeights.get(frame.id) ?? size.height;
+      const tone =
+        mainTree && frame.depth === 0 ? "violet" : frame.tone;
+      result[frame.id] = {
+        id: frame.id,
+        x: frame.x,
+        y: frame.slotTop + (subtreeHeight - size.height) / 2,
+        width: size.width,
+        height: size.height,
+        depth: frame.depth,
         tone,
-      );
-      childTop +=
-        (subtreeHeights.get(childId) ?? leafNodeHeight) + gap;
-    });
+        rootKind: frame.rootKind,
+      };
+      visibleIds.push(frame.id);
+      if (current.collapsed) continue;
+
+      const gap = mainTree && frame.depth === 0 ? branchGap : siblingGap;
+      const childX = frame.x + size.width + connectorGapAfter(frame.depth);
+      let childTop = frame.slotTop;
+      const children: PlacementFrame[] = [];
+      current.children.forEach((childId, index) => {
+        children.push({
+          id: childId,
+          depth: frame.depth + 1,
+          slotTop: childTop,
+          x: childX,
+          tone:
+            mainTree && frame.depth === 0
+              ? tones[index % tones.length]
+              : tone,
+          rootKind: null,
+        });
+        childTop +=
+          (subtreeHeights.get(childId) ??
+            (mainTree ? emphasizedNodeHeight : leafNodeHeight)) +
+          gap;
+      });
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        pending.push(children[index]);
+      }
+    }
   };
+
+  placeAutomaticSubtree(
+    {
+      id: document.rootId,
+      depth: 0,
+      slotTop: top,
+      x: rootX,
+      tone: "violet",
+      rootKind: "main",
+    },
+    true,
+  );
 
   document.floatingRoots.forEach((floatingRoot, index) => {
     const current = document.nodes[floatingRoot.id];
@@ -288,12 +301,16 @@ export function computeLayout(
       floatingRoot.x + size.width + connectorGapAfter(0);
     let childTop = floatingRoot.y;
     current.children.forEach((childId) => {
-      placeFloatingDescendant(
-        childId,
-        1,
-        childTop,
-        childX,
-        tone,
+      placeAutomaticSubtree(
+        {
+          id: childId,
+          depth: 1,
+          slotTop: childTop,
+          x: childX,
+          tone,
+          rootKind: null,
+        },
+        false,
       );
       childTop +=
         (subtreeHeights.get(childId) ?? emphasizedNodeHeight) +
@@ -313,6 +330,192 @@ export function computeLayout(
     ),
   );
   return { nodes: result, visibleIds, width, height };
+}
+
+function sameOrderedIds(left: readonly string[], right: readonly string[]) {
+  return (
+    left.length === right.length &&
+    left.every((id, index) => id === right[index])
+  );
+}
+
+/**
+ * Returns the first-level main branch that should stay visually anchored for
+ * a single collapse/expand transition. Structural edits deliberately return
+ * null so ordinary reparenting and ordering continue to use compact layout.
+ */
+export interface MainBranchCollapseTransition {
+  anchorId: string;
+  collapsed: boolean;
+}
+
+export function mainBranchAnchorForCollapseTransition(
+  previous: MindMapDocument | null,
+  next: MindMapDocument,
+): MainBranchCollapseTransition | null {
+  if (
+    !previous ||
+    previous.rootId !== next.rootId ||
+    !sameOrderedIds(
+      previous.floatingRoots.map(({ id }) => id),
+      next.floatingRoots.map(({ id }) => id),
+    ) ||
+    Object.keys(previous.nodes).length !== Object.keys(next.nodes).length
+  ) {
+    return null;
+  }
+
+  let changedId: string | null = null;
+  for (const [id, node] of Object.entries(next.nodes)) {
+    const before = previous.nodes[id];
+    if (
+      !before ||
+      before.parentId !== node.parentId ||
+      !sameOrderedIds(before.children, node.children)
+    ) {
+      return null;
+    }
+    if (before.collapsed !== node.collapsed) {
+      if (changedId) return null;
+      changedId = id;
+    }
+  }
+  if (!changedId) return null;
+
+  let branchId = changedId;
+  let parentId = next.nodes[branchId]?.parentId ?? null;
+  while (parentId && parentId !== next.rootId) {
+    branchId = parentId;
+    parentId = next.nodes[branchId]?.parentId ?? null;
+  }
+  return parentId === next.rootId
+    ? {
+        anchorId: branchId,
+        collapsed: next.nodes[changedId].collapsed,
+      }
+    : null;
+}
+
+interface BranchBounds {
+  ids: string[];
+  minY: number;
+  maxY: number;
+}
+
+function visibleBranchBounds(
+  document: MindMapDocument,
+  layout: LayoutResult,
+  branchId: string,
+): BranchBounds | null {
+  const ids: string[] = [];
+  const pending = [branchId];
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  while (pending.length > 0) {
+    const id = pending.pop();
+    if (!id) continue;
+    const current = document.nodes[id];
+    const node = layout.nodes[id];
+    if (!current || !node) continue;
+    ids.push(id);
+    minY = Math.min(minY, node.y);
+    maxY = Math.max(maxY, node.y + node.height);
+    if (!current.collapsed) pending.push(...current.children);
+  }
+  return ids.length > 0 ? { ids, minY, maxY } : null;
+}
+
+/**
+ * Keeps the affected first-level branch at its previous canvas y coordinate,
+ * then packs neighboring branches around that anchor. This preserves spatial
+ * continuity without reserving the entire hidden subtree as permanent space.
+ */
+export function stabilizeMainBranchAnchor(
+  previous: LayoutResult | null,
+  next: LayoutResult,
+  document: MindMapDocument,
+  transition: MainBranchCollapseTransition | null,
+): LayoutResult {
+  const anchorId = transition?.anchorId ?? null;
+  const beforeAnchor = anchorId ? previous?.nodes[anchorId] : null;
+  const afterAnchor = anchorId ? next.nodes[anchorId] : null;
+  const beforeRoot = previous?.nodes[document.rootId];
+  const afterRoot = next.nodes[document.rootId];
+  const root = document.nodes[document.rootId];
+  if (!beforeAnchor || !afterAnchor || !beforeRoot || !afterRoot || !root) {
+    return next;
+  }
+
+  const groups = root.children
+    .map((id) => visibleBranchBounds(document, next, id))
+    .filter((group): group is BranchBounds => Boolean(group));
+  const anchorIndex = groups.findIndex(({ ids }) => ids[0] === anchorId);
+  if (anchorIndex < 0) return next;
+
+  const shifts = new Map<number, number>();
+  if (transition?.collapsed) {
+    groups.forEach((group, index) => {
+      const branchId = group.ids[0];
+      const before = previous?.nodes[branchId];
+      const after = next.nodes[branchId];
+      if (before && after) shifts.set(index, before.y - after.y);
+    });
+  }
+  const anchorGroup = groups[anchorIndex];
+  if (!transition?.collapsed) {
+    let anchorShift = beforeAnchor.y - afterAnchor.y;
+    const requiredTop =
+      32 +
+      groups
+        .slice(0, anchorIndex)
+        .reduce(
+          (height, group) => height + group.maxY - group.minY + branchGap,
+          0,
+        );
+    if (anchorGroup.minY + anchorShift < requiredTop) {
+      anchorShift += requiredTop - (anchorGroup.minY + anchorShift);
+    }
+    shifts.set(anchorIndex, anchorShift);
+
+    let nextTop = anchorGroup.minY + anchorShift;
+    for (let index = anchorIndex - 1; index >= 0; index -= 1) {
+      const group = groups[index];
+      const shift = nextTop - branchGap - group.maxY;
+      shifts.set(index, shift);
+      nextTop = group.minY + shift;
+    }
+
+    let previousBottom = anchorGroup.maxY + anchorShift;
+    for (let index = anchorIndex + 1; index < groups.length; index += 1) {
+      const group = groups[index];
+      const shift = previousBottom + branchGap - group.minY;
+      shifts.set(index, shift);
+      previousBottom = group.maxY + shift;
+    }
+  }
+
+  let nodes = next.nodes;
+  groups.forEach((group, index) => {
+    const shift = shifts.get(index) ?? 0;
+    if (shift === 0) return;
+    if (nodes === next.nodes) nodes = { ...next.nodes };
+    group.ids.forEach((id) => {
+      nodes[id] = { ...nodes[id], y: nodes[id].y + shift };
+    });
+  });
+  if (afterRoot.y !== beforeRoot.y) {
+    if (nodes === next.nodes) nodes = { ...next.nodes };
+    nodes[document.rootId] = { ...afterRoot, y: beforeRoot.y };
+  }
+  if (nodes === next.nodes) return next;
+  return {
+    ...next,
+    nodes,
+    height: Math.max(
+      900,
+      ...Object.values(nodes).map((node) => node.y + node.height + 120),
+    ),
+  };
 }
 
 export function applyDraftWidth(

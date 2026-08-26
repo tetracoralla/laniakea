@@ -67,13 +67,18 @@ export function addToSelection(
 
 export function visibleNodeIds(document: MindMapDocument): string[] {
   const result: string[] = [];
-  const visit = (id: string) => {
+  const pending = topLevelRootIds(document).reverse();
+  while (pending.length > 0) {
+    const id = pending.pop();
+    if (!id) continue;
     const node = document.nodes[id];
-    if (!node) return;
+    if (!node) continue;
     result.push(id);
-    if (!node.collapsed) node.children.forEach(visit);
-  };
-  topLevelRootIds(document).forEach(visit);
+    if (node.collapsed) continue;
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      pending.push(node.children[index]);
+    }
+  }
   return result;
 }
 

@@ -4,7 +4,10 @@ import type {
   MindNode,
   SelectionState,
 } from "../types/mindmap";
-import { topLevelRootIds } from "./document";
+import {
+  isProvisionalDocumentTitle,
+  topLevelRootIds,
+} from "./document";
 import {
   createSelection,
   normalizeSelectedRoots,
@@ -92,8 +95,14 @@ export function setNodeText(
 ): DocumentMutation {
   const value = normalizeNodeText(text);
   const nodes = updateNode(document.nodes, id, { text: value });
+  const documentWithTitle =
+    id === document.rootId &&
+    value.length > 0 &&
+    isProvisionalDocumentTitle(document.title)
+      ? { ...document, title: value }
+      : document;
   return {
-    document: withTimestamp(document, nodes),
+    document: withTimestamp(documentWithTitle, nodes),
     selection: singleSelection(id),
   };
 }
@@ -198,10 +207,35 @@ export function pasteSubtrees(
       createdAt: now,
       updatedAt: now,
     };
-    const children = sourceNode.children
-      .map((childId) => clone(childId, id))
-      .filter((childId): childId is string => Boolean(childId));
-    nodes[id] = { ...nodes[id], children };
+    const pending = [{ sourceId, cloneId: id }];
+    while (pending.length > 0) {
+      const frame = pending.pop();
+      if (!frame) continue;
+      const currentSource = source.nodes[frame.sourceId];
+      if (!currentSource) continue;
+      const children: Array<{ sourceId: string; cloneId: string }> = [];
+      currentSource.children.forEach((childSourceId) => {
+        const childSource = source.nodes[childSourceId];
+        if (!childSource) return;
+        const childCloneId = reserveUniqueNodeId(reservedIds);
+        nodes[childCloneId] = {
+          ...childSource,
+          id: childCloneId,
+          parentId: frame.cloneId,
+          children: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        children.push({ sourceId: childSourceId, cloneId: childCloneId });
+      });
+      nodes[frame.cloneId] = {
+        ...nodes[frame.cloneId],
+        children: children.map(({ cloneId }) => cloneId),
+      };
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        pending.push(children[index]);
+      }
+    }
     return id;
   };
 
@@ -344,13 +378,17 @@ export function moveNode(
 
 function collectSubtree(document: MindMapDocument, id: string): string[] {
   const result: string[] = [];
-  const visit = (nodeId: string) => {
+  const pending = [id];
+  while (pending.length > 0) {
+    const nodeId = pending.pop();
+    if (!nodeId) continue;
     const node = document.nodes[nodeId];
-    if (!node) return;
+    if (!node) continue;
     result.push(nodeId);
-    node.children.forEach(visit);
-  };
-  visit(id);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      pending.push(node.children[index]);
+    }
+  }
   return result;
 }
 
@@ -411,6 +449,7 @@ export function attachSubtree(
   document: MindMapDocument,
   id: string,
   parentId: string,
+  position?: number,
 ): DocumentMutation {
   const current = document.nodes[id];
   const parent = document.nodes[parentId];
@@ -426,12 +465,25 @@ export function attachSubtree(
       selection: singleSelection(current ? id : document.rootId),
     };
   }
-  if (current.parentId === parentId) {
+  const nextChildren = parent.children.filter((childId) => childId !== id);
+  const insertAt = Math.max(
+    0,
+    Math.min(
+      Number.isInteger(position) ? position! : nextChildren.length,
+      nextChildren.length,
+    ),
+  );
+  nextChildren.splice(insertAt, 0, id);
+  if (
+    current.parentId === parentId &&
+    !parent.collapsed &&
+    nextChildren.every((childId, index) => parent.children[index] === childId)
+  ) {
     return { document, selection: singleSelection(id) };
   }
 
   let nodes = document.nodes;
-  if (current.parentId) {
+  if (current.parentId && current.parentId !== parentId) {
     const oldParent = document.nodes[current.parentId];
     nodes = updateNode(nodes, oldParent.id, {
       children: oldParent.children.filter((childId) => childId !== id),
@@ -439,7 +491,7 @@ export function attachSubtree(
   }
   nodes = updateNode(nodes, id, { parentId });
   nodes = updateNode(nodes, parentId, {
-    children: [...parent.children, id],
+    children: nextChildren,
     collapsed: false,
   });
   return {

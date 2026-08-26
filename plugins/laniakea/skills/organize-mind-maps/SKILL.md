@@ -7,6 +7,27 @@ description: Create, inspect, search, or safely revise a durable Laniakea Markdo
 
 Use Laniakea for a durable artifact the user can open and edit, not as private scratch space for ordinary reasoning.
 
+## Make the hierarchy understandable
+
+- Before expanding details, identify the stable mental picture, primary
+  relationship, or user-perceived objects that should remain understandable
+  when deeper branches are collapsed. Do not start from a flat fact or
+  capability inventory merely because it is easy to enumerate.
+- Let a parent name the relationship shared by its children. Give independently
+  understandable, selectable, or discussable peers separate sibling nodes
+  instead of compressing them into one colon-led or delimiter-separated leaf.
+- Keep one complete relationship as one cognitive unit. An authentication
+  method, gesture sequence, transaction, or object mapping does not need to be
+  split merely because its label contains several actions or values.
+- Use the shallowest levels for the core model and progressively disclose local
+  actions, states, exceptions, and recovery below the object or carrier that
+  owns them. A collapsed map should still answer what the subject is, what its
+  main parts or relationships are, and where a reader should expand next.
+- Preserve the difference between current structure, a proposal, and an
+  unresolved question. Do not promote plausible future ideas into current
+  branches, and do not add filler or fuse nodes to reach a preferred depth or
+  node count.
+
 ## Choose the action
 
 - Call `create_mind_map` only when the user wants a new file and has supplied or approved an absolute destination path. It never overwrites an existing file.

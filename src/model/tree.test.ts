@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSeedDocument } from "../data/seed";
+import { createBlankDocument, createSeedDocument } from "../data/seed";
+import { isMindMapDocument } from "./document";
+import { documentToMarkdown } from "./markdown";
+import { singleSelection, visibleNodeIds } from "./selection";
 import {
   adjacentSibling,
   attachSubtree,
@@ -16,7 +19,27 @@ import {
   setNodeText,
   toggleCollapsedMany,
 } from "./tree";
-import { singleSelection } from "./selection";
+
+function deepDocument(count: number) {
+  const document = createBlankDocument();
+  document.nodes.root.text = "深层结构";
+  let parentId = document.rootId;
+  for (let index = 1; index < count; index += 1) {
+    const id = `deep-${index}`;
+    document.nodes[id] = {
+      id,
+      text: `深层 ${index}`,
+      parentId,
+      children: [],
+      collapsed: false,
+      createdAt: document.updatedAt,
+      updatedAt: document.updatedAt,
+    };
+    document.nodes[parentId].children = [id];
+    parentId = id;
+  }
+  return document;
+}
 
 describe("tree mutations", () => {
   it("creates a child without mutating the previous document", () => {
@@ -61,6 +84,19 @@ describe("tree mutations", () => {
       "   ",
     );
     expect(cleared.document.nodes[createdId].text).toBe("");
+  });
+
+  it("promotes the first meaningful root text into an untitled document title", () => {
+    const document = createBlankDocument();
+    const named = setNodeText(document, document.rootId, "项目梳理");
+    const editedAgain = setNodeText(
+      named.document,
+      named.document.rootId,
+      "项目梳理 2",
+    );
+
+    expect(named.document.title).toBe("项目梳理");
+    expect(editedAgain.document.title).toBe("项目梳理");
   });
 
   it("indents under the previous sibling and can outdent again", () => {
@@ -169,6 +205,33 @@ describe("tree mutations", () => {
       "path-3",
     ]);
     expect(result.document.nodes["path-2"].parentId).toBe("path");
+  });
+
+  it("uses the drag insertion position for reparenting and same-parent ordering", () => {
+    const document = createSeedDocument();
+    const reparented = attachSubtree(document, "experience-2", "path", 1);
+
+    expect(reparented.document.nodes.path.children).toEqual([
+      "path-1",
+      "experience-2",
+      "path-2",
+      "path-3",
+    ]);
+    expect(reparented.document.nodes["experience-2"].parentId).toBe("path");
+
+    const reordered = attachSubtree(
+      reparented.document,
+      "experience-2",
+      "path",
+      0,
+    );
+    expect(reordered.document.nodes.path.children).toEqual([
+      "experience-2",
+      "path-1",
+      "path-2",
+      "path-3",
+    ]);
+    expect(reordered.selection).toEqual(singleSelection("experience-2"));
   });
 
   it("navigates between the main root and floating roots", () => {
@@ -307,5 +370,16 @@ describe("tree mutations", () => {
     expect(result.document.nodes.root.collapsed).toBe(false);
     expect(result.document.nodes.experience.collapsed).toBe(false);
     expect(result.selection).toEqual(singleSelection("experience-2"));
+  });
+
+  it("validates, serializes, selects, and deletes a 2,000-node deep branch", () => {
+    const document = deepDocument(2_000);
+
+    expect(isMindMapDocument(document)).toBe(true);
+    expect(visibleNodeIds(document)).toHaveLength(2_000);
+    expect(documentToMarkdown(document)).toContain("- 深层 1999");
+    expect(
+      Object.keys(deleteSubtree(document, "deep-1").document.nodes),
+    ).toEqual(["root"]);
   });
 });

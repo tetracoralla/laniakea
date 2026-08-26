@@ -3,8 +3,10 @@ import type { MindMapDocument, MindNode } from "../types/mindmap";
 import {
   applyDraftWidth,
   computeLayout,
+  mainBranchAnchorForCollapseTransition,
   shareStableLayout,
   sizeForNode,
+  stabilizeMainBranchAnchor,
 } from "./layout";
 
 function largeDocument(count: number): MindMapDocument {
@@ -46,6 +48,18 @@ function largeDocument(count: number): MindMapDocument {
   };
 }
 
+function deepDocument(count: number): MindMapDocument {
+  const document = largeDocument(count);
+  document.nodes.root.children = count > 1 ? ["node-1"] : [];
+  for (let index = 1; index < count; index += 1) {
+    const id = `node-${index}`;
+    const childId = index + 1 < count ? `node-${index + 1}` : null;
+    document.nodes[id].parentId = index === 1 ? "root" : `node-${index - 1}`;
+    document.nodes[id].children = childId ? [childId] : [];
+  }
+  return document;
+}
+
 describe("automatic layout", () => {
   it("lays out all visible nodes with increasing depth coordinates", () => {
     const layout = computeLayout(largeDocument(20));
@@ -69,6 +83,16 @@ describe("automatic layout", () => {
 
     expect(layout.visibleIds).toHaveLength(5_000);
     expect(elapsed).toBeLessThan(150);
+  });
+
+  it("lays out a 10,000-node deep branch without overflowing the stack", () => {
+    const layout = computeLayout(deepDocument(10_000));
+
+    expect(layout.visibleIds).toHaveLength(10_000);
+    expect(layout.nodes["node-9999"].depth).toBe(9_999);
+    expect(layout.nodes["node-9999"].x).toBeGreaterThan(
+      layout.nodes.root.x,
+    );
   });
 
   it("grows long and multiline nodes without overlapping siblings", () => {
@@ -248,6 +272,106 @@ describe("automatic layout", () => {
       rootKind: "floating",
     });
     expect(layout.nodes.root.rootKind).toBe("main");
+  });
+
+  it("keeps the affected first-level branch anchored across collapse", () => {
+    const document = largeDocument(8);
+    document.nodes.root.children = ["node-1", "node-2"];
+    document.nodes["node-1"].children = ["node-3", "node-4"];
+    document.nodes["node-3"].children = ["node-5", "node-6", "node-7"];
+    document.nodes["node-2"].parentId = "root";
+    for (const id of ["node-3", "node-4"]) {
+      document.nodes[id].parentId = "node-1";
+    }
+    for (const id of ["node-5", "node-6", "node-7"]) {
+      document.nodes[id].parentId = "node-3";
+    }
+    const expanded = computeLayout(document);
+    const collapsedDocument = {
+      ...document,
+      nodes: {
+        ...document.nodes,
+        "node-3": { ...document.nodes["node-3"], collapsed: true },
+      },
+    };
+    const compact = computeLayout(collapsedDocument);
+    const transition = mainBranchAnchorForCollapseTransition(
+      document,
+      collapsedDocument,
+    );
+    const anchored = stabilizeMainBranchAnchor(
+      expanded,
+      compact,
+      collapsedDocument,
+      transition,
+    );
+
+    expect(transition).toEqual({ anchorId: "node-1", collapsed: true });
+    expect(compact.nodes["node-2"].y).not.toBe(expanded.nodes["node-2"].y);
+    expect(anchored.nodes["node-1"].y).toBe(expanded.nodes["node-1"].y);
+    expect(anchored.nodes["node-2"].y).toBe(expanded.nodes["node-2"].y);
+    expect(anchored.nodes.root.y).toBe(expanded.nodes.root.y);
+    expect(anchored.nodes["node-1"].y + anchored.nodes["node-1"].height)
+      .toBeLessThanOrEqual(anchored.nodes["node-2"].y);
+  });
+
+  it("keeps the main root anchored when collapsing a tall branch set", () => {
+    const branchCount = 40;
+    const childrenPerBranch = 30;
+    const document = largeDocument(
+      1 + branchCount + branchCount * childrenPerBranch,
+    );
+    document.nodes.root.children = Array.from(
+      { length: branchCount },
+      (_, index) => `node-${index + 1}`,
+    );
+    let childIndex = branchCount + 1;
+    document.nodes.root.children.forEach((branchId) => {
+      const children = Array.from({ length: childrenPerBranch }, () => {
+        const childId = `node-${childIndex++}`;
+        document.nodes[childId].parentId = branchId;
+        return childId;
+      });
+      document.nodes[branchId].parentId = "root";
+      document.nodes[branchId].children = children;
+    });
+    const expanded = computeLayout(document);
+    const collapsedDocument = {
+      ...document,
+      nodes: {
+        ...document.nodes,
+        "node-20": { ...document.nodes["node-20"], collapsed: true },
+      },
+    };
+    const compact = computeLayout(collapsedDocument);
+    const anchored = stabilizeMainBranchAnchor(
+      expanded,
+      compact,
+      collapsedDocument,
+      mainBranchAnchorForCollapseTransition(document, collapsedDocument),
+    );
+
+    expect(compact.nodes.root.y).not.toBe(expanded.nodes.root.y);
+    expect(anchored.nodes.root.y).toBe(expanded.nodes.root.y);
+    document.nodes.root.children.forEach((branchId) => {
+      expect(anchored.nodes[branchId].y).toBe(expanded.nodes[branchId].y);
+    });
+  });
+
+  it("does not apply collapse anchoring to a structural reorder", () => {
+    const document = largeDocument(4);
+    const reordered = {
+      ...document,
+      nodes: {
+        ...document.nodes,
+        root: {
+          ...document.nodes.root,
+          children: ["node-2", "node-1", "node-3"],
+        },
+      },
+    };
+
+    expect(mainBranchAnchorForCollapseTransition(document, reordered)).toBeNull();
   });
 
   it("preserves layout object identities for nodes that did not move", () => {

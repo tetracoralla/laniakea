@@ -103,12 +103,12 @@ describe("recent document index", () => {
       moveRecentDocumentPath(
         [source],
         source.path,
-        "/Users/adam/Documents/想法.md",
+        "/Volumes/Workspace/Documents/想法.md",
       ),
     ).toEqual([
       {
         ...source,
-        path: "/Users/adam/Documents/想法.md",
+        path: "/Volumes/Workspace/Documents/想法.md",
       },
     ]);
   });
@@ -131,19 +131,52 @@ describe("recent document index", () => {
     ]);
   });
 
+  it("migrates an untitled external recent entry from its meaningful file name", () => {
+    localStorage.setItem(
+      "origin.recent-documents.v1",
+      JSON.stringify([
+        {
+          path: "/Volumes/Workspace/Downloads/产品梳理.md",
+          title: "未命名思维",
+          lastOpenedAt: "2026-08-25T08:00:00.000Z",
+        },
+        {
+          path:
+            "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/未命名思维-1.md",
+          title: "未命名思维",
+          lastOpenedAt: "2026-08-25T07:00:00.000Z",
+        },
+      ]),
+    );
+
+    expect(
+      loadRecentDocuments().map(({ path, title }) => ({ path, title })),
+    ).toEqual([
+      {
+        path: "/Volumes/Workspace/Downloads/产品梳理.md",
+        title: "产品梳理",
+      },
+      {
+        path:
+          "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/未命名思维-1.md",
+        title: "未命名思维",
+      },
+    ]);
+  });
+
   it("distinguishes user files from internal drafts and summarizes location", () => {
     const internal =
-      "/Users/adam/Library/Application Support/com.openadam.origin/drafts/想法.md";
+      "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/想法.md";
 
     expect(isInternalDocumentPath(internal)).toBe(true);
     expect(recentDocumentLocation(internal)).toBe("本地草稿");
     expect(
       recentDocumentLocation(
-        "/Users/adam/Documents/客户项目/想法.md",
+        "/Volumes/Workspace/Documents/客户项目/想法.md",
       ),
     ).toBe("Documents/客户项目");
     expect(
-      documentParentDirectory("C:\\Users\\adam\\想法.md"),
-    ).toBe("C:/Users/adam");
+      documentParentDirectory("C:\\Workspace\\想法.md"),
+    ).toBe("C:/Workspace");
   });
 });

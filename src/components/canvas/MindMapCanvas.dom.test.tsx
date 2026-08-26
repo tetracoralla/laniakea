@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import { Profiler, StrictMode } from "react";
+import { Profiler, StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../App";
+import { computeLayout } from "../../model/layout";
 import { singleSelection } from "../../model/selection";
+import { canvasZoomToFit, minCanvasZoom } from "../../model/zoom";
 import type {
   MindMapDocument,
   MindNode,
@@ -66,6 +68,15 @@ function dispatchPointer(
   });
   Object.defineProperty(event, "pointerId", { value: pointerId });
   target.dispatchEvent(event);
+}
+
+function nodeFrame(element: HTMLElement) {
+  return {
+    height: Number.parseFloat(element.style.height),
+    left: Number.parseFloat(element.style.left),
+    top: Number.parseFloat(element.style.top),
+    width: Number.parseFloat(element.style.width),
+  };
 }
 
 describe("rendered interaction regressions", () => {
@@ -216,6 +227,11 @@ describe("rendered interaction regressions", () => {
         "button[aria-label='另存为']",
       )?.textContent,
     ).toBe("另存为");
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        "button[aria-label='另存为']",
+      )?.classList.contains("toolbar-button--wide"),
+    ).toBe(true);
     await act(async () => more.click());
     expect(
       Array.from(
@@ -311,6 +327,38 @@ describe("rendered interaction regressions", () => {
     expect(menuText).not.toContain("唤醒快捷键");
   });
 
+  it("exits editing but keeps selection when the page becomes hidden", async () => {
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+    });
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      ".mind-node__editor",
+    )!;
+    expect(editor).not.toBeNull();
+    editor.value = "切换前的最终文本";
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      value: "hidden",
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(container.querySelector(".mind-node__editor")).toBeNull();
+    expect(container.querySelector(".mind-node__content")?.textContent).toBe(
+      "切换前的最终文本",
+    );
+    expect(
+      container.querySelector(".mind-node")?.classList.contains("is-selected"),
+    ).toBe(true);
+    Reflect.deleteProperty(document, "visibilityState");
+  });
+
   it("mounts only the visible window of a 5,000-node document", async () => {
     const document = largeDocument(5_000);
     const startedAt = performance.now();
@@ -344,7 +392,50 @@ describe("rendered interaction regressions", () => {
     expect(elapsed).toBeLessThan(1_000);
   });
 
-  it("keeps the latest pan transform and renders the incoming viewport in the same frame", async () => {
+  it("fits the newly rendered document and can enter a full-map overview", async () => {
+    const initial = largeDocument(2);
+    const imported = largeDocument(100);
+    const onViewportChange = vi.fn();
+    const renderCanvas = (document: MindMapDocument, fitRequest: number) => (
+      <MindMapCanvas
+        document={document}
+        draft=""
+        editingId={null}
+        fitRequest={fitRequest}
+        onAttachNode={() => undefined}
+        onBeginEdit={() => undefined}
+        onCancelEdit={() => undefined}
+        onCommitEdit={() => undefined}
+        onDetachNode={() => undefined}
+        onDraftChange={() => undefined}
+        onPasteStructured={() => false}
+        onSelectionChange={() => undefined}
+        onSpaceTap={() => undefined}
+        onToggle={() => undefined}
+        onViewportChange={onViewportChange}
+        selection={singleSelection(document.rootId)}
+      />
+    );
+
+    await act(async () => root.render(renderCanvas(initial, 0)));
+    await act(async () => root.render(renderCanvas(imported, 1)));
+
+    const layout = computeLayout(imported);
+    const expectedZoom = canvasZoomToFit(
+      layout.width,
+      layout.height,
+      1_200,
+      900,
+    );
+    expect(expectedZoom).toBeLessThan(minCanvasZoom);
+    expect(onViewportChange).toHaveBeenLastCalledWith({
+      zoom: expectedZoom,
+      x: (1_200 - layout.width * expectedZoom) / 2,
+      y: (900 - layout.height * expectedZoom) / 2,
+    });
+  });
+
+  it("coalesces wheel movement and renders the latest viewport in one frame", async () => {
     const document = largeDocument(5_000);
     await act(async () => {
       root.render(
@@ -393,7 +484,7 @@ describe("rendered interaction regressions", () => {
     });
     expect(firstWheel.defaultPrevented).toBe(true);
     expect(content.style.transform).toBe(
-      "translate3d(0px, -1600px, 0) scale(1)",
+      "translate3d(0px, 0px, 0) scale(1)",
     );
 
     await act(async () => {
@@ -498,7 +589,7 @@ describe("rendered interaction regressions", () => {
 
     expect(onZoomPreview).toHaveBeenCalledOnce();
     expect(onZoomPreview.mock.calls[0][0]).toBeCloseTo(
-      0.8705505633,
+      0.8619728212,
       10,
     );
     expect(onViewportChange).toHaveBeenCalledTimes(viewportCallsBeforeZoom);
@@ -565,6 +656,10 @@ describe("rendered interaction regressions", () => {
           index === 0 || zooms[index - 1] - zoom < 0.003,
       ),
     ).toBe(true);
+    expect(content.style.transform).toContain("scale(1)");
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(16));
+    });
     expect(content.style.transform).toContain(`scale(${zooms.at(-1)})`);
     expect(
       vi.mocked(HTMLElement.prototype.getBoundingClientRect).mock.calls.length,
@@ -839,6 +934,222 @@ describe("rendered interaction regressions", () => {
     );
   });
 
+  it("keeps the edited node selected when blank canvas exits editing", async () => {
+    const document = largeDocument(3);
+
+    function Harness() {
+      const [editingId, setEditingId] = useState<string | null>("root");
+      const [selection, setSelection] = useState(singleSelection("root"));
+      return (
+        <MindMapCanvas
+          document={document}
+          draft={document.nodes.root.text}
+          editingId={editingId}
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => setEditingId(null)}
+          onCommitEdit={() => setEditingId(null)}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={setSelection}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          selection={selection}
+        />
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    await act(async () => {
+      dispatchPointer(canvas, "pointerdown", 40, 40);
+      dispatchPointer(canvas, "pointerup", 40, 40);
+    });
+
+    expect(container.querySelector(".mind-node__editor")).toBeNull();
+    const rootNode = container.querySelector<HTMLElement>(
+      "[data-node-id='root']",
+    )!;
+    expect(rootNode.classList.contains("is-selected")).toBe(true);
+    expect(rootNode.classList.contains("is-primary")).toBe(true);
+  });
+
+  it("keeps every first-level branch anchored when a descendant is collapsed", async () => {
+    const initial = largeDocument(8);
+    initial.nodes.root.children = ["node-1", "node-2"];
+    initial.nodes["node-1"].children = ["node-3", "node-4"];
+    initial.nodes["node-3"].children = ["node-5", "node-6", "node-7"];
+    for (const id of ["node-3", "node-4"]) {
+      initial.nodes[id].parentId = "node-1";
+    }
+    for (const id of ["node-5", "node-6", "node-7"]) {
+      initial.nodes[id].parentId = "node-3";
+    }
+
+    function Harness() {
+      const [mindMap, setMindMap] = useState(initial);
+      return (
+        <MindMapCanvas
+          document={mindMap}
+          draft=""
+          editingId={null}
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={(id) =>
+            setMindMap((current) => ({
+              ...current,
+              nodes: {
+                ...current.nodes,
+                [id]: {
+                  ...current.nodes[id],
+                  collapsed: !current.nodes[id].collapsed,
+                },
+              },
+            }))
+          }
+          onViewportChange={() => undefined}
+          selection={singleSelection("node-3")}
+        />
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    const firstTop = nodeFrame(
+      container.querySelector<HTMLElement>("[data-node-id='node-1']")!,
+    ).top;
+    const secondTop = nodeFrame(
+      container.querySelector<HTMLElement>("[data-node-id='node-2']")!,
+    ).top;
+
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>(
+          "[data-node-id='node-3'] .mind-node__disclosure",
+        )!
+        .click();
+    });
+
+    expect(
+      nodeFrame(
+        container.querySelector<HTMLElement>("[data-node-id='node-1']")!,
+      ).top,
+    ).toBe(firstTop);
+    expect(
+      nodeFrame(
+        container.querySelector<HTMLElement>("[data-node-id='node-2']")!,
+      ).top,
+    ).toBe(secondTop);
+    expect(container.querySelector("[data-node-id='node-5']")).toBeNull();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLElement>(
+          "[data-node-id='node-3'] .mind-node__disclosure",
+        )!
+        .click();
+    });
+
+    expect(
+      nodeFrame(
+        container.querySelector<HTMLElement>("[data-node-id='node-1']")!,
+      ).top,
+    ).toBe(firstTop);
+    expect(container.querySelector("[data-node-id='node-5']")).not.toBeNull();
+    const firstBranchBottom = Math.max(
+      ...["node-1", "node-3", "node-4", "node-5", "node-6", "node-7"].map(
+        (id) => {
+          const frame = nodeFrame(
+            container.querySelector<HTMLElement>(`[data-node-id='${id}']`)!,
+          );
+          return frame.top + frame.height;
+        },
+      ),
+    );
+    expect(firstBranchBottom).toBeLessThanOrEqual(
+      nodeFrame(
+        container.querySelector<HTMLElement>("[data-node-id='node-2']")!,
+      ).top,
+    );
+  });
+
+  it("auto-pans a marquee while keeping its starting point attached to content", async () => {
+    const document = largeDocument(80);
+    const onViewportChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft=""
+          editingId={null}
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={onViewportChange}
+          selection={singleSelection(document.rootId)}
+        />,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+
+    await act(async () => {
+      dispatchPointer(canvas, "pointerdown", 100, 100);
+      dispatchPointer(canvas, "pointermove", 1250, 950);
+    });
+    const initialMarquee = container.querySelector<HTMLElement>(
+      ".selection-marquee",
+    )!;
+    expect(initialMarquee.style.left).toBe("100px");
+
+    for (let frame = 1; frame <= 4; frame += 1) {
+      await act(async () => {
+        animationFrames
+          .splice(0)
+          .forEach((callback) => callback(frame * 16));
+      });
+    }
+
+    const content = container.querySelector<HTMLElement>(
+      ".mindmap-canvas__content",
+    )!;
+    const movedMarquee = container.querySelector<HTMLElement>(
+      ".selection-marquee",
+    )!;
+    expect(content.style.transform).not.toBe(
+      "translate3d(0px, 0px, 0) scale(1)",
+    );
+    expect(Number.parseFloat(movedMarquee.style.left)).toBeLessThan(100);
+
+    await act(async () => {
+      dispatchPointer(canvas, "pointerup", 1250, 950);
+    });
+    expect(onViewportChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        x: expect.any(Number),
+        y: expect.any(Number),
+      }),
+    );
+  });
+
   it("drags a node structurally in pointer mode without entering hand mode", async () => {
     const document = largeDocument(3);
     const onDetachNode = vi.fn();
@@ -884,6 +1195,414 @@ describe("rendered interaction regressions", () => {
         y: expect.any(Number),
       }),
     );
+  });
+
+  it("keeps an attached branch in place when a drag does not show deliberate detach intent", async () => {
+    const document = largeDocument(3);
+    const onAttachNode = vi.fn();
+    const onDetachNode = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft=""
+          editingId={null}
+          onAttachNode={onAttachNode}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={onDetachNode}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          selection={singleSelection(document.rootId)}
+        />,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    const source = container.querySelector<HTMLElement>(
+      "[data-node-id='node-1']",
+    )!;
+    const sourceContent = source.querySelector<HTMLElement>(
+      ".mind-node__content",
+    )!;
+    const frame = nodeFrame(source);
+    const start = {
+      x: frame.left + frame.width / 2,
+      y: frame.top + frame.height / 2,
+    };
+
+    await act(async () => {
+      dispatchPointer(sourceContent, "pointerdown", start.x, start.y);
+      dispatchPointer(canvas, "pointermove", start.x + 72, start.y);
+    });
+
+    expect(
+      container.querySelector<HTMLElement>(".node-drag-preview")?.dataset
+        .dropIntent,
+    ).toBe("retain");
+    expect(canvas.textContent).toContain("继续拖动以选择上级节点");
+
+    await act(async () => {
+      dispatchPointer(canvas, "pointerup", start.x + 72, start.y);
+    });
+    expect(onAttachNode).not.toHaveBeenCalled();
+    expect(onDetachNode).not.toHaveBeenCalled();
+  });
+
+  it("shows and commits a shallow parent candidate across an expanded forward gap", async () => {
+    const document = largeDocument(4);
+    const onAttachNode = vi.fn();
+    const onDetachNode = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft=""
+          editingId={null}
+          onAttachNode={onAttachNode}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={onDetachNode}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          selection={singleSelection(document.rootId)}
+        />,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    const source = container.querySelector<HTMLElement>(
+      "[data-node-id='node-1']",
+    )!;
+    const sourceContent = source.querySelector<HTMLElement>(
+      ".mind-node__content",
+    )!;
+    const target = container.querySelector<HTMLElement>(
+      "[data-node-id='node-2']",
+    )!;
+    const sourceFrame = nodeFrame(source);
+    const targetFrame = nodeFrame(target);
+    const start = {
+      x: sourceFrame.left + sourceFrame.width / 2,
+      y: sourceFrame.top + sourceFrame.height / 2,
+    };
+    const nearTarget = {
+      x:
+        targetFrame.left +
+        targetFrame.width +
+        112 +
+        sourceFrame.width / 2,
+      y: targetFrame.top + targetFrame.height / 2,
+    };
+
+    await act(async () => {
+      dispatchPointer(sourceContent, "pointerdown", start.x, start.y);
+      dispatchPointer(canvas, "pointermove", nearTarget.x, nearTarget.y);
+    });
+
+    expect(target.classList.contains("is-drop-target")).toBe(true);
+    expect(
+      container.querySelector<HTMLElement>(".node-drag-preview")?.dataset
+        .dropIntent,
+    ).toBe("attach");
+    expect(
+      container
+        .querySelector<SVGPathElement>(
+          ".node-drag-connector-preview__path",
+        )
+        ?.getAttribute("d"),
+    ).toMatch(/^M /);
+    expect(canvas.textContent).toContain("松手将分支移入“节点 2”");
+
+    await act(async () => {
+      dispatchPointer(canvas, "pointerup", nearTarget.x, nearTarget.y);
+    });
+    expect(onAttachNode).toHaveBeenCalledWith("node-1", "node-2", 0);
+    expect(onDetachNode).not.toHaveBeenCalled();
+    expect(
+      container
+        .querySelector<SVGPathElement>(
+          ".node-drag-connector-preview__path",
+        )
+        ?.getAttribute("d"),
+    ).toBe("");
+  });
+
+  it("cancels a structural drag on Escape without committing on pointer release", async () => {
+    const document = largeDocument(4);
+    const onAttachNode = vi.fn();
+    const onDetachNode = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft=""
+          editingId={null}
+          onAttachNode={onAttachNode}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={onDetachNode}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          selection={singleSelection(document.rootId)}
+        />,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    const source = container.querySelector<HTMLElement>(
+      "[data-node-id='node-1']",
+    )!;
+    const target = container.querySelector<HTMLElement>(
+      "[data-node-id='node-2']",
+    )!;
+    const sourceFrame = nodeFrame(source);
+    const targetFrame = nodeFrame(target);
+    const start = {
+      x: sourceFrame.left + sourceFrame.width / 2,
+      y: sourceFrame.top + sourceFrame.height / 2,
+    };
+    const nearTarget = {
+      x:
+        targetFrame.left +
+        targetFrame.width +
+        112 +
+        sourceFrame.width / 2,
+      y: targetFrame.top + targetFrame.height / 2,
+    };
+
+    await act(async () => {
+      dispatchPointer(
+        source.querySelector<HTMLElement>(".mind-node__content")!,
+        "pointerdown",
+        start.x,
+        start.y,
+      );
+      dispatchPointer(
+        canvas,
+        "pointermove",
+        nearTarget.x,
+        nearTarget.y,
+      );
+    });
+    expect(canvas.classList.contains("is-node-dragging")).toBe(true);
+    expect(target.classList.contains("is-drop-target")).toBe(true);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Escape",
+        }),
+      );
+    });
+    expect(canvas.classList.contains("is-node-dragging")).toBe(false);
+    expect(target.classList.contains("is-drop-target")).toBe(false);
+    expect(container.querySelector(".node-drag-preview")).toBeNull();
+
+    await act(async () => {
+      dispatchPointer(
+        canvas,
+        "pointerup",
+        nearTarget.x,
+        nearTarget.y,
+      );
+    });
+    expect(onAttachNode).not.toHaveBeenCalled();
+    expect(onDetachNode).not.toHaveBeenCalled();
+  });
+
+  it("commits the rendered insertion slot between existing siblings", async () => {
+    const document = largeDocument(5);
+    document.nodes.root.children = ["node-1", "node-2"];
+    document.nodes["node-2"].children = ["node-3", "node-4"];
+    document.nodes["node-3"].parentId = "node-2";
+    document.nodes["node-4"].parentId = "node-2";
+    const onAttachNode = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft=""
+          editingId={null}
+          onAttachNode={onAttachNode}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          selection={singleSelection(document.rootId)}
+        />,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    const source = container.querySelector<HTMLElement>(
+      "[data-node-id='node-1']",
+    )!;
+    const target = container.querySelector<HTMLElement>(
+      "[data-node-id='node-2']",
+    )!;
+    const firstChild = container.querySelector<HTMLElement>(
+      "[data-node-id='node-3']",
+    )!;
+    const lastChild = container.querySelector<HTMLElement>(
+      "[data-node-id='node-4']",
+    )!;
+    const sourceFrame = nodeFrame(source);
+    const targetFrame = nodeFrame(target);
+    const firstFrame = nodeFrame(firstChild);
+    const lastFrame = nodeFrame(lastChild);
+    const start = {
+      x: sourceFrame.left + sourceFrame.width / 2,
+      y: sourceFrame.top + sourceFrame.height / 2,
+    };
+    const betweenChildren = {
+      x:
+        targetFrame.left +
+        targetFrame.width +
+        112 +
+        sourceFrame.width / 2,
+      y:
+        (firstFrame.top +
+          firstFrame.height / 2 +
+          lastFrame.top +
+          lastFrame.height / 2) /
+        2,
+    };
+
+    await act(async () => {
+      dispatchPointer(
+        source.querySelector<HTMLElement>(".mind-node__content")!,
+        "pointerdown",
+        start.x,
+        start.y,
+      );
+      dispatchPointer(
+        canvas,
+        "pointermove",
+        betweenChildren.x,
+        betweenChildren.y,
+      );
+    });
+
+    expect(target.classList.contains("is-drop-target")).toBe(true);
+    expect(canvas.textContent).toContain("排在第 2 个");
+
+    await act(async () => {
+      dispatchPointer(
+        canvas,
+        "pointerup",
+        betweenChildren.x,
+        betweenChildren.y,
+      );
+    });
+    expect(onAttachNode).toHaveBeenCalledWith("node-1", "node-2", 1);
+  });
+
+  it("does not show attachment feedback while the dragged node covers a candidate", async () => {
+    const document = largeDocument(4);
+    const onAttachNode = vi.fn();
+    const onDetachNode = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={document}
+          draft=""
+          editingId={null}
+          onAttachNode={onAttachNode}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={onDetachNode}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          selection={singleSelection(document.rootId)}
+        />,
+      );
+    });
+    const canvas = container.querySelector<HTMLElement>(
+      "[aria-label='思维导图画布']",
+    )!;
+    const source = container.querySelector<HTMLElement>(
+      "[data-node-id='node-1']",
+    )!;
+    const sourceContent = source.querySelector<HTMLElement>(
+      ".mind-node__content",
+    )!;
+    const target = container.querySelector<HTMLElement>(
+      "[data-node-id='node-2']",
+    )!;
+    const sourceFrame = nodeFrame(source);
+    const targetFrame = nodeFrame(target);
+    const start = {
+      x: sourceFrame.left + sourceFrame.width / 2,
+      y: sourceFrame.top + sourceFrame.height / 2,
+    };
+    const behindTarget = {
+      x: targetFrame.left + targetFrame.width / 2,
+      y: targetFrame.top + targetFrame.height / 2,
+    };
+
+    await act(async () => {
+      dispatchPointer(sourceContent, "pointerdown", start.x, start.y);
+      dispatchPointer(
+        canvas,
+        "pointermove",
+        behindTarget.x,
+        behindTarget.y,
+      );
+    });
+
+    expect(target.classList.contains("is-drop-target")).toBe(false);
+    expect(
+      container
+        .querySelector<SVGPathElement>(
+          ".node-drag-connector-preview__path",
+        )
+        ?.getAttribute("d"),
+    ).toBe("");
+    expect(canvas.textContent).toContain("继续拖动以选择上级节点");
+
+    await act(async () => {
+      dispatchPointer(
+        canvas,
+        "pointercancel",
+        behindTarget.x,
+        behindTarget.y,
+      );
+    });
+    expect(onAttachNode).not.toHaveBeenCalled();
+    expect(onDetachNode).not.toHaveBeenCalled();
   });
 
   it("pans from a node with Space without starting a structural node drag", async () => {

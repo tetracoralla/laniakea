@@ -7,6 +7,7 @@ Major direct runtime dependencies include:
 | Project | Purpose | License |
 | --- | --- | --- |
 | React and React DOM | User interface | MIT |
+| IconPark | User interface icon geometry | Apache-2.0 |
 | Tauri and Tauri API | Desktop application runtime | Apache-2.0 OR MIT |
 | Tauri Dialog Plugin | Native file dialogs | MIT OR Apache-2.0 |
 | unified / remark / mdast utilities | Markdown parsing and serialization | MIT |
