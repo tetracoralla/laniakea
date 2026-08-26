@@ -193,7 +193,7 @@ export function TopBar({
           onClick={onNew}
           type="button"
         >
-          <Icon name="newMindMap" />
+          <Icon name="file" />
           <span className="toolbar-button__label">新建</span>
         </button>
         <span
@@ -211,7 +211,7 @@ export function TopBar({
         </button>
         <button
           aria-label="另存为"
-          className="toolbar-button"
+          className="toolbar-button toolbar-button--wide"
           onClick={onSaveAs}
           type="button"
         >

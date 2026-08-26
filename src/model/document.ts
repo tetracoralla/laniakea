@@ -4,6 +4,30 @@ import type {
   MindNode,
 } from "../types/mindmap";
 
+export const provisionalDocumentTitle = "未命名思维";
+
+export function isProvisionalDocumentTitle(title: string): boolean {
+  const normalized = title.trim();
+  return normalized.length === 0 || normalized === provisionalDocumentTitle;
+}
+
+export function resolveProvisionalDocumentTitle(
+  document: MindMapDocument,
+  titleHint?: string | null,
+): MindMapDocument {
+  if (!isProvisionalDocumentTitle(document.title)) return document;
+
+  const normalizedHint = titleHint?.trim() ?? "";
+  const rootText = document.nodes[document.rootId]?.text.trim() ?? "";
+  const title = !isProvisionalDocumentTitle(normalizedHint)
+    ? normalizedHint
+    : !isProvisionalDocumentTitle(rootText)
+      ? rootText
+      : provisionalDocumentTitle;
+
+  return title === document.title ? document : { ...document, title };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -91,24 +115,20 @@ export function isMindMapDocument(
     }
   }
 
-  const visiting = new Set<string>();
   const visited = new Set<string>();
-  const visit = (id: string): boolean => {
-    if (visiting.has(id)) return false;
-    if (visited.has(id)) return true;
+  const pending = [...rootIds].reverse();
+  while (pending.length > 0) {
+    const id = pending.pop();
+    if (!id || visited.has(id)) continue;
     const node = nodes[id];
     if (!isNode(node, id)) return false;
-    visiting.add(id);
-    if (!node.children.every(visit)) return false;
-    visiting.delete(id);
     visited.add(id);
-    return true;
-  };
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      pending.push(node.children[index]);
+    }
+  }
 
-  return (
-    rootIds.every(visit) &&
-    visited.size === Object.keys(nodes).length
-  );
+  return visited.size === Object.keys(nodes).length;
 }
 
 export function parseMindMapDocument(value: string): MindMapDocument {

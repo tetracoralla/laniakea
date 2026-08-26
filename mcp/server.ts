@@ -5,7 +5,6 @@ import packageManifest from "../package.json";
 import {
   mindMapToAgentView,
   searchAgentMindMap,
-  type AgentMapView,
   type AgentTreeInput,
   type MindMapOperation,
 } from "../src/agent/mindMapTools";
@@ -13,8 +12,17 @@ import {
   createMindMapFile,
   readMindMapFile,
   updateMindMapFile,
-  type LoadedMindMapFile,
 } from "./mindMapFileStore";
+import {
+  assertMcpRequestBudget,
+  MAX_MCP_REQUEST_BYTES,
+} from "./requestBudget";
+import {
+  boundedErrorResult,
+  boundedSnapshotResult,
+  MAX_MCP_RESPONSE_BYTES,
+  snapshotSource,
+} from "./resultEnvelope";
 
 const filePathSchema = z
   .string()
@@ -75,17 +83,60 @@ const nodeViewSchema = z.object({
   text: z.string(),
   childCount: z.number().int(),
   breadcrumb: z.array(z.string()),
+  breadcrumbTruncated: z.boolean(),
+  textTruncated: z.boolean(),
 });
+
+const truncationReasonSchema = z.enum([
+  "max_depth",
+  "max_nodes",
+  "max_results",
+  "response_bytes",
+]);
 
 const snapshotSchema = z.object({
   filePath: z.string(),
   revision: z.string(),
   title: z.string(),
+  titleTruncated: z.boolean(),
   sourceKind: z.enum(["outline", "rich"]),
   canUpdate: z.boolean(),
   nodeCount: z.number().int(),
   nodes: z.array(nodeViewSchema),
+  returnedNodeCount: z.number().int(),
+  responseLimitBytes: z.literal(MAX_MCP_RESPONSE_BYTES),
   truncated: z.boolean(),
+  truncationReasons: z.array(truncationReasonSchema),
+});
+
+const errorPayloadSchema = z.object({
+  code: z.enum([
+    "already_exists",
+    "busy",
+    "conflict",
+    "file_too_large",
+    "invalid_path",
+    "not_found",
+    "invalid_ref",
+    "invalid_operation",
+    "protected_source",
+    "too_deep",
+    "too_large",
+    "permission_denied",
+    "io_error",
+    "request_too_large",
+  ]),
+  message: z.string(),
+  messageTruncated: z.boolean(),
+});
+
+// The current MCP SDK can publish and validate only an object-shaped output
+// schema. Keep one tagged, closed envelope so clients can accept both success
+// and error structuredContent without losing existing top-level success fields.
+const snapshotResultSchema = snapshotSchema.partial().extend({
+  status: z.enum(["ok", "error"]),
+  error: errorPayloadSchema.optional(),
+  responseLimitBytes: z.literal(MAX_MCP_RESPONSE_BYTES),
 });
 
 const readOnlyAnnotations = {
@@ -94,45 +145,6 @@ const readOnlyAnnotations = {
   openWorldHint: false,
   readOnlyHint: true,
 } as const;
-
-function snapshot(
-  loaded: LoadedMindMapFile,
-  view: AgentMapView,
-) {
-  return {
-    filePath: loaded.filePath,
-    revision: loaded.revision,
-    ...view,
-  };
-}
-
-function renderView(view: ReturnType<typeof snapshot>) {
-  const outline = view.nodes.length
-    ? view.nodes
-        .map(
-          (node) =>
-            `${"  ".repeat(node.depth)}- ${node.text || "(empty)"} [${node.ref}]`,
-        )
-        .join("\n")
-    : "No matching nodes.";
-  const suffix = view.truncated ? "\n… result truncated; narrow the read or search." : "";
-  return `${view.title}\nRevision: ${view.revision}\n${outline}${suffix}`;
-}
-
-function successResult(structuredContent: object, text: string) {
-  return {
-    content: [{ type: "text" as const, text }],
-    structuredContent: { ...structuredContent },
-  };
-}
-
-function errorResult(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  return {
-    content: [{ type: "text" as const, text: message }],
-    isError: true,
-  };
-}
 
 export function createLaniakeaServer() {
   const server = new McpServer(
@@ -149,7 +161,7 @@ export function createLaniakeaServer() {
       annotations: readOnlyAnnotations,
       title: "Read a Laniakea mind map",
       description:
-        "Use this when the user wants to inspect or continue working with one explicit Markdown mind map. Returns revision-bound node references for safe follow-up edits; it never scans folders.",
+        `Use this when the user wants to inspect or continue working with one explicit Markdown mind map. Returns revision-bound node references for safe follow-up edits; it never scans folders. Complete request limit: ${MAX_MCP_REQUEST_BYTES} UTF-8 JSON bytes.`,
       inputSchema: z.object({
         filePath: filePathSchema,
         rootRef: z
@@ -160,12 +172,13 @@ export function createLaniakeaServer() {
         maxDepth: z.number().int().min(0).max(64).optional(),
         maxNodes: z.number().int().min(1).max(5_000).optional(),
       }),
-      outputSchema: snapshotSchema,
+      outputSchema: snapshotResultSchema,
     },
     async ({ filePath, rootRef, maxDepth, maxNodes }) => {
       try {
+        assertMcpRequestBudget({ filePath, rootRef, maxDepth, maxNodes });
         const loaded = await readMindMapFile(filePath);
-        const result = snapshot(
+        const result = snapshotSource(
           loaded,
           mindMapToAgentView(loaded.parsed, {
             rootRef,
@@ -173,9 +186,9 @@ export function createLaniakeaServer() {
             maxNodes,
           }),
         );
-        return successResult(result, renderView(result));
+        return boundedSnapshotResult(result);
       } catch (error) {
-        return errorResult(error);
+        return boundedErrorResult(error);
       }
     },
   );
@@ -186,24 +199,25 @@ export function createLaniakeaServer() {
       annotations: readOnlyAnnotations,
       title: "Search a Laniakea mind map",
       description:
-        "Use this to locate nodes by text in one explicit Markdown mind map before editing a large structure. Returns revision-bound references and breadcrumbs.",
+        `Use this to locate nodes by text in one explicit Markdown mind map before editing a large structure. Returns revision-bound references and breadcrumbs. Complete request limit: ${MAX_MCP_REQUEST_BYTES} UTF-8 JSON bytes.`,
       inputSchema: z.object({
         filePath: filePathSchema,
         query: z.string().min(1).max(2_000),
         maxResults: z.number().int().min(1).max(500).optional(),
       }),
-      outputSchema: snapshotSchema,
+      outputSchema: snapshotResultSchema,
     },
     async ({ filePath, query, maxResults }) => {
       try {
+        assertMcpRequestBudget({ filePath, query, maxResults });
         const loaded = await readMindMapFile(filePath);
-        const result = snapshot(
+        const result = snapshotSource(
           loaded,
           searchAgentMindMap(loaded.parsed, query, maxResults),
         );
-        return successResult(result, renderView(result));
+        return boundedSnapshotResult(result);
       } catch (error) {
-        return errorResult(error);
+        return boundedErrorResult(error);
       }
     },
   );
@@ -219,25 +233,26 @@ export function createLaniakeaServer() {
       },
       title: "Create a Laniakea mind map",
       description:
-        "Use this when the user wants a new durable Markdown mind map at an explicit path. Creates only a new file and refuses to overwrite an existing file.",
+        `Use this when the user wants a new durable Markdown mind map at an explicit path. Creates only a new file and refuses to overwrite an existing file. Complete request limit: ${MAX_MCP_REQUEST_BYTES} UTF-8 JSON bytes.`,
       inputSchema: z.object({
         filePath: filePathSchema,
         title: z.string().max(1_000),
         root: treeInputSchema,
       }),
-      outputSchema: snapshotSchema,
+      outputSchema: snapshotResultSchema,
     },
     async ({ filePath, title, root }) => {
       try {
+        assertMcpRequestBudget({ filePath, title, root });
         const loaded = await createMindMapFile(
           filePath,
           title,
           root as AgentTreeInput,
         );
-        const result = snapshot(loaded, mindMapToAgentView(loaded.parsed));
-        return successResult(result, `Created ${loaded.filePath}\n${renderView(result)}`);
+        const result = snapshotSource(loaded, mindMapToAgentView(loaded.parsed));
+        return boundedSnapshotResult(result, `Created ${loaded.filePath}`);
       } catch (error) {
-        return errorResult(error);
+        return boundedErrorResult(error);
       }
     },
   );
@@ -253,7 +268,7 @@ export function createLaniakeaServer() {
       },
       title: "Update a Laniakea mind map",
       description:
-        "Use this to atomically apply one reviewed batch of semantic node changes to an explicit Laniakea outline. Requires the exact revision from read_mind_map or search_mind_map, rejects concurrent changes, and refuses to rewrite rich Markdown.",
+        `Use this to atomically apply one reviewed batch of semantic node changes to an explicit Laniakea outline. Requires the exact revision from read_mind_map or search_mind_map, rejects concurrent changes, and refuses to rewrite rich Markdown. Complete request limit: ${MAX_MCP_REQUEST_BYTES} UTF-8 JSON bytes.`,
       inputSchema: z.object({
         filePath: filePathSchema,
         expectedRevision: z.string().startsWith("sha256:"),
@@ -263,13 +278,19 @@ export function createLaniakeaServer() {
           .describe("When true, validate and preview the result without writing the file."),
         operations: z.array(operationSchema).min(1).max(100),
       }),
-      outputSchema: snapshotSchema.extend({
-        wrote: z.boolean(),
-        appliedOperationCount: z.number().int(),
+      outputSchema: snapshotResultSchema.extend({
+        wrote: z.boolean().optional(),
+        appliedOperationCount: z.number().int().optional(),
       }),
     },
     async ({ filePath, expectedRevision, dryRun, operations }) => {
       try {
+        assertMcpRequestBudget({
+          filePath,
+          expectedRevision,
+          dryRun,
+          operations,
+        });
         const updated = await updateMindMapFile(
           filePath,
           expectedRevision,
@@ -277,14 +298,14 @@ export function createLaniakeaServer() {
           dryRun,
         );
         const result = {
-          ...snapshot(updated, mindMapToAgentView(updated.parsed)),
+          ...snapshotSource(updated, mindMapToAgentView(updated.parsed)),
           wrote: updated.wrote,
           appliedOperationCount: operations.length,
         };
         const prefix = updated.wrote ? "Updated" : "Dry-run preview for";
-        return successResult(result, `${prefix} ${updated.filePath}\n${renderView(result)}`);
+        return boundedSnapshotResult(result, `${prefix} ${updated.filePath}`);
       } catch (error) {
-        return errorResult(error);
+        return boundedErrorResult(error);
       }
     },
   );

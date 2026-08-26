@@ -76,6 +76,33 @@ describe("Markdown import and export", () => {
     ).toEqual(["使用场景", "核心体验", "实现路径", "第一版边界"]);
   });
 
+  it("treats an untitled heading as provisional when a file has a meaningful name", () => {
+    const first = parseMarkdownDocument(
+      "# 未命名思维\n\n- 123\n  - 二级节点\n",
+      "未命名思维123",
+    );
+    const second = parseMarkdownDocument(
+      "# 未命名思维\n\n- 产品结构梳理\n  - 登录注册\n",
+      "产品结构梳理",
+    );
+
+    expect(first.document.title).toBe("未命名思维123");
+    expect(first.document.nodes[first.document.rootId].text).toBe("123");
+    expect(second.document.title).toBe("产品结构梳理");
+    expect(second.document.nodes[second.document.rootId].text).toBe(
+      "产品结构梳理",
+    );
+  });
+
+  it("keeps a meaningful Markdown heading authoritative over the file name", () => {
+    const parsed = parseMarkdownDocument(
+      "# 正式标题\n\n- 中心主题\n",
+      "不同的文件名",
+    );
+
+    expect(parsed.document.title).toBe("正式标题");
+  });
+
   it("round-trips empty nodes without turning placeholders into content", () => {
     const source = createBlankDocument();
     const child = {

@@ -12,7 +12,10 @@ import remarkParse from "remark-parse";
 import remarkStringify from "remark-stringify";
 import { unified } from "unified";
 import { createBlankDocument } from "../data/seed";
-import { topLevelRootIds } from "./document";
+import {
+  resolveProvisionalDocumentTitle,
+  topLevelRootIds,
+} from "./document";
 import type { MindMapDocument, MindNode } from "../types/mindmap";
 
 const markdownProcessor = unified()
@@ -137,20 +140,23 @@ export function subtreeToMarkdown(
   rootId = document.rootId,
 ): string {
   const lines: string[] = [];
-
-  const visit = (id: string, depth: number) => {
+  const pending = [{ id: rootId, depth: 0 }];
+  while (pending.length > 0) {
+    const frame = pending.pop();
+    if (!frame) continue;
+    const { id, depth } = frame;
     const node = document.nodes[id];
-    if (!node) return;
+    if (!node) continue;
     const indent = "  ".repeat(depth);
     const textLines = safeNodeText(node);
     lines.push(`${indent}- ${textLines[0]}`);
     textLines.slice(1).forEach((line) => {
       lines.push(`${indent}  ${line}`);
     });
-    node.children.forEach((childId) => visit(childId, depth + 1));
-  };
-
-  visit(rootId, 0);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      pending.push({ id: node.children[index], depth: depth + 1 });
+    }
+  }
   return lines.join("\n");
 }
 
@@ -183,17 +189,24 @@ function isPlainParagraph(node: RootContent | undefined): node is Paragraph {
 }
 
 function isSafeOutlineList(list: List): boolean {
-  return list.children.every((item) => {
-    if (item.checked !== null && item.checked !== undefined) return false;
-    const first = item.children[0];
-    if (!first) return true;
-    const structuralChildren =
-      first.type === "list" ? item.children : item.children.slice(1);
-    if (first.type !== "list" && !isPlainParagraph(first)) return false;
-    return structuralChildren.every(
-      (child) => child.type === "list" && isSafeOutlineList(child),
-    );
-  });
+  const pending = [list];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    for (const item of current.children) {
+      if (item.checked !== null && item.checked !== undefined) return false;
+      const first = item.children[0];
+      if (!first) continue;
+      const structuralChildren =
+        first.type === "list" ? item.children : item.children.slice(1);
+      if (first.type !== "list" && !isPlainParagraph(first)) return false;
+      for (const child of structuralChildren) {
+        if (child.type !== "list") return false;
+        pending.push(child);
+      }
+    }
+  }
+  return true;
 }
 
 function outlineParts(root: Root): {
@@ -243,18 +256,43 @@ function appendListItem(
   preferredId?: string,
 ): string {
   const id = addNode(builder, listItemText(item), parentId, preferredId);
-  const first = item.children[0];
-  const structuralChildren =
-    first?.type === "list" ? item.children : item.children.slice(1);
-  structuralChildren.forEach((child) => {
-    if (child.type === "list") {
-      child.children.forEach((nested) =>
-        appendListItem(builder, nested, id),
-      );
-    } else {
-      addNode(builder, blockLabel(child), id);
+  type AppendTask =
+    | { item: ListItem; parentId: string; type: "item" }
+    | { block: RootContent; parentId: string; type: "block" };
+  const pending: AppendTask[] = [];
+  const enqueueChildren = (current: ListItem, currentId: string) => {
+    const first = current.children[0];
+    const structuralChildren =
+      first?.type === "list" ? current.children : current.children.slice(1);
+    const tasks: AppendTask[] = [];
+    structuralChildren.forEach((child) => {
+      if (child.type === "list") {
+        child.children.forEach((nested) => {
+          tasks.push({ type: "item", item: nested, parentId: currentId });
+        });
+      } else {
+        tasks.push({ type: "block", block: child, parentId: currentId });
+      }
+    });
+    for (let index = tasks.length - 1; index >= 0; index -= 1) {
+      pending.push(tasks[index]);
     }
-  });
+  };
+  enqueueChildren(item, id);
+  while (pending.length > 0) {
+    const task = pending.pop();
+    if (!task) continue;
+    if (task.type === "block") {
+      addNode(builder, blockLabel(task.block), task.parentId);
+      continue;
+    }
+    const childId = addNode(
+      builder,
+      listItemText(task.item),
+      task.parentId,
+    );
+    enqueueChildren(task.item, childId);
+  }
   return id;
 }
 
@@ -269,11 +307,14 @@ function documentFromOutlineList(
   const floatingRootIds = remaining.map((item) =>
     appendListItem(builder, item, null),
   );
-  return finishDocument(
-    builder,
-    rootId,
-    markdownTitle ?? titleHint ?? builder.nodes[rootId].text,
-    floatingRootIds,
+  return resolveProvisionalDocumentTitle(
+    finishDocument(
+      builder,
+      rootId,
+      markdownTitle ?? titleHint ?? builder.nodes[rootId].text,
+      floatingRootIds,
+    ),
+    titleHint,
   );
 }
 
@@ -363,10 +404,13 @@ function documentFromRichMarkdown(
     addNode(builder, blockLabel(child), currentSectionId);
   });
 
-  return finishDocument(
-    builder,
-    rootId,
-    first ? toString(first.heading) : titleHint,
+  return resolveProvisionalDocumentTitle(
+    finishDocument(
+      builder,
+      rootId,
+      first ? toString(first.heading) : titleHint,
+    ),
+    titleHint,
   );
 }
 
@@ -442,8 +486,10 @@ export function parseMarkdownDocument(
   title = "导入的思维",
 ): MarkdownParseResult {
   if (!markdown.trim()) {
-    const document = createBlankDocument();
-    document.title = title;
+    const document = resolveProvisionalDocumentTitle(
+      { ...createBlankDocument(), title },
+      title,
+    );
     return {
       document,
       canOverwriteSource: true,

@@ -18,6 +18,15 @@ export async function listenForApplicationExit(
   }
 }
 
+export async function listenForWindowFocusChange(
+  handler: (focused: boolean) => void,
+): Promise<UnlistenFn> {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  return getCurrentWindow().onFocusChanged(({ payload }) => {
+    handler(payload);
+  });
+}
+
 export async function resolveApplicationExit(
   saved: boolean,
 ): Promise<void> {

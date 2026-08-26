@@ -23,6 +23,7 @@ const mapPath = join(workspace, "launch-plan.md");
 const richPath = join(workspace, "rich-source.md");
 const concurrentPath = join(workspace, "concurrent.md");
 const largePath = join(workspace, "large.md");
+const oversizedRequestPath = join(workspace, "oversized-request.md");
 const transport = new StdioClientTransport({
   args: ["./server/index.mjs"],
   command: process.execPath,
@@ -141,6 +142,8 @@ try {
     },
   });
   assert.equal(stale.isError, true);
+  assert.equal(stale.structuredContent?.status, "error");
+  assert.equal(stale.structuredContent?.error?.code, "conflict");
   assert.doesNotMatch(await readFile(mapPath, "utf8"), /Stale overwrite/);
 
   await writeFile(
@@ -162,6 +165,7 @@ try {
     },
   });
   assert.equal(richUpdate.isError, true);
+  assert.equal(richUpdate.structuredContent?.error?.code, "protected_source");
   assert.match(await readFile(richPath, "utf8"), /Keep me/);
 
   const duplicateCreate = await client.callTool({
@@ -173,6 +177,7 @@ try {
     },
   });
   assert.equal(duplicateCreate.isError, true);
+  assert.equal(duplicateCreate.structuredContent?.error?.code, "already_exists");
 
   let tooDeepRoot = { text: "Leaf" };
   for (let depth = 0; depth < 3_000; depth += 1) {
@@ -187,7 +192,30 @@ try {
     },
   });
   assert.equal(tooDeep.isError, true);
+  assert.equal(tooDeep.structuredContent?.error?.code, "too_deep");
   assert.match(tooDeep.content?.[0]?.text ?? "", /64 levels/);
+
+  const oversizedRequest = await client.callTool({
+    name: "create_mind_map",
+    arguments: {
+      filePath: oversizedRequestPath,
+      title: "Oversized request",
+      root: {
+        text: "Root",
+        children: Array.from({ length: 700 }, () => ({
+          text: "x".repeat(1_000),
+        })),
+      },
+    },
+  });
+  assert.equal(oversizedRequest.isError, true);
+  assert.equal(
+    oversizedRequest.structuredContent?.error?.code,
+    "request_too_large",
+  );
+  await assert.rejects(readFile(oversizedRequestPath, "utf8"), {
+    code: "ENOENT",
+  });
 
   await writeFile(
     largePath,
@@ -211,6 +239,25 @@ try {
   assert.equal(
     completeSearch.structuredContent?.nodes?.[0]?.text,
     "Needle after limit",
+  );
+
+  const boundedRead = await client.callTool({
+    name: "read_mind_map",
+    arguments: { filePath: largePath, maxDepth: 2, maxNodes: 5_000 },
+  });
+  const responseLimitBytes = boundedRead.structuredContent?.responseLimitBytes;
+  assert.equal(responseLimitBytes, 256 * 1024);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(boundedRead), "utf8") <= responseLimitBytes,
+    "complete MCP tool result exceeded its declared response byte limit",
+  );
+  assert.ok(
+    boundedRead.structuredContent?.truncationReasons?.includes("response_bytes"),
+    "large read did not disclose response-byte truncation",
+  );
+  assert.ok(
+    boundedRead.structuredContent?.returnedNodeCount < 5_000,
+    "large read did not reduce the structured node payload",
   );
 
   for (let round = 0; round < 40; round += 1) {
@@ -255,7 +302,7 @@ try {
   }
 
   console.log(
-    "MCP runtime check passed: discovery, complete large-map search, depth guard, create/read/search, dry-run, atomic update, 40-round cross-process serialization, stale conflict, rich-source protection, and no-overwrite create.",
+    "MCP runtime check passed: discovery, cumulative request and response budgets, stable structured errors, complete large-map search, depth guard, create/read/search, dry-run, atomic update, 40-round cross-process serialization, stale conflict, rich-source protection, and no-overwrite create.",
   );
 } finally {
   await concurrentClient.close().catch(() => undefined);

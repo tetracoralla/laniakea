@@ -35,7 +35,7 @@
 
 ## Agent 与 Codex Plugin
 
-Laniakea 也可以成为 Agent 与人共同维护的结构化思考界面。Codex 插件能够读取、搜索、新建和安全更新同一份 Markdown 思维导图；更新带有版本冲突保护，也不会把富 Markdown 静默改写成普通大纲。
+Laniakea 也可以成为 Agent 与人共同维护的结构化思考界面。Codex 插件能够读取、搜索、新建和安全更新同一份 Markdown 思维导图；更新带有版本冲突保护，也不会把富 Markdown 静默改写成普通大纲。工具错误提供可机器判断的 code，完整结果有 256 KiB 上下文预算；大型结构会明确截断并引导 Agent 按分支或搜索继续读取。
 
 <details>
 <summary>为 Codex 添加 Laniakea</summary>

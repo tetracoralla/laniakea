@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { LayoutResult } from "../types/mindmap";
 import {
+  canvasPointToContent,
+  contentPointToCanvas,
+  marqueeAutoPanVelocity,
   nodesInsideMarquee,
   passedDragThreshold,
   rectFromPoints,
@@ -56,5 +59,39 @@ describe("marquee geometry", () => {
       { left: 115, top: 20, width: 20, height: 12 },
     );
     expect(selected).toEqual(["a"]);
+  });
+
+  it("ramps marquee auto-pan near an edge and caps it outside the canvas", () => {
+    const canvas = { width: 1200, height: 900 };
+
+    expect(marqueeAutoPanVelocity({ x: 600, y: 450 }, canvas)).toEqual({
+      x: 0,
+      y: 0,
+    });
+    expect(
+      marqueeAutoPanVelocity({ x: 1164, y: 450 }, canvas).x,
+    ).toBeCloseTo(105, 6);
+    expect(
+      marqueeAutoPanVelocity({ x: 1300, y: -100 }, canvas),
+    ).toEqual({ x: 420, y: -420 });
+  });
+
+  it("keeps a marquee anchor attached to its content while the viewport pans", () => {
+    const viewport = { x: -120, y: 80, zoom: 0.75 };
+    const contentPoint = canvasPointToContent(
+      { x: 180, y: 230 },
+      viewport,
+    );
+
+    expect(contentPointToCanvas(contentPoint, viewport)).toEqual({
+      x: 180,
+      y: 230,
+    });
+    expect(
+      contentPointToCanvas(contentPoint, {
+        ...viewport,
+        x: viewport.x - 40,
+      }),
+    ).toEqual({ x: 140, y: 230 });
   });
 });

@@ -1,14 +1,15 @@
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type Dispatch,
-  type RefObject,
   type SetStateAction,
 } from "react";
-import type { CanvasHandle } from "../components/canvas/MindMapCanvas";
+import { listenForWindowFocusChange } from "../desktop/applicationLifecycle";
 import { isBlankMindMapDocument } from "../model/document";
 import { parseMarkdownDocument } from "../model/markdown";
+import { isDesktopRuntime } from "../persistence/localDocumentStore";
 import { singleSelection } from "../model/selection";
 import {
   attachSubtree,
@@ -28,7 +29,6 @@ import type {
 interface EditorSessionOptions {
   document: MindMapDocument;
   selection: SelectionState;
-  canvasRef: RefObject<CanvasHandle | null>;
   applyMutation: (
     mutate: (current: EditorSnapshot) => DocumentMutation,
   ) => void;
@@ -40,6 +40,7 @@ interface EditorSessionOptions {
 interface EditorSession {
   editingId: string | null;
   draft: string;
+  fitRequest: number;
   setEditingId: Dispatch<SetStateAction<string | null>>;
   setDraft: Dispatch<SetStateAction<string>>;
   beginEdit: (id: string, replacement?: string) => void;
@@ -52,7 +53,11 @@ interface EditorSession {
     id: string,
     position: { x: number; y: number },
   ) => void;
-  attachNodeToParent: (id: string, parentId: string) => void;
+  attachNodeToParent: (
+    id: string,
+    parentId: string,
+    position: number,
+  ) => void;
   editSelectedFromSpace: () => void;
   pasteStructuredIntoBlankRoot: (id: string, value: string) => boolean;
 }
@@ -60,17 +65,39 @@ interface EditorSession {
 export function useEditorSession({
   document,
   selection,
-  canvasRef,
   applyMutation,
   selectNode,
   notify,
   undo,
 }: EditorSessionOptions): EditorSession {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  const [editingId, setEditingIdState] = useState<string | null>(null);
+  const [draft, setDraftState] = useState("");
+  const [fitRequest, setFitRequest] = useState(0);
+  const editingIdRef = useRef<string | null>(null);
+  const draftRef = useRef("");
   const cancelledEdit = useRef<string | null>(null);
   const documentRef = useRef(document);
   documentRef.current = document;
+  editingIdRef.current = editingId;
+  draftRef.current = draft;
+
+  const setEditingId = useCallback<Dispatch<SetStateAction<string | null>>>(
+    (next) => {
+      const value =
+        typeof next === "function" ? next(editingIdRef.current) : next;
+      editingIdRef.current = value;
+      setEditingIdState(value);
+    },
+    [],
+  );
+  const setDraft = useCallback<Dispatch<SetStateAction<string>>>(
+    (next) => {
+      const value = typeof next === "function" ? next(draftRef.current) : next;
+      draftRef.current = value;
+      setDraftState(value);
+    },
+    [],
+  );
 
   const beginEdit = useCallback(
     (id: string, replacement?: string) => {
@@ -90,20 +117,16 @@ export function useEditorSession({
     setDraft("");
   }, []);
 
-  const finishDocumentSwitch = useCallback(
-    (fitContent: boolean) => {
-      cancelledEdit.current = null;
-      setEditingId(null);
-      setDraft("");
-      if (fitContent) {
-        window.setTimeout(() => canvasRef.current?.fit(), 0);
-      }
-    },
-    [canvasRef],
-  );
+  const finishDocumentSwitch = useCallback((fitContent: boolean) => {
+    cancelledEdit.current = null;
+    setEditingId(null);
+    setDraft("");
+    if (fitContent) setFitRequest((current) => current + 1);
+  }, []);
 
   const commitEdit = useCallback(
     (id: string, value: string) => {
+      if (editingIdRef.current !== id) return;
       if (cancelledEdit.current === id) {
         cancelledEdit.current = null;
         return;
@@ -119,7 +142,59 @@ export function useEditorSession({
     [applyMutation],
   );
 
+  useEffect(() => {
+    if (!editingId) return;
+    let active = true;
+    let unlistenNativeFocus: (() => void) | undefined;
+    const finishEditingForFocusLoss = () => {
+      const id = editingIdRef.current;
+      if (!id) return;
+      const activeElement = globalThis.document.activeElement;
+      if (
+        activeElement instanceof HTMLTextAreaElement &&
+        activeElement.classList.contains("mind-node__editor")
+      ) {
+        commitEdit(id, activeElement.value);
+        return;
+      }
+      commitEdit(id, draftRef.current);
+    };
+    const handleVisibilityChange = () => {
+      if (globalThis.document.visibilityState === "hidden") {
+        finishEditingForFocusLoss();
+      }
+    };
+    const handleWindowBlur = () => finishEditingForFocusLoss();
+
+    globalThis.window.addEventListener("blur", handleWindowBlur);
+    globalThis.document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange,
+    );
+    if (isDesktopRuntime()) {
+      void listenForWindowFocusChange((focused) => {
+        if (active && !focused) finishEditingForFocusLoss();
+      })
+        .then((unlisten) => {
+          if (active) unlistenNativeFocus = unlisten;
+          else unlisten();
+        })
+        .catch(() => undefined);
+    }
+
+    return () => {
+      active = false;
+      unlistenNativeFocus?.();
+      globalThis.window.removeEventListener("blur", handleWindowBlur);
+      globalThis.document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+      );
+    };
+  }, [commitEdit, editingId]);
+
   const cancelEdit = useCallback((id: string) => {
+    if (editingIdRef.current !== id) return;
     cancelledEdit.current = id;
     setEditingId((editing) => (editing === id ? null : editing));
   }, []);
@@ -157,17 +232,32 @@ export function useEditorSession({
   );
 
   const attachNodeToParent = useCallback(
-    (id: string, parentId: string) => {
+    (id: string, parentId: string, position: number) => {
       const currentDocument = documentRef.current;
-      if (currentDocument.nodes[id]?.parentId === parentId) return;
+      const current = currentDocument.nodes[id];
+      const parent = currentDocument.nodes[parentId];
+      if (!current || !parent) return;
+      const siblings = parent.children.filter((childId) => childId !== id);
+      const insertAt = Math.max(0, Math.min(position, siblings.length));
+      siblings.splice(insertAt, 0, id);
+      const unchanged =
+        current.parentId === parentId &&
+        !parent.collapsed &&
+        siblings.every(
+          (childId, index) => parent.children[index] === childId,
+        );
+      if (unchanged) return;
       const parentText = currentDocument.nodes[parentId]?.text;
       applyMutation((current) =>
-        attachSubtree(current.document, id, parentId),
+        attachSubtree(current.document, id, parentId, insertAt),
       );
       notify({
-        message: parentText
-          ? `已移入“${parentText}”`
-          : "已移入新的父节点",
+        message:
+          current.parentId === parentId
+            ? "已调整同级顺序"
+            : parentText
+              ? `已移入“${parentText}”`
+              : "已移入新的父节点",
         actionLabel: "撤销",
         onAction: undo,
       });
@@ -202,15 +292,16 @@ export function useEditorSession({
         selection: singleSelection(parsed.document.rootId),
       }));
       notify({ message: "已从 Markdown 生成思维导图" });
-      window.setTimeout(() => canvasRef.current?.fit(), 0);
+      setFitRequest((current) => current + 1);
       return true;
     },
-    [applyMutation, canvasRef, notify],
+    [applyMutation, notify],
   );
 
   return {
     editingId,
     draft,
+    fitRequest,
     setEditingId,
     setDraft,
     beginEdit,

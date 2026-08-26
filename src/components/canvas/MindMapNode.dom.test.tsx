@@ -200,6 +200,81 @@ describe("node editor input method handling", () => {
     focus.mockRestore();
   });
 
+  it("keeps existing text visible while an input-method composition is pending", async () => {
+    const mindMapDocument = createBlankDocument();
+    const node = mindMapDocument.nodes[mindMapDocument.rootId];
+    const layout = computeLayout(mindMapDocument).nodes[mindMapDocument.rootId];
+    const onDraftChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <MindMapNode
+          draft="已有文字"
+          dragging={false}
+          dropTarget={false}
+          editing
+          layout={layout}
+          node={node}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDraftChange={onDraftChange}
+          onDragPointerDown={() => undefined}
+          onPasteStructured={() => false}
+          onSelect={() => undefined}
+          onToggle={() => undefined}
+          primary
+          selected
+        />,
+      );
+    });
+
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "textarea[aria-label='编辑节点']",
+    )!;
+    const nodeElement = container.querySelector<HTMLElement>(".mind-node")!;
+    const initialHeight = editor.style.height;
+    const initialNodeWidth = nodeElement.style.width;
+    Object.defineProperties(editor, {
+      clientWidth: { configurable: true, get: () => 120 },
+      scrollWidth: { configurable: true, get: () => 260 },
+    });
+    editor.scrollLeft = 80;
+    await act(async () => {
+      editor.dispatchEvent(
+        new CompositionEvent("compositionstart", { bubbles: true }),
+      );
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(editor, "已有文字 zhong wen shu ru fa");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(editor.style.height).toBe(initialHeight);
+    expect(editor.value).toBe("已有文字 zhong wen shu ru fa");
+    expect(editor.dataset.composing).toBe("true");
+    expect(editor.style.width).toBe("260px");
+    expect(editor.scrollLeft).toBe(0);
+    expect(nodeElement.style.width).toBe(initialNodeWidth);
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(editor, "已有文字 中文输入法");
+      editor.dispatchEvent(
+        new CompositionEvent("compositionend", { bubbles: true }),
+      );
+    });
+
+    expect(onDraftChange).toHaveBeenCalledOnce();
+    expect(onDraftChange).toHaveBeenCalledWith("已有文字 中文输入法");
+    expect(editor.dataset.composing).toBeUndefined();
+    expect(editor.style.width).toBe("");
+  });
+
   it("keeps an end-of-text caret visible after editor height fitting", async () => {
     const mindMapDocument = createBlankDocument();
     const node = mindMapDocument.nodes[mindMapDocument.rootId];

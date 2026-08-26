@@ -112,6 +112,7 @@ export function App() {
   const {
     editingId,
     draft,
+    fitRequest,
     setEditingId,
     setDraft,
     beginEdit,
@@ -127,7 +128,6 @@ export function App() {
   } = useEditorSession({
     document: mindMap,
     selection,
-    canvasRef,
     applyMutation,
     selectNode,
     notify,
@@ -342,6 +342,7 @@ export function App() {
         document={mindMap}
         draft={draft}
         editingId={editingId}
+        fitRequest={fitRequest}
         onBeginEdit={beginEdit}
         onCancelEdit={cancelEdit}
         onCommitEdit={commitEdit}

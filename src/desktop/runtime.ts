@@ -4,6 +4,7 @@ import { isDesktopRuntime } from "../persistence/localDocumentStore";
 export interface DesktopRuntimeStatus {
   globalShortcutRegistered: boolean;
   globalShortcut: string;
+  windowFocused: boolean;
 }
 
 export async function readDesktopRuntimeStatus(): Promise<DesktopRuntimeStatus | null> {

@@ -1,10 +1,14 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { parseMindMapDocument } from "../model/document";
+import {
+  parseMindMapDocument,
+  resolveProvisionalDocumentTitle,
+} from "../model/document";
 import {
   documentToMarkdown,
   parseMarkdownDocument,
 } from "../model/markdown";
 import type { MindMapDocument } from "../types/mindmap";
+import { isInternalDocumentPath } from "./recentDocuments";
 import {
   activateBrowserDocument,
   BrowserDocumentConflictError,
@@ -121,7 +125,10 @@ export function isMarkdownDocumentPath(path: string | null): boolean {
 
 function titleFromPath(path: string | null): string {
   const fileName = path?.split(/[\\/]/).pop() ?? "导入的思维";
-  return fileName.replace(/\.(md|markdown|txt)$/i, "");
+  const title = fileName.replace(/\.(md|markdown|txt)$/i, "");
+  return isInternalDocumentPath(path ?? "") && /^未命名思维-\d+$/.test(title)
+    ? "未命名思维"
+    : title;
 }
 
 async function parseBackendDocument(
@@ -151,7 +158,10 @@ async function parseBackendDocument(
     let viewStateRestored = false;
     if (loaded.document) {
       try {
-        document = parseMindMapDocument(loaded.document);
+        document = resolveProvisionalDocumentTitle(
+          parseMindMapDocument(loaded.document),
+          titleFromPath(loaded.documentPath),
+        );
         viewStateRestored = true;
       } catch {
         // The Markdown source remains authoritative if its local view cache
@@ -173,7 +183,10 @@ async function parseBackendDocument(
   }
 
   const nativeDocument = loaded.document
-    ? parseMindMapDocument(loaded.document)
+    ? resolveProvisionalDocumentTitle(
+        parseMindMapDocument(loaded.document),
+        titleFromPath(loaded.documentPath),
+      )
     : null;
   const openingLegacyNativeFile = Boolean(
     nativeDocument && loaded.documentPath,

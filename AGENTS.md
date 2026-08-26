@@ -1,4 +1,12 @@
-# 原点仓库指引
+# Laniakea 仓库指引
+
+修改或审查产品前，先读 `docs/product-model.md`、
+`docs/agent-tool-model.md` 与 `docs/REVIEW_CONTRACT.md`。
+
+用户只说 review、audit、审核或复核，就自动以只读方式执行完整审查契约；若
+用户同时要求修复，再保留初始发现、施工并重新审查。契约是最低范围而非上限，
+最终必须列出 `tools-dev workspace escalations`，承接共享契约、安装态或资源风险；
+不得要求用户另行粘贴审查清单。
 
 ## 验证与验收分工
 
@@ -22,4 +30,3 @@
 - 同一任务内若 Agent 同时修改需求文档、断言、fixture、snapshot、期望值或
   检查脚本，绿灯只是候选结果；必须说明期望值来自现有产品要求、真实运行状态
   还是本次明确的用户决定。
-

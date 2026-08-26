@@ -640,7 +640,7 @@ describe("mind map save presentation", () => {
       async (_document, path, _expectedHash, protectedSourcePath) => {
         if (path === sourcePath && protectedSourcePath === sourcePath) {
           throw new Error(
-            "这个文件包含原点无法完整保留的 Markdown 内容，请另存到其他位置。",
+            "这个文件包含 Laniakea 无法完整保留的 Markdown 内容，请另存到其他位置。",
           );
         }
         return { sourceHash: "recovery-hash" };
@@ -867,8 +867,8 @@ describe("mind map save presentation", () => {
 
   it("turns Save As into a move only for the current internal draft", async () => {
     const internalPath =
-      "/Users/adam/Library/Application Support/com.openadam.origin/drafts/想法.md";
-    const targetPath = "/Users/adam/Documents/想法.md";
+      "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/想法.md";
+    const targetPath = "/Volumes/Workspace/Documents/想法.md";
     const internalDocument = createSeedDocument();
     persistence.desktopRuntime = true;
     persistence.loadLocalDocument.mockResolvedValueOnce({
@@ -987,8 +987,8 @@ describe("mind map save presentation", () => {
 
   it("moves an inactive internal draft without switching the current document", async () => {
     const internalPath =
-      "/Users/adam/Library/Application Support/com.openadam.origin/drafts/旧想法.md";
-    const targetPath = "/Users/adam/Documents/旧想法.md";
+      "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/旧想法.md";
+    const targetPath = "/Volumes/Workspace/Documents/旧想法.md";
     localStorage.setItem(
       "origin.recent-documents.v1",
       JSON.stringify([

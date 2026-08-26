@@ -18,8 +18,10 @@ import {
 import {
   applyDraftWidth,
   computeLayout,
+  mainBranchAnchorForCollapseTransition,
   shareStableLayout,
   sizeForNode,
+  stabilizeMainBranchAnchor,
 } from "../../model/layout";
 import {
   singleSelection,
@@ -36,8 +38,10 @@ import {
   visibleLayoutNodeIds,
 } from "../../model/viewportCulling";
 import {
+  canvasZoomToFit,
   canvasZoomFromWheel,
   clampCanvasZoom,
+  minCanvasZoom,
 } from "../../model/zoom";
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
@@ -57,6 +61,7 @@ interface MindMapCanvasProps {
   selection: SelectionState;
   editingId: string | null;
   draft: string;
+  fitRequest?: number;
   onSelectionChange: (selection: SelectionState) => void;
   onBeginEdit: (id: string) => void;
   onSpaceTap: () => void;
@@ -65,7 +70,11 @@ interface MindMapCanvasProps {
   onCommitEdit: (id: string, value: string) => void;
   onCancelEdit: (id: string) => void;
   onToggle: (id: string) => void;
-  onAttachNode: (id: string, parentId: string) => void;
+  onAttachNode: (
+    id: string,
+    parentId: string,
+    position: number,
+  ) => void;
   onDetachNode: (
     id: string,
     position: { x: number; y: number },
@@ -81,6 +90,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       selection,
       editingId,
       draft,
+      fitRequest = 0,
       onSelectionChange,
       onBeginEdit,
       onSpaceTap,
@@ -99,6 +109,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
     const dragPreviewRef = useRef<HTMLDivElement>(null);
+    const dragConnectorPreviewRef = useRef<SVGPathElement>(null);
     const persistTimer = useRef<number | null>(null);
     const viewportFrame = useRef<number | null>(null);
     const liveViewport = useRef(document.viewport);
@@ -109,6 +120,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       width: number;
     } | null>(null);
     const previousLayoutRef = useRef<LayoutResult | null>(null);
+    const previousDocumentRef = useRef<MindMapDocument | null>(null);
+    const handledFitRequestRef = useRef(0);
+    const fitSelectionRevealGuardRef = useRef<{
+      layout: LayoutResult;
+      selection: SelectionState;
+    } | null>(null);
     const draftHeightLayoutRef = useRef<{
       base: LayoutResult;
       editingId: string;
@@ -129,15 +146,28 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     containerSizeRef.current = containerSize;
     const documentLayout = useMemo(
       () => {
+        const computed = computeLayout(document);
+        const collapseTransition = mainBranchAnchorForCollapseTransition(
+          previousDocumentRef.current,
+          document,
+        );
         const next = shareStableLayout(
           previousLayoutRef.current,
-          computeLayout(document),
+          stabilizeMainBranchAnchor(
+            previousLayoutRef.current,
+            computed,
+            document,
+            collapseTransition,
+          ),
         );
-        previousLayoutRef.current = next;
         return next;
       },
       [document.floatingRoots, document.nodes, document.rootId],
     );
+    useLayoutEffect(() => {
+      previousDocumentRef.current = document;
+      previousLayoutRef.current = documentLayout;
+    }, [document, documentLayout]);
     const editingLayout = editingId
       ? documentLayout.nodes[editingId]
       : undefined;
@@ -196,13 +226,13 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
 
     const renderViewport = useCallback((next: Viewport) => {
       liveViewport.current = next;
-      if (contentRef.current) {
-        contentRef.current.style.transform = `translate3d(${next.x}px, ${next.y}px, 0) scale(${next.zoom})`;
-      }
       if (viewportFrame.current === null) {
         viewportFrame.current = window.requestAnimationFrame(() => {
           viewportFrame.current = null;
           const live = liveViewport.current;
+          if (contentRef.current) {
+            contentRef.current.style.transform = `translate3d(${live.x}px, ${live.y}px, 0) scale(${live.zoom})`;
+          }
           if (
             !viewportNeedsRenderWindowRefresh(
               renderViewportStateRef.current,
@@ -281,7 +311,6 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       panModifierHeld,
       bindings,
     } = useCanvasGestures({
-      containerRef,
       layout,
       selection,
       editingId,
@@ -297,8 +326,11 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       bindings: nodeDragBindings,
       draggingId,
       dropTargetId,
+      dropPosition,
+      dropIntent,
     } = useNodeDrag({
       containerRef,
+      connectorPreviewRef: dragConnectorPreviewRef,
       previewRef: dragPreviewRef,
       panModifierHeld,
       document,
@@ -353,10 +385,13 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const zoomAtCenter = (nextZoom: number) => {
       const bounds = containerRef.current?.getBoundingClientRect();
       if (!bounds) return;
-      const clamped = clampCanvasZoom(nextZoom);
+      const current = liveViewport.current;
+      const clamped = clampCanvasZoom(
+        nextZoom,
+        Math.min(current.zoom, minCanvasZoom),
+      );
       const centerX = bounds.width / 2;
       const centerY = bounds.height / 2;
-      const current = liveViewport.current;
       const contentX = (centerX - current.x) / current.zoom;
       const contentY = (centerY - current.y) / current.zoom;
       onZoomPreview?.(clamped);
@@ -367,17 +402,14 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       });
     };
 
-    const fit = () => {
+    const fit = useCallback(() => {
       const bounds = containerRef.current?.getBoundingClientRect();
       if (!bounds) return;
-      const paddingX = 112;
-      const paddingY = 96;
-      const zoom = clampCanvasZoom(
-        Math.min(
-          1,
-          (bounds.width - paddingX * 2) / layout.width,
-          (bounds.height - paddingY * 2) / layout.height,
-        ),
+      const zoom = canvasZoomToFit(
+        layout.width,
+        layout.height,
+        bounds.width,
+        bounds.height,
       );
       onZoomPreview?.(zoom);
       onViewportChange({
@@ -385,7 +417,19 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         x: (bounds.width - layout.width * zoom) / 2,
         y: (bounds.height - layout.height * zoom) / 2,
       });
-    };
+    }, [layout, onViewportChange, onZoomPreview]);
+
+    useLayoutEffect(() => {
+      if (
+        fitRequest <= 0 ||
+        handledFitRequestRef.current === fitRequest
+      ) {
+        return;
+      }
+      handledFitRequestRef.current = fitRequest;
+      fitSelectionRevealGuardRef.current = { layout, selection };
+      fit();
+    }, [fit, fitRequest, layout, selection]);
 
     const focusSelected = () => {
       const bounds = containerRef.current?.getBoundingClientRect();
@@ -423,7 +467,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           });
         },
       }),
-      [layout, onZoomPreview, selection.primaryId, viewport],
+      [fit, layout, onZoomPreview, selection.primaryId, viewport],
     );
 
     useLayoutEffect(() => {
@@ -491,6 +535,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     );
 
     useEffect(() => {
+      const fitGuard = fitSelectionRevealGuardRef.current;
+      if (fitGuard?.layout === layout && fitGuard.selection === selection) {
+        fitSelectionRevealGuardRef.current = null;
+        return;
+      }
+      fitSelectionRevealGuardRef.current = null;
       if (
         selection.selectedIds.length !== 1 ||
         !selection.primaryId ||
@@ -523,7 +573,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     return (
       <div
         aria-label="思维导图画布"
-        className={className}
+        className={`${className}${draggingId ? " is-node-dragging" : ""}`}
         onClickCapture={(event) => {
           nodeDragBindings.onClickCapture(event);
           if (!event.defaultPrevented) bindings.onClickCapture(event);
@@ -533,6 +583,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           bindings.onPointerCancel(event);
         }}
         onPointerDown={bindings.onPointerDown}
+        onLostPointerCapture={nodeDragBindings.onLostPointerCapture}
         onPointerMove={(event) => {
           nodeDragBindings.onPointerMove(event);
           bindings.onPointerMove(event);
@@ -560,6 +611,18 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
             layout={layout}
             renderedIds={renderedIds}
           />
+          <svg
+            aria-hidden="true"
+            className="node-drag-connector-preview"
+            height={layout.height}
+            viewBox={`0 0 ${layout.width} ${layout.height}`}
+            width={layout.width}
+          >
+            <path
+              className="node-drag-connector-preview__path"
+              ref={dragConnectorPreviewRef}
+            />
+          </svg>
           {renderedIds.map((id) => {
             const node = document.nodes[id];
             const selected = selectedIdSet.has(id);
@@ -601,11 +664,17 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         </div>
         {marqueeRect && <SelectionMarquee rect={marqueeRect} />}
         <div aria-live="polite" className="sr-only">
-          {selection.selectedIds.length === 0
-            ? "未选择节点"
-            : selection.selectedIds.length === 1
-              ? "已选择 1 个节点"
-              : `已选择 ${selection.selectedIds.length} 个节点`}
+          {draggingId
+            ? dropTargetId
+              ? `松手将分支移入“${document.nodes[dropTargetId]?.text || "未命名节点"}”${dropPosition === null ? "" : `，排在第 ${dropPosition + 1} 个`}`
+              : dropIntent === "detach"
+                ? "松手将分支移到画布空白处"
+                : "继续拖动以选择上级节点"
+            : selection.selectedIds.length === 0
+              ? "未选择节点"
+              : selection.selectedIds.length === 1
+                ? "已选择 1 个节点"
+                : `已选择 ${selection.selectedIds.length} 个节点`}
         </div>
       </div>
     );

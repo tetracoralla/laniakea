@@ -776,8 +776,10 @@ export function useDocumentWorkflow({
     if (isDesktopRuntime() && !documentPath) {
       return saveAsMarkdownDocument();
     }
-    return retrySave();
-  }, [documentPath, retrySave, saveAsMarkdownDocument]);
+    const saved = await retrySave();
+    if (saved) notify({ message: "已保存" });
+    return saved;
+  }, [documentPath, notify, retrySave, saveAsMarkdownDocument]);
 
   const revealRecentDocument = useCallback((path: string) => {
     void (async () => {

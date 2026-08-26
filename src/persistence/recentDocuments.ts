@@ -57,10 +57,32 @@ function isRecentDocument(value: unknown): value is RecentDocument {
   );
 }
 
+function titleFromExternalDocumentPath(path: string): string | null {
+  if (
+    path.startsWith(browserDocumentPrefix) ||
+    isInternalDocumentPath(path)
+  ) {
+    return null;
+  }
+  const fileName = normalizedPath(path).split("/").pop() ?? "";
+  const title = fileName.replace(/\.(md|markdown|txt)$/i, "").trim();
+  return title.length > 0 && title !== "未命名思维" ? title : null;
+}
+
+function resolveRecentDocumentTitle(
+  document: RecentDocument,
+): RecentDocument {
+  if (document.title.trim() !== "未命名思维") return document;
+  const title = titleFromExternalDocumentPath(document.path);
+  return title ? { ...document, title } : document;
+}
+
 function normalize(documents: RecentDocument[]): RecentDocument[] {
   const byPath = new Map<string, RecentDocument>();
   for (const document of documents) {
-    if (!byPath.has(document.path)) byPath.set(document.path, document);
+    if (!byPath.has(document.path)) {
+      byPath.set(document.path, resolveRecentDocumentTitle(document));
+    }
   }
   const sorted = Array.from(byPath.values()).sort((left, right) =>
     right.lastOpenedAt.localeCompare(left.lastOpenedAt)

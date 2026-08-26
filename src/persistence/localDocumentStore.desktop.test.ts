@@ -52,13 +52,13 @@ describe("desktop Markdown document persistence", () => {
 
     const moved = await moveInternalDraft(
       "/app-data/drafts/方案.md",
-      "/Users/adam/Documents/方案.md",
+      "/Volumes/Workspace/Documents/方案.md",
     );
 
     expect(moved).toEqual({ sourceHash: "hash-moved" });
     expect(invoke).toHaveBeenCalledWith("move_internal_draft", {
       sourcePath: "/app-data/drafts/方案.md",
-      targetPath: "/Users/adam/Documents/方案.md",
+      targetPath: "/Volumes/Workspace/Documents/方案.md",
     });
   });
 
@@ -83,6 +83,51 @@ describe("desktop Markdown document persistence", () => {
     expect(loaded.document?.nodes[loaded.document.rootId].text).toBe(
       "原点",
     );
+  });
+
+  it("resolves a cached untitled heading from the opened file name", async () => {
+    const cached = createSeedDocument();
+    cached.title = "未命名思维";
+    cached.nodes.root.text = "产品结构梳理";
+    invoke.mockResolvedValueOnce({
+      document: JSON.stringify(cached),
+      outlineContent:
+        "# 未命名思维\n\n- 产品结构梳理\n  - 登录注册\n",
+      documentFormat: "markdown",
+      documentPath: "/Volumes/Workspace/Downloads/产品梳理.md",
+      recoveredFromBackup: false,
+      notice: null,
+      sourceHash: "hash-real-file",
+    });
+
+    const loaded = await openLocalDocument(
+      "/Volumes/Workspace/Downloads/产品梳理.md",
+    );
+
+    expect(loaded.viewStateRestored).toBe(true);
+    expect(loaded.document?.title).toBe("产品梳理");
+    expect(loaded.document?.nodes[loaded.document.rootId].text).toBe(
+      "产品结构梳理",
+    );
+  });
+
+  it("uses the root instead of an app-generated draft file name", async () => {
+    invoke.mockResolvedValueOnce({
+      document: null,
+      outlineContent: "# 未命名思维\n\n- 真实中心\n",
+      documentFormat: "markdown",
+      documentPath:
+        "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/未命名思维-3.md",
+      recoveredFromBackup: false,
+      notice: null,
+      sourceHash: "hash-draft-title",
+    });
+
+    const loaded = await openLocalDocument(
+      "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/未命名思维-3.md",
+    );
+
+    expect(loaded.document?.title).toBe("真实中心");
   });
 
   it("renders rich Markdown without binding or overwriting its source", async () => {

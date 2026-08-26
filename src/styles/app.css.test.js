@@ -59,4 +59,21 @@ describe("node editor styles", () => {
       ".mind-node--branch.is-selected::before,\n.mind-node--branch.is-primary::before,\n.mind-node--branch.is-editing::before {\n  display: none;",
     );
   });
+
+  it("reserves the full expanded width for the three-character save-as label", () => {
+    expect(appStyles).toContain(
+      ".toolbar-button--wide {\n  --toolbar-expanded-width: 84px;\n  --toolbar-label-width: 46px;",
+    );
+    expect(appStyles).toContain(
+      "max-width: var(--toolbar-label-width);",
+    );
+  });
+
+  it("uses a transient relation line as the primary parent-drop feedback", () => {
+    expect(appStyles).toContain(".node-drag-connector-preview__path {");
+    expect(appStyles).toContain(
+      "stroke: color-mix(in srgb, var(--blue) 38%, white);",
+    );
+    expect(appStyles).not.toContain('content: "松手设为上级";');
+  });
 });

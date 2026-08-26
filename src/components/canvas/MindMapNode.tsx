@@ -78,6 +78,22 @@ export const MindMapNode = memo(function MindMapNode({
       : previousScrollTop;
   };
 
+  const revealCompositionContext = (editor: HTMLTextAreaElement) => {
+    editor.dataset.composing = "true";
+    editor.style.width = "100%";
+    const visibleWidth = Math.max(editor.clientWidth, editor.scrollWidth);
+    if (visibleWidth > 0) {
+      editor.style.width = `${Math.ceil(visibleWidth)}px`;
+    }
+    editor.scrollLeft = 0;
+  };
+
+  const finishCompositionContext = (editor: HTMLTextAreaElement) => {
+    delete editor.dataset.composing;
+    editor.style.removeProperty("width");
+    editor.scrollLeft = 0;
+  };
+
   useLayoutEffect(() => {
     if (!editing) return;
     const editor = editorRef.current;
@@ -126,11 +142,20 @@ export const MindMapNode = memo(function MindMapNode({
             placeholder={placeholder}
             ref={editorRef}
             rows={1}
-            onBlur={(event) =>
-              onCommitEdit(node.id, event.currentTarget.value)
-            }
+            onBlur={(event) => {
+              inputMethodComposingRef.current = false;
+              finishCompositionContext(event.currentTarget);
+              onCommitEdit(node.id, event.currentTarget.value);
+            }}
             onChange={(event) => {
               const editor = event.currentTarget;
+              if (
+                inputMethodComposingRef.current ||
+                (event.nativeEvent as InputEvent).isComposing
+              ) {
+                revealCompositionContext(editor);
+                return;
+              }
               const selectionAtEnd = editor.selectionEnd === editor.value.length;
               fitEditorToText(editor);
               onDraftChange(editor.value);
@@ -145,11 +170,15 @@ export const MindMapNode = memo(function MindMapNode({
                 }, 0);
               }
             }}
-            onCompositionEnd={() => {
+            onCompositionEnd={(event) => {
               inputMethodComposingRef.current = false;
+              finishCompositionContext(event.currentTarget);
+              fitEditorToText(event.currentTarget);
+              onDraftChange(event.currentTarget.value);
             }}
-            onCompositionStart={() => {
+            onCompositionStart={(event) => {
               inputMethodComposingRef.current = true;
+              revealCompositionContext(event.currentTarget);
             }}
             onPaste={(event) => {
               const value = event.clipboardData.getData("text/plain");
