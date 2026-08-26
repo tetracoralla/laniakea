@@ -20,6 +20,13 @@
 
 当前公开版不附带 macOS 安装包。本地构建仍采用临时签名；待 Apple Developer 签名和公证流程完成后，再提供可供普通用户安装的桌面包。
 
+源码、网页版与 Codex Plugin 的版本可以先通过普通 GitHub Release 发布，不把缺少
+签名的本地 `.app` 或 DMG 作为 Release 资产。`.github/workflows/release-macos.yml`
+只接受人工触发：当一个 Release tag 已存在并且 Apple Developer 凭据已配置时，
+它才会为该同版本 Release 构建、验证并上传通用架构 DMG。这样源码发布不会制造
+一个注定失败的签名任务，桌面二进制也仍然保持凭据、签名、公证和 Gatekeeper
+检查全部失败关闭。
+
 ## 发布验收
 
 - 在 1440px 桌面和横向平板宽度打开应用，确认画布与工具栏可用。
