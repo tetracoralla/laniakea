@@ -6,10 +6,20 @@ import {
   parseMindMapDocument,
 } from "./document";
 import { createBlankDocument } from "../data/seed";
+import { createFlowSpace } from "./spaces";
 
 describe("persisted document validation", () => {
   it("accepts a complete reachable mind map", () => {
     expect(isMindMapDocument(createSeedDocument())).toBe(true);
+  });
+
+  it("accepts an anchored flow space and rejects a dangling portal", () => {
+    const created = createFlowSpace(createSeedDocument(), "path").document;
+    expect(isMindMapDocument(created)).toBe(true);
+
+    const dangling = structuredClone(created);
+    delete dangling.spaces?.[dangling.nodes.path.subspaceId!];
+    expect(isMindMapDocument(dangling)).toBe(false);
   });
 
   it("rejects broken parent references and unreachable nodes", () => {

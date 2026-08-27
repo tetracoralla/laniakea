@@ -22,6 +22,17 @@ export interface LayoutTextOverride {
   text: string;
 }
 
+export interface NodeTextStyle {
+  fontSize: number;
+  fontWeight: number;
+  letterSpacing: number;
+}
+
+export type TextWidthMeasurer = (
+  text: string,
+  style: NodeTextStyle,
+) => number;
+
 function textUnits(text: string): number {
   return Array.from(text).reduce((total, character) => {
     if (character === " ") return total + 0.32;
@@ -33,6 +44,13 @@ function textUnits(text: string): number {
     }
     return total + 0.62;
   }, 0);
+}
+
+export function estimateTextWidth(
+  text: string,
+  style: NodeTextStyle,
+): number {
+  return textUnits(text) * style.fontSize;
 }
 
 function connectorGapAfter(depth: number): number {
@@ -51,6 +69,7 @@ export function sizeForNode(
   depth: number,
   text: string,
   rootKind: NodeRootKind = null,
+  measureTextWidth?: TextWidthMeasurer,
 ) {
   const isMainRoot = rootKind === "main";
   const isFloatingRoot = rootKind === "floating";
@@ -73,30 +92,42 @@ export function sizeForNode(
   const maximumWidth = isMainRoot
     ? Number.POSITIVE_INFINITY
     : isFloatingRoot
-      ? 480
+      ? 640
       : depth === 1
-        ? 440
-        : 400;
+        ? 600
+        : 560;
+  const fontWeight = isMainRoot
+    ? 580
+    : isFloatingRoot
+      ? 650
+      : depth === 1
+        ? 620
+        : 530;
+  const letterSpacing = isMainRoot ? fontSize * 0.01 : 0;
   const measuredText = visibleText(depth, text, rootKind);
   const explicitLines = measuredText.split("\n");
-  const longestLine = Math.max(
+  const lineWidths = explicitLines.map((line) =>
+    measureTextWidth
+      ? measureTextWidth(line, { fontSize, fontWeight, letterSpacing })
+      : textUnits(line) * fontSize,
+  );
+  const longestLineWidth = lineWidths.reduce(
+    (maximum, lineWidth) => Math.max(maximum, lineWidth),
     0,
-    ...explicitLines.map((line) => textUnits(line)),
   );
   const width = Math.min(
     maximumWidth,
-    Math.ceil(longestLine * fontSize + horizontalChrome),
+    Math.ceil(
+      longestLineWidth + horizontalChrome + (measureTextWidth ? 4 : 0),
+    ),
   );
   const lineCount = isMainRoot
     ? explicitLines.length
-    : explicitLines.reduce((total, line) => {
-        const lineCapacity = Math.max(
-          1,
-          (width - horizontalChrome) / fontSize,
-        );
+    : lineWidths.reduce((total, lineWidth) => {
+        const lineCapacity = Math.max(1, width - horizontalChrome);
         return (
           total +
-          Math.max(1, Math.ceil(textUnits(line) / lineCapacity))
+          Math.max(1, Math.ceil(lineWidth / lineCapacity))
         );
       }, 0);
   const verticalPadding = 20;
@@ -120,6 +151,7 @@ export function sizeForNode(
 export function computeLayout(
   document: MindMapDocument,
   textOverride?: LayoutTextOverride,
+  measureTextWidth?: TextWidthMeasurer,
 ): LayoutResult {
   const result: Record<string, LayoutNode> = {};
   const visibleIds: string[] = [];
@@ -153,6 +185,7 @@ export function computeLayout(
           frame.depth,
           textForNode(frame.id, current.text),
           frame.rootKind,
+          measureTextWidth,
         );
         nodeSizes.set(frame.id, size);
         if (current.collapsed || current.children.length === 0) {
@@ -218,6 +251,7 @@ export function computeLayout(
           frame.depth,
           textForNode(frame.id, current.text),
           frame.rootKind,
+          measureTextWidth,
         );
       const subtreeHeight = subtreeHeights.get(frame.id) ?? size.height;
       const tone =
@@ -284,6 +318,7 @@ export function computeLayout(
         0,
         textForNode(floatingRoot.id, current.text),
         "floating",
+        measureTextWidth,
       );
     result[floatingRoot.id] = {
       id: floatingRoot.id,
@@ -318,17 +353,12 @@ export function computeLayout(
     });
   });
 
-  const width = Math.max(
-    1200,
-    ...Object.values(result).map((node) => node.x + node.width + 120),
-  );
-  const height = Math.max(
-    900,
-    mainHeight + top * 2,
-    ...Object.values(result).map(
-      (node) => node.y + node.height + 120,
-    ),
-  );
+  let width = 1200;
+  let height = Math.max(900, mainHeight + top * 2);
+  Object.values(result).forEach((node) => {
+    width = Math.max(width, node.x + node.width + 120);
+    height = Math.max(height, node.y + node.height + 120);
+  });
   return { nodes: result, visibleIds, width, height };
 }
 
@@ -508,13 +538,14 @@ export function stabilizeMainBranchAnchor(
     nodes[document.rootId] = { ...afterRoot, y: beforeRoot.y };
   }
   if (nodes === next.nodes) return next;
+  let height = 900;
+  Object.values(nodes).forEach((node) => {
+    height = Math.max(height, node.y + node.height + 120);
+  });
   return {
     ...next,
     nodes,
-    height: Math.max(
-      900,
-      ...Object.values(nodes).map((node) => node.y + node.height + 120),
-    ),
+    height,
   };
 }
 
@@ -523,6 +554,7 @@ export function applyDraftWidth(
   document: MindMapDocument,
   editingId: string | null,
   draft: string,
+  measureTextWidth?: TextWidthMeasurer,
 ): LayoutResult {
   if (!editingId) return layout;
   const current = layout.nodes[editingId];
@@ -531,6 +563,7 @@ export function applyDraftWidth(
     current.depth,
     draft,
     current.rootKind,
+    measureTextWidth,
   ).width;
   if (width === current.width) return layout;
   const delta = width - current.width;

@@ -1,7 +1,8 @@
 const CACHE_PREFIX = 'laniakea-'
-const CACHE_NAME = `${CACHE_PREFIX}v4`
+const CACHE_NAME = `${CACHE_PREFIX}v5`
 const SCOPE_URL = new URL('./', self.location.href)
 const INDEX_URL = new URL('index.html', SCOPE_URL)
+const ASSET_MANIFEST_URL = new URL('asset-manifest.json', SCOPE_URL)
 const IS_DESKTOP_RUNTIME = self.location.protocol === 'tauri:'
 
 async function cacheAppShell() {
@@ -9,6 +10,14 @@ async function cacheAppShell() {
   const indexResponse = await fetch(INDEX_URL)
   const indexForCache = indexResponse.clone()
   const html = await indexResponse.text()
+  const assetManifestResponse = await fetch(ASSET_MANIFEST_URL)
+  if (!assetManifestResponse.ok) {
+    throw new Error('Laniakea asset manifest is unavailable')
+  }
+  const assetManifest = await assetManifestResponse.json()
+  const bundledAssets = Array.isArray(assetManifest.assets)
+    ? assetManifest.assets.map((path) => new URL(path, SCOPE_URL).href)
+    : []
   const assetPaths = Array.from(
     html.matchAll(/(?:src|href)="\.\/([^"#?]+)"/g),
     (match) => new URL(match[1], SCOPE_URL).href,
@@ -18,6 +27,8 @@ async function cacheAppShell() {
     new URL('icon-192.png', SCOPE_URL).href,
     new URL('icon-512.png', SCOPE_URL).href,
     new URL('icon.svg', SCOPE_URL).href,
+    ASSET_MANIFEST_URL.href,
+    ...bundledAssets,
     ...assetPaths,
   ]
 

@@ -128,11 +128,23 @@ describe("automatic layout", () => {
       layout.nodes["node-1"].width,
     );
     expect(sizeForNode(1, "很长的一级主题".repeat(40)).width).toBe(
-      440,
+      600,
     );
     expect(
       sizeForNode(1, "很长的一级主题".repeat(40)).height,
     ).toBeGreaterThan(48);
+  });
+
+  it("uses a runtime text measurer so mixed-script editing grows before wrapping", () => {
+    const measured = sizeForNode(
+      2,
+      "H2A、 A2A互动平台",
+      null,
+      (text) => (text === "H2A、 A2A互动平台" ? 142 : 0),
+    );
+
+    expect(measured.width).toBe(186);
+    expect(measured.height).toBe(44);
   });
 
   it("keeps the main root on one line unless text contains a newline", () => {

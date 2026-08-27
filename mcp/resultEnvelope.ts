@@ -141,7 +141,7 @@ function renderSnapshot(view: SnapshotContent, action?: string) {
       MAX_TEXT_PREVIEW_NODE_BYTES,
     );
     lines.push(
-      `${"  ".repeat(Math.min(node.depth, 64))}- ${preview.value}${preview.truncated || node.textTruncated ? "…" : ""} [${node.ref}]`,
+      `${"  ".repeat(Math.min(node.depth, 64))}- ${preview.value}${preview.truncated || node.textTruncated ? "…" : ""} [${node.ref}]${node.subspace ? node.subspace.type === "flow" ? ` · Flow ${node.subspace.nodeCount} steps` : ` · Map ${node.subspace.nodeCount} nodes` : ""}`,
     );
   }
   if (view.nodes.length > MAX_TEXT_PREVIEW_NODES) {

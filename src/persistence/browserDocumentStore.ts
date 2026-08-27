@@ -316,6 +316,52 @@ export async function saveBrowserDocument(
   });
 }
 
+export async function saveBrowserDocumentViewState(
+  document: MindMapDocument,
+  path: string,
+): Promise<string | null> {
+  const id = browserDocumentId(path);
+  if (!id) throw new Error("无法识别这张浏览器思维导图");
+  return withDatabase(async (database) => {
+    const transaction = database.transaction(documentStoreName, "readwrite");
+    const store = transaction.objectStore(documentStoreName);
+    const current = await requestResult(store.get(id)) as
+      | BrowserDocumentRecord
+      | undefined;
+    if (!current) {
+      await transactionDone(transaction);
+      // The record is gone (cleared site data or removed elsewhere); view
+      // state has no owner and content protection belongs to the full save.
+      return null;
+    }
+    // Only viewports travel: content, revision and updatedAt stay exactly as
+    // the record has them, so a pan can neither overwrite another tab's
+    // newer content nor invalidate its expected revision.
+    const viewState: MindMapDocument = {
+      ...current.document,
+      viewport: document.viewport,
+    };
+    const currentSpaces = current.document.spaces;
+    const incomingSpaces = document.spaces;
+    if (currentSpaces && incomingSpaces) {
+      viewState.spaces = Object.fromEntries(
+        Object.entries(currentSpaces).map(([spaceId, space]) => {
+          const twin = incomingSpaces[spaceId];
+          return twin && twin.type === space.type
+            ? [spaceId, { ...space, viewport: twin.viewport }]
+            : [spaceId, space];
+        }),
+      );
+    }
+    store.put({
+      ...current,
+      document: cloneDocument(viewState),
+    });
+    await transactionDone(transaction);
+    return revisionToken(current.id, current.revision);
+  });
+}
+
 export async function activateBrowserDocument(path: string): Promise<void> {
   const id = browserDocumentId(path);
   if (!id) throw new Error("无法识别这张浏览器思维导图");

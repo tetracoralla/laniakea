@@ -198,8 +198,10 @@ export function pasteSubtrees(
     const sourceNode = source.nodes[sourceId];
     if (!sourceNode) return null;
     const id = reserveUniqueNodeId(reservedIds);
+    const { subspaceId: _sourceSubspaceId, ...sourceNodeWithoutPortal } =
+      sourceNode;
     nodes[id] = {
-      ...sourceNode,
+      ...sourceNodeWithoutPortal,
       id,
       parentId: cloneParentId,
       children: [],
@@ -217,8 +219,12 @@ export function pasteSubtrees(
         const childSource = source.nodes[childSourceId];
         if (!childSource) return;
         const childCloneId = reserveUniqueNodeId(reservedIds);
+        const {
+          subspaceId: _childSubspaceId,
+          ...childSourceWithoutPortal
+        } = childSource;
         nodes[childCloneId] = {
-          ...childSource,
+          ...childSourceWithoutPortal,
           id: childCloneId,
           parentId: frame.cloneId,
           children: [],
@@ -391,6 +397,34 @@ function collectSubtree(document: MindMapDocument, id: string): string[] {
   return result;
 }
 
+function spacesAfterRemovingAnchors(
+  document: MindMapDocument,
+  removedNodeIds: ReadonlySet<string>,
+): MindMapDocument["spaces"] {
+  if (!document.spaces) return undefined;
+  const removedSpaceIds = new Set<string>();
+  const removedAnchorIds = new Set(removedNodeIds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    Object.entries(document.spaces).forEach(([spaceId, space]) => {
+      if (removedSpaceIds.has(spaceId) || !removedAnchorIds.has(space.anchorNodeId)) {
+        return;
+      }
+      removedSpaceIds.add(spaceId);
+      if (space.type === "map") {
+        Object.keys(space.nodes).forEach((nodeId) => removedAnchorIds.add(nodeId));
+      }
+      changed = true;
+    });
+  }
+  return Object.fromEntries(
+    Object.entries(document.spaces).filter(
+      ([spaceId]) => !removedSpaceIds.has(spaceId),
+    ),
+  );
+}
+
 function floatingRootIndex(
   document: MindMapDocument,
   id: string,
@@ -403,44 +437,78 @@ export function detachSubtree(
   id: string,
   position: Pick<FloatingRoot, "x" | "y">,
 ): DocumentMutation {
-  const current = document.nodes[id];
-  if (!current || id === document.rootId) {
-    return { document, selection: singleSelection(document.rootId) };
-  }
+  return detachSubtrees(
+    document,
+    [{ id, ...position }],
+    singleSelection(id),
+  );
+}
 
-  const x = Math.max(32, Math.round(position.x));
-  const y = Math.max(32, Math.round(position.y));
-  const existingIndex = floatingRootIndex(document, id);
-  if (existingIndex >= 0) {
-    const existing = document.floatingRoots[existingIndex];
-    if (existing.x === x && existing.y === y) {
-      return { document, selection: singleSelection(id) };
-    }
-    const floatingRoots = [...document.floatingRoots];
-    floatingRoots[existingIndex] = { id, x, y };
-    return {
-      document: {
-        ...document,
-        floatingRoots,
-      },
-      selection: singleSelection(id),
-    };
-  }
+export interface PositionedSubtreeRoot
+  extends Pick<FloatingRoot, "id" | "x" | "y"> {}
 
-  if (!current.parentId) {
-    return { document, selection: singleSelection(id) };
-  }
-  const parent = document.nodes[current.parentId];
-  let nodes = updateNode(document.nodes, parent.id, {
-    children: parent.children.filter((childId) => childId !== id),
+export function detachSubtrees(
+  document: MindMapDocument,
+  positions: readonly PositionedSubtreeRoot[],
+  selection: SelectionState,
+): DocumentMutation {
+  const requested = positions
+    .filter(({ id }) => id !== document.rootId && document.nodes[id])
+    .map(({ id, x, y }) => ({
+      id,
+      x: Math.max(32, Math.round(x)),
+      y: Math.max(32, Math.round(y)),
+    }));
+  const rootIds = normalizeSelectedRoots(
+    document,
+    requested.map(({ id }) => id),
+  );
+  const rootIdSet = new Set(rootIds);
+  const roots = requested.filter(({ id }) => rootIdSet.has(id));
+  if (roots.length === 0) return { document, selection };
+
+  let nodes = document.nodes;
+  const affectedParents = new Set(
+    roots
+      .map(({ id }) => document.nodes[id]?.parentId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  affectedParents.forEach((parentId) => {
+    const parent = nodes[parentId];
+    if (!parent) return;
+    nodes = updateNode(nodes, parentId, {
+      children: parent.children.filter((id) => !rootIdSet.has(id)),
+    });
   });
-  nodes = updateNode(nodes, id, { parentId: null });
+  roots.forEach(({ id }) => {
+    if (nodes[id]?.parentId !== null) {
+      nodes = updateNode(nodes, id, { parentId: null });
+    }
+  });
+
+  const floatingRoots = document.floatingRoots
+    .filter(({ id }) => !rootIdSet.has(id))
+    .concat(roots.map(({ id, x, y }) => ({ id, x, y })));
+  const unchanged =
+    nodes === document.nodes &&
+    document.floatingRoots.length === floatingRoots.length &&
+    document.floatingRoots.every((root, index) => {
+      const next = floatingRoots[index];
+      return root.id === next.id && root.x === next.x && root.y === next.y;
+    });
+  if (unchanged) return { document, selection };
+
+  const nextDocument = {
+    ...withTimestamp(document, nodes),
+    floatingRoots,
+  };
   return {
-    document: {
-      ...withTimestamp(document, nodes),
-      floatingRoots: [...document.floatingRoots, { id, x, y }],
-    },
-    selection: singleSelection(id),
+    document: nextDocument,
+    selection: createSelection(
+      selection.selectedIds,
+      visibleNodeIds(nextDocument),
+      selection.primaryId,
+    ),
   };
 }
 
@@ -450,21 +518,38 @@ export function attachSubtree(
   parentId: string,
   position?: number,
 ): DocumentMutation {
-  const current = document.nodes[id];
+  return attachSubtrees(
+    document,
+    [id],
+    parentId,
+    position,
+    singleSelection(id),
+  );
+}
+
+export function attachSubtrees(
+  document: MindMapDocument,
+  ids: readonly string[],
+  parentId: string,
+  position: number | undefined,
+  selection: SelectionState,
+): DocumentMutation {
   const parent = document.nodes[parentId];
+  const rootIds = normalizeSelectedRoots(
+    document,
+    ids.filter((id) => id !== document.rootId),
+  );
   if (
-    !current ||
     !parent ||
-    id === document.rootId ||
-    id === parentId ||
-    collectSubtree(document, id).includes(parentId)
+    rootIds.length === 0 ||
+    rootIds.includes(parentId) ||
+    rootIds.some((id) => collectSubtree(document, id).includes(parentId))
   ) {
-    return {
-      document,
-      selection: singleSelection(current ? id : document.rootId),
-    };
+    return { document, selection };
   }
-  const nextChildren = parent.children.filter((childId) => childId !== id);
+
+  const rootIdSet = new Set(rootIds);
+  const nextChildren = parent.children.filter((id) => !rootIdSet.has(id));
   const insertAt = Math.max(
     0,
     Math.min(
@@ -472,35 +557,47 @@ export function attachSubtree(
       nextChildren.length,
     ),
   );
-  nextChildren.splice(insertAt, 0, id);
-  if (
-    current.parentId === parentId &&
+  nextChildren.splice(insertAt, 0, ...rootIds);
+  const unchanged =
     !parent.collapsed &&
-    nextChildren.every((childId, index) => parent.children[index] === childId)
-  ) {
-    return { document, selection: singleSelection(id) };
-  }
+    rootIds.every((id) => document.nodes[id]?.parentId === parentId) &&
+    nextChildren.length === parent.children.length &&
+    nextChildren.every((id, index) => parent.children[index] === id);
+  if (unchanged) return { document, selection };
 
   let nodes = document.nodes;
-  if (current.parentId && current.parentId !== parentId) {
-    const oldParent = document.nodes[current.parentId];
-    nodes = updateNode(nodes, oldParent.id, {
-      children: oldParent.children.filter((childId) => childId !== id),
+  const affectedParents = new Set(
+    rootIds
+      .map((id) => document.nodes[id]?.parentId)
+      .filter((id): id is string => Boolean(id) && id !== parentId),
+  );
+  affectedParents.forEach((oldParentId) => {
+    const oldParent = nodes[oldParentId];
+    if (!oldParent) return;
+    nodes = updateNode(nodes, oldParentId, {
+      children: oldParent.children.filter((id) => !rootIdSet.has(id)),
     });
-  }
-  nodes = updateNode(nodes, id, { parentId });
+  });
+  rootIds.forEach((id) => {
+    nodes = updateNode(nodes, id, { parentId });
+  });
   nodes = updateNode(nodes, parentId, {
     children: nextChildren,
     collapsed: false,
   });
+  const nextDocument = {
+    ...withTimestamp(document, nodes),
+    floatingRoots: document.floatingRoots.filter(
+      ({ id }) => !rootIdSet.has(id),
+    ),
+  };
   return {
-    document: {
-      ...withTimestamp(document, nodes),
-      floatingRoots: document.floatingRoots.filter(
-        (root) => root.id !== id,
-      ),
-    },
-    selection: singleSelection(id),
+    document: nextDocument,
+    selection: createSelection(
+      selection.selectedIds,
+      visibleNodeIds(nextDocument),
+      selection.primaryId,
+    ),
   };
 }
 
@@ -532,6 +629,7 @@ export function deleteSubtree(
       floatingRoots: document.floatingRoots.filter(
         (root) => !removed.has(root.id),
       ),
+      spaces: spacesAfterRemovingAnchors(document, removed),
     },
     selection: singleSelection(parent?.id ?? document.rootId),
   };
@@ -578,6 +676,7 @@ export function deleteSelectedSubtrees(
       floatingRoots: document.floatingRoots.filter(
         (root) => !removed.has(root.id),
       ),
+      spaces: spacesAfterRemovingAnchors(document, removed),
     },
     selection: singleSelection(nextPrimaryId),
   };
@@ -605,7 +704,10 @@ export function deleteNodePreserveChildren(
   });
 
   return {
-    document: withTimestamp(document, nodes),
+    document: {
+      ...withTimestamp(document, nodes),
+      spaces: spacesAfterRemovingAnchors(document, new Set([id])),
+    },
     selection: singleSelection(parent.id),
   };
 }

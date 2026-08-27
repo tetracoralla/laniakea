@@ -4,6 +4,7 @@ import {
   addToSelection,
   createSelection,
   normalizeSelectedRoots,
+  selectionForContextTarget,
   toggleSelectedNode,
   visibleNodeIds,
 } from "./selection";
@@ -78,5 +79,14 @@ describe("multi-selection model", () => {
       visible.indexOf("boundary-3"),
     );
     expect(visible).toContain("experience-2");
+  });
+
+  it("preserves a multi-selection when its context menu target is already selected", () => {
+    const selection = { primaryId: "a", selectedIds: ["a", "b"] };
+    expect(selectionForContextTarget(selection, "b")).toBe(selection);
+    expect(selectionForContextTarget(selection, "c")).toEqual({
+      primaryId: "c",
+      selectedIds: ["c"],
+    });
   });
 });

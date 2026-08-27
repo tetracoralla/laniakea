@@ -98,6 +98,18 @@ describe("command registry context isolation", () => {
     ).toBe("selection.clear");
   });
 
+  it("opens drill-down from the standard keyboard context gesture", () => {
+    expect(
+      findCommandForEvent(
+        keyboardEvent("F10", { shiftKey: true }),
+        "selection",
+      )?.id,
+    ).toBe("node.drill-down");
+    expect(
+      findCommandForEvent(keyboardEvent("ContextMenu"), "selection")?.id,
+    ).toBe("node.drill-down");
+  });
+
   it("routes standard edit and file shortcuts on the canvas", () => {
     const expected = [
       ["a", "selection.select-all"],

@@ -28,6 +28,13 @@ interface MindMapNodeProps {
   onCommitEdit: (id: string, value: string) => void;
   onCancelEdit: (id: string) => void;
   onToggle: (id: string) => void;
+  onOpenContextMenu?: (
+    id: string,
+    targetRect: { left: number; right: number; top: number; bottom: number },
+    returnFocus: HTMLElement,
+  ) => void;
+  onOpenSubspace?: (id: string) => void;
+  portalSummary?: string;
   onDragPointerDown: PointerEventHandler<HTMLDivElement>;
 }
 
@@ -47,6 +54,9 @@ export const MindMapNode = memo(function MindMapNode({
   onCommitEdit,
   onCancelEdit,
   onToggle,
+  onOpenContextMenu = () => undefined,
+  onOpenSubspace = () => undefined,
+  portalSummary,
   onDragPointerDown,
 }: MindMapNodeProps) {
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -125,6 +135,25 @@ export const MindMapNode = memo(function MindMapNode({
     <div
       className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${editing ? "is-editing" : ""} ${dragging ? "is-dragging" : ""} ${dropTarget ? "is-drop-target" : ""}`}
       data-node-id={node.id}
+      onContextMenu={
+        editing
+          ? undefined
+          : (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const returnFocus =
+                event.currentTarget.querySelector<HTMLElement>(
+                  ".mind-node__content",
+                ) ?? event.currentTarget;
+              const bounds = event.currentTarget.getBoundingClientRect();
+              onOpenContextMenu(node.id, {
+                left: bounds.left,
+                right: bounds.right,
+                top: bounds.top,
+                bottom: bounds.bottom,
+              }, returnFocus);
+            }
+      }
       onPointerDown={onDragPointerDown}
       style={{
         left: layout.x,
@@ -243,6 +272,21 @@ export const MindMapNode = memo(function MindMapNode({
           type="button"
         >
           <Icon name="chevron" size={13} />
+        </button>
+      )}
+      {node.subspaceId && (
+        <button
+          aria-label={`进入${portalSummary ?? "下层图"}`}
+          className="mind-node__portal"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenSubspace(node.id);
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          title={portalSummary ?? "进入下层图"}
+          type="button"
+        >
+          <Icon name="layers" size={14} />
         </button>
       )}
     </div>

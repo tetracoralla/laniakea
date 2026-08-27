@@ -34,6 +34,7 @@ import type {
   Viewport,
 } from "../../types/mindmap";
 import {
+  shareStableVisibleIds,
   viewportNeedsRenderWindowRefresh,
   visibleLayoutNodeIds,
 } from "../../model/viewportCulling";
@@ -46,6 +47,7 @@ import {
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
 import { SelectionMarquee } from "./SelectionMarquee";
+import { createCanvasTextWidthMeasurer } from "./textMeasure";
 
 export interface CanvasHandle {
   fit: () => void;
@@ -70,14 +72,19 @@ interface MindMapCanvasProps {
   onCommitEdit: (id: string, value: string) => void;
   onCancelEdit: (id: string) => void;
   onToggle: (id: string) => void;
-  onAttachNode: (
+  onOpenNodeContextMenu?: (
     id: string,
+    targetRect: { left: number; right: number; top: number; bottom: number },
+    returnFocus: HTMLElement,
+  ) => void;
+  onOpenSubspace?: (id: string) => void;
+  onAttachNode: (
+    ids: readonly string[],
     parentId: string,
     position: number,
   ) => void;
   onDetachNode: (
-    id: string,
-    position: { x: number; y: number },
+    positions: readonly { id: string; x: number; y: number }[],
   ) => void;
   onViewportChange: (viewport: Viewport) => void;
   onZoomPreview?: (zoom: number) => void;
@@ -99,6 +106,8 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onCommitEdit,
       onCancelEdit,
       onToggle,
+      onOpenNodeContextMenu = () => undefined,
+      onOpenSubspace = () => undefined,
       onAttachNode,
       onDetachNode,
       onViewportChange,
@@ -111,6 +120,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const dragPreviewRef = useRef<HTMLDivElement>(null);
     const dragConnectorPreviewRef = useRef<SVGPathElement>(null);
     const persistTimer = useRef<number | null>(null);
+    const pendingViewportCommitRef = useRef<{
+      emit: (viewport: Viewport) => void;
+    } | null>(null);
     const viewportFrame = useRef<number | null>(null);
     const liveViewport = useRef(document.viewport);
     const containerBoundsRef = useRef<{
@@ -134,6 +146,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     } | null>(null);
     const activeSelectionRef = useRef(selection);
     const visibleIdsRef = useRef<readonly string[]>([]);
+    const renderedIdsRef = useRef<readonly string[]>([]);
     const [containerSize, setContainerSize] = useState(() => ({
       width: Math.max(1, window.innerWidth),
       height: Math.max(1, window.innerHeight),
@@ -144,9 +157,17 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     );
     const renderViewportStateRef = useRef(document.viewport);
     containerSizeRef.current = containerSize;
+    const measureTextWidth = useMemo(
+      () => createCanvasTextWidthMeasurer(),
+      [],
+    );
     const documentLayout = useMemo(
       () => {
-        const computed = computeLayout(document);
+        const computed = computeLayout(
+          document,
+          undefined,
+          measureTextWidth,
+        );
         const collapseTransition = mainBranchAnchorForCollapseTransition(
           previousDocumentRef.current,
           document,
@@ -162,7 +183,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         );
         return next;
       },
-      [document.floatingRoots, document.nodes, document.rootId],
+      [
+        document.floatingRoots,
+        document.nodes,
+        document.rootId,
+        measureTextWidth,
+      ],
     );
     useLayoutEffect(() => {
       previousDocumentRef.current = document;
@@ -180,6 +206,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           editingLayout.depth,
           draftSizingText,
           editingLayout.rootKind,
+          measureTextWidth,
         )
       : null;
     let heightAwareLayout = documentLayout;
@@ -203,7 +230,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           layout: computeLayout(document, {
             id: editingId,
             text: draftSizingText,
-          }),
+          }, measureTextWidth),
         };
       }
       heightAwareLayout =
@@ -218,8 +245,15 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           document,
           editingId,
           draftSizingText,
+          measureTextWidth,
         ),
-      [document, draftSizingText, editingId, heightAwareLayout],
+      [
+        document,
+        draftSizingText,
+        editingId,
+        heightAwareLayout,
+        measureTextWidth,
+      ],
     );
     visibleIdsRef.current = layout.visibleIds;
     const viewport = document.viewport;
@@ -248,14 +282,40 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       }
     }, []);
 
+    // The delayed pan commit must target the surface that was panned, not the
+    // surface that happens to be mounted when the timer fires: root and Map
+    // Space share this component, so a stale emit would write one layer's
+    // viewport into the other document.
+    const flushPendingViewportCommit = useCallback(() => {
+      if (persistTimer.current !== null) {
+        window.clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+      const pending = pendingViewportCommitRef.current;
+      pendingViewportCommitRef.current = null;
+      pending?.emit(liveViewport.current);
+    }, []);
+
     const scheduleViewportCommit = useCallback((next: Viewport) => {
       renderViewport(next);
       if (persistTimer.current) window.clearTimeout(persistTimer.current);
+      pendingViewportCommitRef.current = { emit: onViewportChange };
       persistTimer.current = window.setTimeout(() => {
-        onViewportChange(liveViewport.current);
         persistTimer.current = null;
+        const pending = pendingViewportCommitRef.current;
+        pendingViewportCommitRef.current = null;
+        pending?.emit(liveViewport.current);
       }, 120);
     }, [onViewportChange, renderViewport]);
+
+    const commitViewportImmediately = useCallback((next: Viewport) => {
+      if (persistTimer.current !== null) {
+        window.clearTimeout(persistTimer.current);
+        persistTimer.current = null;
+      }
+      pendingViewportCommitRef.current = null;
+      onViewportChange(next);
+    }, [onViewportChange]);
 
     const handleWheel = useCallback((event: WheelEvent) => {
       const editor =
@@ -318,13 +378,14 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       renderViewport,
       onSelectionChange,
       onSpaceTap,
-      onViewportChange,
+      onViewportChange: commitViewportImmediately,
     });
     activeSelectionRef.current = activeSelection;
     const {
       beginNodeDrag,
       bindings: nodeDragBindings,
       draggingId,
+      draggingIds,
       dropTargetId,
       dropPosition,
       dropIntent,
@@ -335,8 +396,10 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       panModifierHeld,
       document,
       layout,
+      selection: activeSelection,
       editingId,
       liveViewport,
+      onSelectionChange,
       onAttach: onAttachNode,
       onDetach: onDetachNode,
     });
@@ -344,29 +407,64 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       () => new Set(activeSelection.selectedIds),
       [activeSelection.selectedIds],
     );
+    const draggingIdSet = useMemo(
+      () => new Set(draggingIds),
+      [draggingIds],
+    );
     const pinnedIds = useMemo(() => {
-      return nodeIdsRequiredInDom(
+      const required = nodeIdsRequiredInDom(
         activeSelection.primaryId,
         editingId,
         draggingId,
         dropTargetId,
       );
+      draggingIds.forEach((id) => required.add(id));
+      return required;
     }, [
       activeSelection.primaryId,
       draggingId,
+      draggingIds,
       dropTargetId,
       editingId,
     ]);
-    const renderedIds = useMemo(
-      () =>
-        visibleLayoutNodeIds(
+    const renderedIds = useMemo(() => {
+      const next = visibleLayoutNodeIds(
           layout,
           renderViewportState,
           containerSize,
           pinnedIds,
-        ),
-      [containerSize, layout, pinnedIds, renderViewportState],
-    );
+        );
+      const stable = shareStableVisibleIds(renderedIdsRef.current, next);
+      renderedIdsRef.current = stable;
+      return stable;
+    }, [containerSize, layout, pinnedIds, renderViewportState]);
+    const dragPreviewLayout = useMemo(() => {
+      const roots = draggingIds
+        .map((id) => layout.nodes[id])
+        .filter((node): node is NonNullable<typeof node> => Boolean(node));
+      if (roots.length === 0) return null;
+      const bounds = roots.reduce(
+        (current, node) => ({
+          minX: Math.min(current.minX, node.x),
+          minY: Math.min(current.minY, node.y),
+          maxX: Math.max(current.maxX, node.x + node.width),
+          maxY: Math.max(current.maxY, node.y + node.height),
+        }),
+        {
+          minX: Number.POSITIVE_INFINITY,
+          minY: Number.POSITIVE_INFINITY,
+          maxX: Number.NEGATIVE_INFINITY,
+          maxY: Number.NEGATIVE_INFINITY,
+        },
+      );
+      return {
+        minX: bounds.minX,
+        minY: bounds.minY,
+        width: bounds.maxX - bounds.minX,
+        height: bounds.maxY - bounds.minY,
+        roots,
+      };
+    }, [draggingIds, layout]);
     const handleNodeSelect = useCallback(
       (id: string, additive: boolean) => {
         onSelectionChange(
@@ -395,7 +493,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       const contentX = (centerX - current.x) / current.zoom;
       const contentY = (centerY - current.y) / current.zoom;
       onZoomPreview?.(clamped);
-      onViewportChange({
+      commitViewportImmediately({
         zoom: clamped,
         x: centerX - contentX * clamped,
         y: centerY - contentY * clamped,
@@ -412,12 +510,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         bounds.height,
       );
       onZoomPreview?.(zoom);
-      onViewportChange({
+      commitViewportImmediately({
         zoom,
         x: (bounds.width - layout.width * zoom) / 2,
         y: (bounds.height - layout.height * zoom) / 2,
       });
-    }, [layout, onViewportChange, onZoomPreview]);
+    }, [commitViewportImmediately, layout, onZoomPreview]);
 
     useLayoutEffect(() => {
       if (
@@ -438,7 +536,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         : null;
       if (!bounds || !node) return;
       const current = liveViewport.current;
-      onViewportChange({
+      commitViewportImmediately({
         ...current,
         x:
           bounds.width / 2 -
@@ -460,17 +558,21 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         zoomOut: () => zoomAtCenter(liveViewport.current.zoom - 0.1),
         resetZoom: () => {
           onZoomPreview?.(1);
-          onViewportChange({
+          commitViewportImmediately({
             zoom: 1,
             x: 96,
             y: -24,
           });
         },
       }),
-      [fit, layout, onZoomPreview, selection.primaryId, viewport],
+      [commitViewportImmediately, fit, layout, onZoomPreview, selection.primaryId, viewport],
     );
 
     useLayoutEffect(() => {
+      // A pending pan belongs to the previously mounted surface. Flush it
+      // through its captured emit before the incoming viewport overwrites
+      // liveViewport, so neither layer's document receives the other's value.
+      flushPendingViewportCommit();
       liveViewport.current = viewport;
       if (contentRef.current) {
         contentRef.current.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.zoom})`;
@@ -485,7 +587,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         renderViewportStateRef.current = viewport;
         setRenderViewportState(viewport);
       }
-    }, [viewport]);
+    }, [flushPendingViewportCommit, viewport]);
 
     useEffect(() => {
       const container = containerRef.current;
@@ -525,13 +627,15 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
 
     useEffect(
       () => () => {
-        if (persistTimer.current) window.clearTimeout(persistTimer.current);
+        // Match the Flow canvas: a pan interrupted by unmounting (for example
+        // entering a Flow Space) still commits instead of silently dropping.
+        flushPendingViewportCommit();
         if (viewportFrame.current !== null) {
           window.cancelAnimationFrame(viewportFrame.current);
           viewportFrame.current = null;
         }
       },
-      [],
+      [flushPendingViewportCommit],
     );
 
     useEffect(() => {
@@ -629,7 +733,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
             return (
               <MindMapNode
                 draft={draftForNode(id, editingId, draft)}
-                dragging={draggingId === id}
+                dragging={draggingIdSet.has(id)}
                 dropTarget={dropTargetId === id}
                 editing={editingId === id}
                 key={id}
@@ -639,26 +743,64 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
                 onCancelEdit={onCancelEdit}
                 onCommitEdit={onCommitEdit}
                 onDraftChange={onDraftChange}
+                onOpenContextMenu={onOpenNodeContextMenu}
                 onDragPointerDown={beginNodeDrag}
                 onPasteStructured={onPasteStructured}
                 onSelect={handleNodeSelect}
                 onToggle={onToggle}
+                onOpenSubspace={onOpenSubspace}
+                portalSummary={
+                  node.subspaceId && document.spaces?.[node.subspaceId]
+                    ? document.spaces[node.subspaceId].type === "map"
+                      ? `思维图 · ${Object.keys(document.spaces[node.subspaceId].nodes).length} 个节点`
+                      : `流程 · ${Object.keys(document.spaces[node.subspaceId].nodes).length} 步`
+                    : undefined
+                }
                 primary={activeSelection.primaryId === id}
                 selected={selected}
               />
             );
           })}
-          {draggingId && layout.nodes[draggingId] && (
+          {draggingId && dragPreviewLayout && (
             <div
               aria-hidden="true"
               className="node-drag-preview"
               ref={dragPreviewRef}
               style={{
-                height: layout.nodes[draggingId].height,
-                width: layout.nodes[draggingId].width,
+                height: dragPreviewLayout.height,
+                width: dragPreviewLayout.width,
               }}
             >
-              {document.nodes[draggingId]?.text}
+              {dragPreviewLayout.roots.map((root) => (
+                <div
+                  className="node-drag-preview__item"
+                  key={root.id}
+                  style={{
+                    height: root.height,
+                    left: root.x - dragPreviewLayout.minX,
+                    top: root.y - dragPreviewLayout.minY,
+                    width: root.width,
+                    fontSize:
+                      root.rootKind === "main"
+                        ? 19
+                        : root.rootKind === "floating"
+                          ? 17
+                          : root.depth === 1
+                            ? 16
+                            : 15,
+                    fontWeight:
+                      root.rootKind === "main"
+                        ? 580
+                        : root.rootKind === "floating"
+                          ? 650
+                          : root.depth === 1
+                            ? 620
+                            : 530,
+                  }}
+                >
+                  {document.nodes[root.id]?.text}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -666,9 +808,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         <div aria-live="polite" className="sr-only">
           {draggingId
             ? dropTargetId
-              ? `松手将分支移入“${document.nodes[dropTargetId]?.text || "未命名节点"}”${dropPosition === null ? "" : `，排在第 ${dropPosition + 1} 个`}`
+              ? `松手将${draggingIds.length > 1 ? `${draggingIds.length} 个分支` : "分支"}移入“${document.nodes[dropTargetId]?.text || "未命名节点"}”${dropPosition === null ? "" : `，排在第 ${dropPosition + 1} 个`}`
               : dropIntent === "detach"
-                ? "松手将分支移到画布空白处"
+                ? `松手将${draggingIds.length > 1 ? `${draggingIds.length} 个分支` : "分支"}移到画布空白处`
                 : "继续拖动以选择上级节点"
             : selection.selectedIds.length === 0
               ? "未选择节点"

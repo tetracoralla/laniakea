@@ -1,5 +1,10 @@
 import type {
+  FlowEdge,
+  FlowNode,
+  FlowSpace,
   FloatingRoot,
+  LaniakeaSpace,
+  MapSpace,
   MindMapDocument,
   MindNode,
 } from "../types/mindmap";
@@ -40,9 +45,91 @@ function isNode(value: unknown, id: string): value is MindNode {
     (typeof value.parentId === "string" || value.parentId === null) &&
     Array.isArray(value.children) &&
     value.children.every((childId) => typeof childId === "string") &&
+    (value.subspaceId === undefined || typeof value.subspaceId === "string") &&
     typeof value.collapsed === "boolean" &&
     typeof value.createdAt === "string" &&
     typeof value.updatedAt === "string"
+  );
+}
+
+function isFlowNode(value: unknown, id: string): value is FlowNode {
+  return (
+    isRecord(value) &&
+    value.id === id &&
+    typeof value.text === "string" &&
+    ["start", "step", "decision", "end"].includes(String(value.kind)) &&
+    typeof value.createdAt === "string" &&
+    typeof value.updatedAt === "string"
+  );
+}
+
+function isFlowEdge(value: unknown): value is FlowEdge {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.from === "string" &&
+    typeof value.to === "string" &&
+    typeof value.label === "string"
+  );
+}
+
+function isViewport(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.x === "number" &&
+    Number.isFinite(value.x) &&
+    typeof value.y === "number" &&
+    Number.isFinite(value.y) &&
+    typeof value.zoom === "number" &&
+    Number.isFinite(value.zoom) &&
+    value.zoom > 0
+  );
+}
+
+function isFlowSpace(value: unknown, id: string): value is FlowSpace {
+  if (
+    !isRecord(value) ||
+    value.id !== id ||
+    value.type !== "flow" ||
+    typeof value.anchorNodeId !== "string" ||
+    !isRecord(value.nodes) ||
+    !Array.isArray(value.edges) ||
+    !value.edges.every(isFlowEdge) ||
+    !isViewport(value.viewport) ||
+    typeof value.updatedAt !== "string"
+  ) {
+    return false;
+  }
+  const nodes = value.nodes;
+  if (
+    Object.keys(nodes).length === 0 ||
+    Object.entries(nodes).some(([nodeId, node]) => !isFlowNode(node, nodeId))
+  ) {
+    return false;
+  }
+  const edgeIds = new Set<string>();
+  return value.edges.every((edge) => {
+    if (edgeIds.has(edge.id) || !nodes[edge.from] || !nodes[edge.to]) {
+      return false;
+    }
+    edgeIds.add(edge.id);
+    return true;
+  });
+}
+
+function isMapSpace(value: unknown, id: string): value is MapSpace {
+  return (
+    isRecord(value) &&
+    value.id === id &&
+    value.type === "map" &&
+    typeof value.anchorNodeId === "string" &&
+    typeof value.rootId === "string" &&
+    isRecord(value.nodes) &&
+    Array.isArray(value.floatingRoots) &&
+    value.floatingRoots.every(isFloatingRoot) &&
+    isViewport(value.viewport) &&
+    typeof value.updatedAt === "string" &&
+    isMindTree(value.rootId, value.nodes, value.floatingRoots)
   );
 }
 
@@ -64,33 +151,15 @@ export function topLevelRootIds(document: MindMapDocument): string[] {
   ];
 }
 
-export function isMindMapDocument(
-  value: unknown,
-): value is MindMapDocument {
-  if (!isRecord(value) || !isRecord(value.nodes)) return false;
-  if (
-    value.formatVersion !== 1 ||
-    typeof value.title !== "string" ||
-    typeof value.rootId !== "string" ||
-    typeof value.updatedAt !== "string" ||
-    !Array.isArray(value.floatingRoots) ||
-    !value.floatingRoots.every(isFloatingRoot) ||
-    !isRecord(value.viewport) ||
-    typeof value.viewport.x !== "number" ||
-    !Number.isFinite(value.viewport.x) ||
-    typeof value.viewport.y !== "number" ||
-    !Number.isFinite(value.viewport.y) ||
-    typeof value.viewport.zoom !== "number" ||
-    !Number.isFinite(value.viewport.zoom)
-  ) {
-    return false;
-  }
-
-  const nodes = value.nodes;
-  const root = nodes[value.rootId];
-  if (!isNode(root, value.rootId) || root.parentId !== null) return false;
-  const floatingIds = value.floatingRoots.map((floating) => floating.id);
-  const rootIds = [value.rootId, ...floatingIds];
+function isMindTree(
+  rootId: string,
+  nodes: Record<string, unknown>,
+  floatingRoots: FloatingRoot[],
+): boolean {
+  const root = nodes[rootId];
+  if (!isNode(root, rootId) || root.parentId !== null) return false;
+  const floatingIds = floatingRoots.map((floating) => floating.id);
+  const rootIds = [rootId, ...floatingIds];
   if (new Set(rootIds).size !== rootIds.length) return false;
   if (
     floatingIds.some((id) => {
@@ -127,8 +196,82 @@ export function isMindMapDocument(
       pending.push(node.children[index]);
     }
   }
-
   return visited.size === Object.keys(nodes).length;
+}
+
+export function isMindMapDocument(
+  value: unknown,
+): value is MindMapDocument {
+  if (!isRecord(value) || !isRecord(value.nodes)) return false;
+  if (
+    value.formatVersion !== 1 ||
+    typeof value.title !== "string" ||
+    typeof value.rootId !== "string" ||
+    typeof value.updatedAt !== "string" ||
+    !Array.isArray(value.floatingRoots) ||
+    !value.floatingRoots.every(isFloatingRoot) ||
+    !isViewport(value.viewport) ||
+    (value.spaces !== undefined && !isRecord(value.spaces))
+  ) {
+    return false;
+  }
+
+  const nodes = value.nodes;
+  if (!isMindTree(value.rootId, nodes, value.floatingRoots)) return false;
+
+  const spaces = value.spaces ?? {};
+  const validatedSpaces: Record<string, LaniakeaSpace> = {};
+  const nodeById = new Map<string, MindNode>();
+  const ownerSpaceByNodeId = new Map<string, string | null>();
+  for (const [nodeId, candidate] of Object.entries(nodes)) {
+    if (!isNode(candidate, nodeId)) return false;
+    nodeById.set(nodeId, candidate);
+    ownerSpaceByNodeId.set(nodeId, null);
+  }
+  for (const [spaceId, candidate] of Object.entries(spaces)) {
+    if (!isFlowSpace(candidate, spaceId) && !isMapSpace(candidate, spaceId)) {
+      return false;
+    }
+    validatedSpaces[spaceId] = candidate;
+    if (candidate.type === "map") {
+      for (const [nodeId, node] of Object.entries(candidate.nodes)) {
+        if (nodeById.has(nodeId) || !isNode(node, nodeId)) return false;
+        nodeById.set(nodeId, node);
+        ownerSpaceByNodeId.set(nodeId, spaceId);
+      }
+    }
+  }
+
+  const referencedSpaceIds = new Set<string>();
+  for (const node of nodeById.values()) {
+    if (!node.subspaceId) continue;
+    if (!validatedSpaces[node.subspaceId] || referencedSpaceIds.has(node.subspaceId)) {
+      return false;
+    }
+    referencedSpaceIds.add(node.subspaceId);
+  }
+  for (const [spaceId, space] of Object.entries(validatedSpaces)) {
+    const anchor = nodeById.get(space.anchorNodeId);
+    if (!anchor || anchor.subspaceId !== spaceId) return false;
+  }
+
+  const parentSpaceByMapSpace = new Map<string, string | null>();
+  for (const [spaceId, space] of Object.entries(validatedSpaces)) {
+    if (space.type !== "map") continue;
+    const parentSpaceId = ownerSpaceByNodeId.get(space.anchorNodeId);
+    if (parentSpaceId === undefined || parentSpaceId === spaceId) return false;
+    parentSpaceByMapSpace.set(spaceId, parentSpaceId);
+  }
+  for (const spaceId of parentSpaceByMapSpace.keys()) {
+    const visited = new Set<string>();
+    let current: string | null | undefined = spaceId;
+    while (current) {
+      if (visited.has(current)) return false;
+      visited.add(current);
+      current = parentSpaceByMapSpace.get(current);
+    }
+  }
+  return true;
 }
 
 export function parseMindMapDocument(value: string): MindMapDocument {

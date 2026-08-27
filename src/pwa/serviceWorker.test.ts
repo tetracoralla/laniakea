@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import mainSource from "../main.tsx?raw";
 import { retireDesktopServiceWorkers } from "./serviceWorkerLifecycle";
 import serviceWorker from "../../public/sw.js?raw";
+import viteConfig from "../../vite.config.ts?raw";
 
 describe("PWA application shell", () => {
   it("ignores Vary when serving same-origin cached modules offline", () => {
@@ -18,6 +19,13 @@ describe("PWA application shell", () => {
       serviceWorker.indexOf("caches.match(event.request"),
     );
     expect(assetBranch).not.toContain("caches.match(SCOPE_URL");
+  });
+
+  it("pre-caches lazy chunks from the generated production asset manifest", () => {
+    expect(viteConfig).toContain('fileName: "asset-manifest.json"');
+    expect(serviceWorker).toContain("ASSET_MANIFEST_URL");
+    expect(serviceWorker).toContain("...bundledAssets");
+    expect(serviceWorker).toContain("`${CACHE_PREFIX}v5`");
   });
 
   it("does not register a new PWA shell inside the desktop WebView", () => {

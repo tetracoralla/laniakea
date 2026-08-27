@@ -21,6 +21,7 @@ import {
   openBrowserDocument,
   requestPersistentBrowserStorage,
   saveBrowserDocument,
+  saveBrowserDocumentViewState,
 } from "./browserDocumentStore";
 export { isBrowserDocumentPath } from "./browserDocumentStore";
 
@@ -473,6 +474,18 @@ export async function saveLocalDocument(
     }
     if (!documentPath || !isBrowserDocumentPath(documentPath)) {
       throw new PersistenceError("当前思维导图还没有可用的浏览器文档位置。");
+    }
+    if (viewportOnly) {
+      // Browser view state must not touch the content revision: panning in
+      // one tab would otherwise make every other tab's next save conflict.
+      const sourceHash = await saveBrowserDocumentViewState(
+        document,
+        documentPath,
+      );
+      return {
+        sourceHash: sourceHash ?? expectedSourceHash,
+        auxiliaryWarning: null,
+      };
     }
     const saved = await saveBrowserDocument(
       document,

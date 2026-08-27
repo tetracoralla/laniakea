@@ -94,11 +94,13 @@ struct StoredDocument {
     nodes: HashMap<String, StoredNode>,
     #[serde(default)]
     floating_roots: Vec<StoredFloatingRoot>,
+    #[serde(default)]
+    spaces: Option<HashMap<String, StoredSpace>>,
     viewport: StoredViewport,
     updated_at: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct StoredFloatingRoot {
     id: String,
     x: f64,
@@ -112,50 +114,128 @@ struct StoredNode {
     text: String,
     parent_id: Option<String>,
     children: Vec<String>,
+    subspace_id: Option<String>,
     collapsed: bool,
     created_at: String,
     updated_at: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct StoredViewport {
     x: f64,
     y: f64,
     zoom: f64,
 }
 
-fn validate_document(document_json: &str) -> Result<(), String> {
-    let document: StoredDocument = serde_json::from_str(document_json)
-        .map_err(|error| storage_error("思维导图文件不是有效 JSON", error))?;
-    let root = document
-        .nodes
-        .get(&document.root_id)
-        .ok_or_else(|| "思维导图文件缺少根节点".to_string())?;
-    if document.format_version != 1
-        || root.parent_id.is_some()
-        || !document.viewport.x.is_finite()
-        || !document.viewport.y.is_finite()
-        || !document.viewport.zoom.is_finite()
-        || document.viewport.zoom <= 0.0
-    {
-        return Err("思维导图文件版本或根节点无效".to_string());
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct StoredFlowNode {
+    id: String,
+    text: String,
+    kind: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Deserialize, PartialEq)]
+struct StoredFlowEdge {
+    id: String,
+    from: String,
+    to: String,
+    label: String,
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct StoredFlowSpace {
+    id: String,
+    #[serde(rename = "type")]
+    space_type: String,
+    anchor_node_id: String,
+    nodes: HashMap<String, StoredFlowNode>,
+    edges: Vec<StoredFlowEdge>,
+    viewport: StoredViewport,
+    updated_at: String,
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct StoredMapSpace {
+    id: String,
+    #[serde(rename = "type")]
+    space_type: String,
+    anchor_node_id: String,
+    root_id: String,
+    nodes: HashMap<String, StoredNode>,
+    #[serde(default)]
+    floating_roots: Vec<StoredFloatingRoot>,
+    viewport: StoredViewport,
+    updated_at: String,
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(untagged)]
+enum StoredSpace {
+    Flow(StoredFlowSpace),
+    Map(StoredMapSpace),
+}
+
+impl StoredSpace {
+    fn id(&self) -> &str {
+        match self {
+            Self::Flow(space) => &space.id,
+            Self::Map(space) => &space.id,
+        }
     }
 
-    let mut root_ids = vec![document.root_id.as_str()];
-    let mut unique_roots = HashSet::from([document.root_id.as_str()]);
-    for floating in &document.floating_roots {
+    fn anchor_node_id(&self) -> &str {
+        match self {
+            Self::Flow(space) => &space.anchor_node_id,
+            Self::Map(space) => &space.anchor_node_id,
+        }
+    }
+
+    fn viewport(&self) -> &StoredViewport {
+        match self {
+            Self::Flow(space) => &space.viewport,
+            Self::Map(space) => &space.viewport,
+        }
+    }
+}
+
+fn valid_viewport(viewport: &StoredViewport) -> bool {
+    viewport.x.is_finite()
+        && viewport.y.is_finite()
+        && viewport.zoom.is_finite()
+        && viewport.zoom > 0.0
+}
+
+fn validate_mind_tree(
+    root_id: &str,
+    nodes: &HashMap<String, StoredNode>,
+    floating_roots: &[StoredFloatingRoot],
+    label: &str,
+) -> Result<(), String> {
+    let root = nodes
+        .get(root_id)
+        .ok_or_else(|| format!("{label}缺少根节点"))?;
+    if root.parent_id.is_some() {
+        return Err(format!("{label}根节点无效"));
+    }
+    let mut root_ids = vec![root_id];
+    let mut unique_roots = HashSet::from([root_id]);
+    for floating in floating_roots {
         if !floating.x.is_finite()
             || !floating.y.is_finite()
             || !unique_roots.insert(floating.id.as_str())
         {
-            return Err("思维导图浮动分支的位置或节点无效".to_string());
+            return Err(format!("{label}浮动分支的位置或节点无效"));
         }
-        let floating_node = document
-            .nodes
+        let floating_node = nodes
             .get(&floating.id)
-            .ok_or_else(|| "思维导图浮动分支缺少根节点".to_string())?;
+            .ok_or_else(|| format!("{label}浮动分支缺少根节点"))?;
         if floating_node.parent_id.is_some() {
-            return Err("思维导图浮动分支仍属于其他节点".to_string());
+            return Err(format!("{label}浮动分支仍属于其他节点"));
         }
         root_ids.push(floating.id.as_str());
     }
@@ -164,28 +244,134 @@ fn validate_document(document_json: &str) -> Result<(), String> {
     let mut pending = root_ids;
     while let Some(id) = pending.pop() {
         if !visited.insert(id) {
-            return Err("思维导图节点包含循环或重复引用".to_string());
+            return Err(format!("{label}节点包含循环或重复引用"));
         }
-        let node = document
-            .nodes
+        let node = nodes
             .get(id)
-            .ok_or_else(|| "思维导图引用了不存在的节点".to_string())?;
+            .ok_or_else(|| format!("{label}引用了不存在的节点"))?;
         if node.id != id {
-            return Err("思维导图节点索引与节点 ID 不一致".to_string());
+            return Err(format!("{label}节点索引与节点 ID 不一致"));
         }
         for child_id in &node.children {
-            let child = document
-                .nodes
+            let child = nodes
                 .get(child_id)
-                .ok_or_else(|| "思维导图引用了不存在的子节点".to_string())?;
+                .ok_or_else(|| format!("{label}引用了不存在的子节点"))?;
             if child.parent_id.as_deref() != Some(id) {
-                return Err("思维导图父子关系不一致".to_string());
+                return Err(format!("{label}父子关系不一致"));
             }
             pending.push(child_id);
         }
     }
-    if visited.len() != document.nodes.len() {
-        return Err("思维导图包含无法从根节点访问的节点".to_string());
+    if visited.len() != nodes.len() {
+        return Err(format!("{label}包含无法从根节点访问的节点"));
+    }
+    Ok(())
+}
+
+fn validate_document(document_json: &str) -> Result<(), String> {
+    let document: StoredDocument = serde_json::from_str(document_json)
+        .map_err(|error| storage_error("思维导图文件不是有效 JSON", error))?;
+    if document.format_version != 1 || !valid_viewport(&document.viewport) {
+        return Err("思维导图文件版本或根节点无效".to_string());
+    }
+    validate_mind_tree(
+        &document.root_id,
+        &document.nodes,
+        &document.floating_roots,
+        "思维导图",
+    )?;
+    let root = document.nodes.get(&document.root_id).unwrap();
+
+    let empty_spaces = HashMap::new();
+    let spaces = document.spaces.as_ref().unwrap_or(&empty_spaces);
+    let mut all_nodes: HashMap<&str, &StoredNode> = HashMap::new();
+    let mut owner_space_by_node: HashMap<&str, Option<&str>> = HashMap::new();
+    for (node_id, node) in &document.nodes {
+        all_nodes.insert(node_id.as_str(), node);
+        owner_space_by_node.insert(node_id.as_str(), None);
+    }
+    for (space_id, space) in spaces {
+        if space.id() != space_id || !valid_viewport(space.viewport()) {
+            return Err("下层空间版本、节点或视口无效".to_string());
+        }
+        match space {
+            StoredSpace::Flow(flow) => {
+                if flow.space_type != "flow" || flow.nodes.is_empty() {
+                    return Err("流程空间版本、节点或视口无效".to_string());
+                }
+                for (node_id, node) in &flow.nodes {
+                    if node.id != *node_id
+                        || !matches!(node.kind.as_str(), "start" | "step" | "decision" | "end")
+                    {
+                        return Err("流程空间包含无效节点".to_string());
+                    }
+                }
+                let mut edge_ids = HashSet::new();
+                for edge in &flow.edges {
+                    if !edge_ids.insert(edge.id.as_str())
+                        || !flow.nodes.contains_key(&edge.from)
+                        || !flow.nodes.contains_key(&edge.to)
+                    {
+                        return Err("流程空间包含无效连接".to_string());
+                    }
+                }
+            }
+            StoredSpace::Map(map) => {
+                if map.space_type != "map" {
+                    return Err("思维图空间版本无效".to_string());
+                }
+                validate_mind_tree(&map.root_id, &map.nodes, &map.floating_roots, "思维图空间")?;
+                for (node_id, node) in &map.nodes {
+                    if all_nodes.insert(node_id.as_str(), node).is_some() {
+                        return Err("不同思维图空间使用了重复节点 ID".to_string());
+                    }
+                    owner_space_by_node.insert(node_id.as_str(), Some(space_id.as_str()));
+                }
+            }
+        }
+    }
+    let mut referenced_space_ids = HashSet::new();
+    for node in all_nodes.values() {
+        if let Some(space_id) = node.subspace_id.as_deref() {
+            let space = spaces
+                .get(space_id)
+                .ok_or_else(|| "思维导图节点引用了不存在的下层空间".to_string())?;
+            if !referenced_space_ids.insert(space_id) || space.anchor_node_id() != node.id {
+                return Err("思维导图节点引用了其他节点的下层空间".to_string());
+            }
+        }
+    }
+    for (space_id, space) in spaces {
+        let anchor = all_nodes
+            .get(space.anchor_node_id())
+            .ok_or_else(|| "下层空间缺少锚点节点".to_string())?;
+        if anchor.subspace_id.as_deref() != Some(space_id.as_str()) {
+            return Err("下层空间与锚点节点不一致".to_string());
+        }
+    }
+
+    let mut parent_space_by_map: HashMap<&str, Option<&str>> = HashMap::new();
+    for (space_id, space) in spaces {
+        if let StoredSpace::Map(map) = space {
+            let parent_space = owner_space_by_node
+                .get(map.anchor_node_id.as_str())
+                .copied()
+                .flatten();
+            if parent_space == Some(space_id.as_str()) {
+                return Err("思维图空间不能锚定自身".to_string());
+            }
+            parent_space_by_map.insert(space_id.as_str(), parent_space);
+        }
+    }
+    for space_id in parent_space_by_map.keys() {
+        let mut visited_spaces = HashSet::new();
+        let mut current = Some(*space_id);
+        while let Some(candidate) = current {
+            if !visited_spaces.insert(candidate) {
+                return Err("思维图空间包含循环下钻关系".to_string());
+            }
+            current = parent_space_by_map.get(candidate).copied().flatten();
+        }
     }
 
     let _ = (
@@ -206,6 +392,44 @@ fn same_document_content_ignoring_viewport(left: &str, right: &str) -> bool {
     ) else {
         return false;
     };
+    fn same_space_content(
+        left: &Option<HashMap<String, StoredSpace>>,
+        right: &Option<HashMap<String, StoredSpace>>,
+    ) -> bool {
+        let empty = HashMap::new();
+        let left = left.as_ref().unwrap_or(&empty);
+        let right = right.as_ref().unwrap_or(&empty);
+        left.len() == right.len()
+            && left.iter().all(|(id, left_space)| {
+                right
+                    .get(id)
+                    .is_some_and(|right_space| match (left_space, right_space) {
+                        (StoredSpace::Flow(left), StoredSpace::Flow(right)) => {
+                            left.id == right.id
+                                && left.space_type == right.space_type
+                                && left.anchor_node_id == right.anchor_node_id
+                                && left.nodes == right.nodes
+                                && left.edges == right.edges
+                                && left.updated_at == right.updated_at
+                        }
+                        (StoredSpace::Map(left), StoredSpace::Map(right)) => {
+                            left.id == right.id
+                                && left.space_type == right.space_type
+                                && left.anchor_node_id == right.anchor_node_id
+                                && left.root_id == right.root_id
+                                && left.nodes == right.nodes
+                                && left
+                                    .floating_roots
+                                    .iter()
+                                    .map(|root| root.id.as_str())
+                                    .eq(right.floating_roots.iter().map(|root| root.id.as_str()))
+                                && left.updated_at == right.updated_at
+                        }
+                        _ => false,
+                    })
+            })
+    }
+
     left.format_version == right.format_version
         && left.title == right.title
         && left.root_id == right.root_id
@@ -215,6 +439,7 @@ fn same_document_content_ignoring_viewport(left: &str, right: &str) -> bool {
             .map(|root| root.id.as_str())
             .eq(right.floating_roots.iter().map(|root| root.id.as_str()))
         && left.nodes == right.nodes
+        && same_space_content(&left.spaces, &right.spaces)
         && left.updated_at == right.updated_at
 }
 
@@ -1244,6 +1469,119 @@ mod tests {
         )
     }
 
+    fn flow_document(space_viewport_x: i32) -> String {
+        serde_json::json!({
+            "formatVersion": 1,
+            "title": "流程锚点",
+            "rootId": "root",
+            "nodes": {
+                "root": {
+                    "id": "root",
+                    "text": "流程锚点",
+                    "parentId": null,
+                    "children": [],
+                    "subspaceId": "flow-1",
+                    "collapsed": false,
+                    "createdAt": "2026-07-23T00:00:00.000Z",
+                    "updatedAt": "2026-07-23T00:00:00.000Z"
+                }
+            },
+            "spaces": {
+                "flow-1": {
+                    "id": "flow-1",
+                    "type": "flow",
+                    "anchorNodeId": "root",
+                    "nodes": {
+                        "start": {
+                            "id": "start",
+                            "text": "开始",
+                            "kind": "start",
+                            "createdAt": "2026-07-23T00:00:00.000Z",
+                            "updatedAt": "2026-07-23T00:00:00.000Z"
+                        },
+                        "step": {
+                            "id": "step",
+                            "text": "处理",
+                            "kind": "step",
+                            "createdAt": "2026-07-23T00:00:00.000Z",
+                            "updatedAt": "2026-07-23T00:00:00.000Z"
+                        },
+                        "end": {
+                            "id": "end",
+                            "text": "完成",
+                            "kind": "end",
+                            "createdAt": "2026-07-23T00:00:00.000Z",
+                            "updatedAt": "2026-07-23T00:00:00.000Z"
+                        }
+                    },
+                    "edges": [
+                        {"id": "edge-1", "from": "start", "to": "step", "label": ""},
+                        {"id": "edge-2", "from": "step", "to": "end", "label": ""}
+                    ],
+                    "viewport": {"x": space_viewport_x, "y": 0, "zoom": 1},
+                    "updatedAt": "2026-07-23T00:00:00.000Z"
+                }
+            },
+            "viewport": {"x": 0, "y": 0, "zoom": 1},
+            "updatedAt": "2026-07-23T00:00:00.000Z"
+        })
+        .to_string()
+    }
+
+    fn map_space_document(space_viewport_x: i32) -> String {
+        serde_json::json!({
+            "formatVersion": 1,
+            "title": "下钻主题",
+            "rootId": "root",
+            "nodes": {
+                "root": {
+                    "id": "root",
+                    "text": "下钻主题",
+                    "parentId": null,
+                    "children": [],
+                    "subspaceId": "map-1",
+                    "collapsed": false,
+                    "createdAt": "2026-07-23T00:00:00.000Z",
+                    "updatedAt": "2026-07-23T00:00:00.000Z"
+                }
+            },
+            "spaces": {
+                "map-1": {
+                    "id": "map-1",
+                    "type": "map",
+                    "anchorNodeId": "root",
+                    "rootId": "map-root",
+                    "nodes": {
+                        "map-root": {
+                            "id": "map-root",
+                            "text": "下钻主题",
+                            "parentId": null,
+                            "children": ["detail"],
+                            "collapsed": false,
+                            "createdAt": "2026-07-23T00:00:00.000Z",
+                            "updatedAt": "2026-07-23T00:00:00.000Z"
+                        },
+                        "detail": {
+                            "id": "detail",
+                            "text": "细节",
+                            "parentId": "map-root",
+                            "children": [],
+                            "collapsed": false,
+                            "createdAt": "2026-07-23T00:00:00.000Z",
+                            "updatedAt": "2026-07-23T00:00:00.000Z"
+                        }
+                    },
+                    "floatingRoots": [],
+                    "viewport": {"x": space_viewport_x, "y": 0, "zoom": 1},
+                    "updatedAt": "2026-07-23T00:00:00.000Z"
+                }
+            },
+            "viewport": {"x": 0, "y": 0, "zoom": 1},
+            "updatedAt": "2026-07-23T00:00:00.000Z"
+        })
+        .to_string()
+    }
+
     fn test_directory(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "origin-storage-{name}-{}-{}",
@@ -1268,6 +1606,73 @@ mod tests {
             stable_storage_key("hello"),
             "sha256-v1-2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
+    }
+
+    #[test]
+    fn validates_flow_space_anchors_and_edges() {
+        assert!(validate_document(&flow_document(0)).is_ok());
+
+        let mut dangling: serde_json::Value = serde_json::from_str(&flow_document(0)).unwrap();
+        dangling["nodes"]["root"]
+            .as_object_mut()
+            .unwrap()
+            .remove("subspaceId");
+        assert!(validate_document(&dangling.to_string())
+            .unwrap_err()
+            .contains("锚点节点"));
+
+        let mut missing_target: serde_json::Value =
+            serde_json::from_str(&flow_document(0)).unwrap();
+        missing_target["spaces"]["flow-1"]["edges"][0]["to"] =
+            serde_json::Value::String("missing".to_string());
+        assert!(validate_document(&missing_target.to_string())
+            .unwrap_err()
+            .contains("无效连接"));
+    }
+
+    #[test]
+    fn validates_permanent_map_space_tree_and_anchor() {
+        assert!(validate_document(&map_space_document(0)).is_ok());
+
+        let mut broken: serde_json::Value = serde_json::from_str(&map_space_document(0)).unwrap();
+        broken["spaces"]["map-1"]["nodes"]["detail"]["parentId"] =
+            serde_json::Value::String("missing".to_string());
+        assert!(validate_document(&broken.to_string())
+            .unwrap_err()
+            .contains("父子关系"));
+    }
+
+    #[test]
+    fn saves_flow_viewport_without_consuming_content_backup_slots() {
+        let directory = test_directory("flow-viewport-only");
+        let app_data = directory.join("app-data");
+        let target = directory.join("flow.mindmap.json");
+        save_to_target(&app_data, &target, &flow_document(0)).unwrap();
+
+        save_to_target(&app_data, &target, &flow_document(125)).unwrap();
+
+        assert_eq!(backup_count(&app_data, &target), 0);
+        assert!(fs::read_to_string(&target).unwrap().contains("\"x\":125"));
+        let changed = flow_document(125).replace("\"text\":\"处理\"", "\"text\":\"已处理\"");
+        save_to_target(&app_data, &target, &changed).unwrap();
+        assert_eq!(backup_count(&app_data, &target), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn saves_map_space_viewport_without_consuming_content_backup_slots() {
+        let directory = test_directory("map-space-viewport-only");
+        let app_data = directory.join("app-data");
+        let target = directory.join("map.mindmap.json");
+        save_to_target(&app_data, &target, &map_space_document(0)).unwrap();
+
+        save_to_target(&app_data, &target, &map_space_document(125)).unwrap();
+
+        assert_eq!(backup_count(&app_data, &target), 0);
+        let changed = map_space_document(125).replace("\"text\":\"细节\"", "\"text\":\"新细节\"");
+        save_to_target(&app_data, &target, &changed).unwrap();
+        assert_eq!(backup_count(&app_data, &target), 1);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

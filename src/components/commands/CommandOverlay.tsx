@@ -11,6 +11,7 @@ import {
   type CommandId,
 } from "../../commands/registry";
 import type { MindMapDocument } from "../../types/mindmap";
+import { findMindNode } from "../../model/spaces";
 import { Icon } from "../icons/Icon";
 import { trapDialogTab } from "../overlays/focus";
 
@@ -21,14 +22,21 @@ interface CommandOverlayProps {
   document: MindMapDocument;
   onClose: () => void;
   onExecute: (id: CommandId) => void;
-  onSelectNode: (id: string) => void;
+  onSelectNode: (id: string, spaceId?: string) => void;
 }
 
 interface OverlayItem {
   id: string;
+  nodeId?: string;
+  spaceId?: string;
   title: string;
   meta: string;
+  metaKind: "context" | "shortcut";
   command?: CommandDefinition;
+}
+
+interface SearchEntry extends OverlayItem {
+  normalizedTitle: string;
 }
 
 export const overlayItemLimit = 12;
@@ -57,10 +65,45 @@ export function CommandOverlay({
   const dialogRef = useRef<HTMLElement>(null);
   const listId = useId();
 
-  const items = useMemo<OverlayItem[]>(() => {
+  const searchEntries = useMemo<SearchEntry[]>(() => {
+    if (mode !== "search") return [];
+    const entries: SearchEntry[] = [];
+    Object.values(document.nodes).forEach((node) => {
+      if (!node.text.trim()) return;
+      entries.push({
+        id: `map:${node.id}`,
+        nodeId: node.id,
+        title: node.text,
+        normalizedTitle: node.text.toLocaleLowerCase(),
+        meta: node.children.length ? `${node.children.length} 个子节点` : "",
+        metaKind: "context",
+      });
+    });
+    Object.values(document.spaces ?? {}).forEach((space) => {
+      const anchor = findMindNode(document, space.anchorNodeId);
+      Object.values(space.nodes).forEach((node) => {
+        if (!node.text.trim()) return;
+        entries.push({
+          id: `space:${space.id}:${node.id}`,
+          nodeId: node.id,
+          spaceId: space.id,
+          title: node.text,
+          normalizedTitle: node.text.toLocaleLowerCase(),
+          meta: `${space.type === "map" ? "思维图" : "流程"} · ${anchor?.text || "未命名节点"}`,
+          metaKind: "context",
+        });
+      });
+    });
+    return entries;
+  }, [document.nodes, document.spaces, mode]);
+
+  const result = useMemo<{
+    items: OverlayItem[];
+    total: number;
+  }>(() => {
     const normalized = query.trim().toLocaleLowerCase();
     if (mode === "commands") {
-      return commandRegistry
+      const matches = commandRegistry
         .filter(
           (command) =>
             !normalized ||
@@ -71,25 +114,25 @@ export function CommandOverlay({
           id: command.id,
           title: command.label,
           meta: command.shortcut,
+          metaKind: "shortcut" as const,
           command,
         }));
+      return {
+        items: matches.slice(0, overlayItemLimit),
+        total: matches.length,
+      };
     }
 
-    return Object.values(document.nodes)
-      .filter((node) => {
-        if (!normalized) return true;
-        return node.text.toLocaleLowerCase().includes(normalized);
-      })
-      .map((node) => ({
-        id: node.id,
-        title: node.text,
-        meta: node.children.length ? `${node.children.length} 个子节点` : "节点",
-      }));
-  }, [document.nodes, mode, query]);
-  const renderedItems = useMemo(
-    () => items.slice(0, overlayItemLimit),
-    [items],
-  );
+    const items: OverlayItem[] = [];
+    let total = 0;
+    searchEntries.forEach((entry) => {
+      if (normalized && !entry.normalizedTitle.includes(normalized)) return;
+      total += 1;
+      if (items.length < overlayItemLimit) items.push(entry);
+    });
+    return { items, total };
+  }, [mode, query, searchEntries]);
+  const renderedItems = result.items;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -100,7 +143,7 @@ export function CommandOverlay({
   const choose = (item: OverlayItem | undefined) => {
     if (!item) return;
     if (item.command) onExecute(item.command.id);
-    else onSelectNode(item.id);
+    else if (item.nodeId) onSelectNode(item.nodeId, item.spaceId);
     onClose();
   };
 
@@ -112,7 +155,7 @@ export function CommandOverlay({
       }}
     >
       <section
-        aria-label={mode === "commands" ? "命令面板" : "搜索节点"}
+        aria-label={mode === "commands" ? "命令面板" : "搜索内容"}
         aria-modal="true"
         className="command-overlay"
         onKeyDown={(event) => trapDialogTab(event, dialogRef)}
@@ -128,7 +171,9 @@ export function CommandOverlay({
                 : undefined
             }
             aria-controls={listId}
-            aria-label={mode === "commands" ? "搜索命令" : "搜索节点"}
+            aria-autocomplete="list"
+            aria-expanded="true"
+            aria-label={mode === "commands" ? "搜索命令" : "搜索内容"}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
@@ -152,8 +197,9 @@ export function CommandOverlay({
                 choose(renderedItems[activeIndex]);
               }
             }}
-            placeholder={mode === "commands" ? "输入命令…" : "输入节点内容…"}
+            placeholder={mode === "commands" ? "输入命令…" : "搜索内容…"}
             ref={inputRef}
+            role="combobox"
             value={query}
           />
           <kbd>Esc</kbd>
@@ -163,7 +209,7 @@ export function CommandOverlay({
           id={listId}
           role="listbox"
         >
-          {items.length === 0 ? (
+          {result.total === 0 ? (
             <div className="command-overlay__empty">没有匹配结果</div>
           ) : (
             renderedItems.map((item, index) => (
@@ -181,19 +227,22 @@ export function CommandOverlay({
                   <strong>{item.title}</strong>
                   {item.command && <small>{item.command.group}</small>}
                 </span>
-                <kbd>{item.meta.replaceAll("Meta", "⌘").replaceAll("+", "")}</kbd>
+                {item.metaKind === "shortcut" ? (
+                  <kbd>
+                    {item.meta.replaceAll("Meta", "⌘").replaceAll("+", "")}
+                  </kbd>
+                ) : item.meta ? (
+                  <small className="command-overlay__meta">{item.meta}</small>
+                ) : null}
               </button>
             ))
           )}
         </div>
-        <footer className="command-overlay__footer">
-          <span>
-            <kbd>↑↓</kbd> 选择
-          </span>
-          <span>
-            <kbd>Enter</kbd> 打开
-          </span>
-        </footer>
+        {result.total > renderedItems.length && (
+          <div className="command-overlay__truncation" role="status">
+            显示前 {renderedItems.length} 条，共 {result.total} 条
+          </div>
+        )}
       </section>
     </div>
   );

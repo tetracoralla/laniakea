@@ -6,7 +6,7 @@ import {
   type MarkdownParseResult,
 } from "../model/markdown";
 import { createNodeId, normalizeNodeText } from "../model/tree";
-import type { MindMapDocument, MindNode } from "../types/mindmap";
+import type { MapSpace, MindMapDocument, MindNode } from "../types/mindmap";
 
 export const MAX_AGENT_NODES = 10_000;
 export const MAX_AGENT_OPERATIONS = 100;
@@ -25,7 +25,49 @@ export interface AgentNodeView {
   text: string;
   childCount: number;
   breadcrumb: string[];
+  subspace?: AgentSubspaceView;
 }
+
+export interface AgentFlowNodeView {
+  ref: string;
+  kind: "start" | "step" | "decision" | "end";
+  text: string;
+  textTruncated: boolean;
+  outgoing: Array<{
+    toRef: string;
+    label: string;
+    labelTruncated: boolean;
+  }>;
+  outgoingTruncated: boolean;
+}
+
+export interface AgentFlowSpaceView {
+  id: string;
+  type: "flow";
+  nodeCount: number;
+  edgeCount: number;
+  nodes: AgentFlowNodeView[];
+  truncated: boolean;
+}
+
+export interface AgentMapNodeView {
+  ref: string;
+  parentRef: string | null;
+  depth: number;
+  text: string;
+  textTruncated: boolean;
+  childCount: number;
+}
+
+export interface AgentMapSpaceView {
+  id: string;
+  type: "map";
+  nodeCount: number;
+  nodes: AgentMapNodeView[];
+  truncated: boolean;
+}
+
+export type AgentSubspaceView = AgentFlowSpaceView | AgentMapSpaceView;
 
 export type AgentViewTruncationReason =
   | "max_depth"
@@ -136,6 +178,36 @@ function cloneDocument(document: MindMapDocument): MindMapDocument {
       ]),
     ),
     floatingRoots: document.floatingRoots.map((root) => ({ ...root })),
+    spaces: document.spaces
+      ? Object.fromEntries(
+          Object.entries(document.spaces).map(([id, space]) => [
+            id,
+            space.type === "flow"
+              ? {
+                  ...space,
+                  nodes: Object.fromEntries(
+                    Object.entries(space.nodes).map(([nodeId, node]) => [
+                      nodeId,
+                      { ...node },
+                    ]),
+                  ),
+                  edges: space.edges.map((edge) => ({ ...edge })),
+                  viewport: { ...space.viewport },
+                }
+              : {
+                  ...space,
+                  nodes: Object.fromEntries(
+                    Object.entries(space.nodes).map(([nodeId, node]) => [
+                      nodeId,
+                      { ...node, children: [...node.children] },
+                    ]),
+                  ),
+                  floatingRoots: space.floatingRoots.map((root) => ({ ...root })),
+                  viewport: { ...space.viewport },
+                },
+          ]),
+        )
+      : undefined,
     viewport: { ...document.viewport },
   };
 }
@@ -274,7 +346,136 @@ function removeSubtree(document: MindMapDocument, id: string) {
       (root) => root.id !== id,
     );
   }
+  if (document.spaces) {
+    const removedSpaceIds = new Set<string>();
+    const removedAnchorIds = new Set(removed);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      Object.entries(document.spaces).forEach(([spaceId, space]) => {
+        if (removedSpaceIds.has(spaceId) || !removedAnchorIds.has(space.anchorNodeId)) {
+          return;
+        }
+        removedSpaceIds.add(spaceId);
+        if (space.type === "map") {
+          Object.keys(space.nodes).forEach((nodeId) => removedAnchorIds.add(nodeId));
+        }
+        changed = true;
+      });
+    }
+    document.spaces = Object.fromEntries(
+      Object.entries(document.spaces).filter(
+        ([spaceId]) => !removedSpaceIds.has(spaceId),
+      ),
+    );
+  }
   removed.forEach((nodeId) => delete document.nodes[nodeId]);
+}
+
+const agentMapPreviewNodeLimit = 32;
+const agentFlowPreviewNodeLimit = 32;
+const agentFlowPreviewEdgeLimit = 64;
+const agentFlowPreviewTextLimit = 256;
+const agentFlowPreviewLabelLimit = 128;
+
+function boundedScalar(value: string, limit: number) {
+  const characters = Array.from(value);
+  return {
+    value: characters.slice(0, limit).join(""),
+    truncated: characters.length > limit,
+  };
+}
+
+function agentFlowSpaceView(
+  document: MindMapDocument,
+  subspaceId: string | undefined,
+): AgentFlowSpaceView | undefined {
+  if (!subspaceId) return undefined;
+  const space = document.spaces?.[subspaceId];
+  if (!space || space.type !== "flow") return undefined;
+  const allNodes = Object.values(space.nodes);
+  const nodes = allNodes.slice(0, agentFlowPreviewNodeLimit).map((node) => {
+    const text = boundedScalar(node.text, agentFlowPreviewTextLimit);
+    const outgoingEdges = space.edges.filter(
+      (edge) => edge.from === node.id,
+    );
+    const outgoing = outgoingEdges
+      .slice(0, agentFlowPreviewEdgeLimit)
+      .map((edge) => {
+        const label = boundedScalar(edge.label, agentFlowPreviewLabelLimit);
+        return {
+          toRef: `space:${space.id}/${edge.to}`,
+          label: label.value,
+          labelTruncated: label.truncated,
+        };
+      });
+    return {
+      ref: `space:${space.id}/${node.id}`,
+      kind: node.kind,
+      text: text.value,
+      textTruncated: text.truncated,
+      outgoing,
+      outgoingTruncated: outgoing.length < outgoingEdges.length,
+    };
+  });
+  return {
+    id: space.id,
+    type: "flow",
+    nodeCount: allNodes.length,
+    edgeCount: space.edges.length,
+    nodes,
+    truncated: nodes.length < allNodes.length,
+  };
+}
+
+function agentMapSpaceView(space: MapSpace): AgentMapSpaceView {
+  const allNodeCount = Object.keys(space.nodes).length;
+  const nodes: AgentMapNodeView[] = [];
+  const refById = new Map<string, string>();
+  const stack = [space.rootId, ...space.floatingRoots.map(({ id }) => id)]
+    .map((id, index) => ({ id, depth: 0, ref: `space:${space.id}/${index}` }))
+    .reverse();
+  while (stack.length > 0 && nodes.length < agentMapPreviewNodeLimit) {
+    const current = stack.pop()!;
+    const node = space.nodes[current.id];
+    if (!node) continue;
+    const text = boundedScalar(node.text, agentFlowPreviewTextLimit);
+    refById.set(node.id, current.ref);
+    nodes.push({
+      ref: current.ref,
+      parentRef: node.parentId ? refById.get(node.parentId) ?? null : null,
+      depth: current.depth,
+      text: text.value,
+      textTruncated: text.truncated,
+      childCount: node.children.length,
+    });
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      stack.push({
+        id: node.children[index],
+        depth: current.depth + 1,
+        ref: `${current.ref}/${index}`,
+      });
+    }
+  }
+  return {
+    id: space.id,
+    type: "map",
+    nodeCount: allNodeCount,
+    nodes,
+    truncated: nodes.length < allNodeCount,
+  };
+}
+
+function agentSubspaceView(
+  document: MindMapDocument,
+  subspaceId: string | undefined,
+): AgentSubspaceView | undefined {
+  if (!subspaceId) return undefined;
+  const space = document.spaces?.[subspaceId];
+  if (!space) return undefined;
+  return space.type === "flow"
+    ? agentFlowSpaceView(document, subspaceId)
+    : agentMapSpaceView(space);
 }
 
 function touch(document: MindMapDocument, ids: Iterable<string>, now: string) {
@@ -359,6 +560,7 @@ export function mindMapToAgentView(
       text: node.text,
       childCount: node.children.length,
       breadcrumb: nextBreadcrumb,
+      subspace: agentSubspaceView(document, node.subspaceId),
     });
     if (depth >= maxDepth) {
       if (node.children.length > 0) {
@@ -437,6 +639,7 @@ export function searchAgentMindMap(
           text: node.text,
           childCount: node.children.length,
           breadcrumb: breadcrumb.reverse(),
+          subspace: agentSubspaceView(document, node.subspaceId),
         });
       }
     }
@@ -672,6 +875,15 @@ export function applyMindMapOperations(
       continue;
     }
 
+    // Reachable only when bypassing the MCP input schema; keeps direct
+    // callers from silently treating an unknown type as a delete.
+    const operationType: string = operation.type;
+    if (operationType !== "delete_subtree") {
+      throw new MindMapToolError(
+        "invalid_operation",
+        `Unknown operation type: ${operationType}`,
+      );
+    }
     const id = requireRef(initialIndex, operation.ref);
     if (id === document.rootId) {
       throw new MindMapToolError(

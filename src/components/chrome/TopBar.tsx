@@ -29,6 +29,8 @@ interface TopBarProps {
   showDesktopActions?: boolean;
   onExportFullBackup?: () => void;
   onRestoreFullBackup?: () => void;
+  spacePath?: Array<{ id: string; label: string; typeLabel: string }>;
+  onNavigateBack?: () => void;
 }
 
 export function TopBar({
@@ -52,12 +54,15 @@ export function TopBar({
   showDesktopActions = true,
   onExportFullBackup,
   onRestoreFullBackup,
+  spacePath = [],
+  onNavigateBack,
 }: TopBarProps) {
   const [draft, setDraft] = useState(title);
   const [openMenu, setOpenMenu] = useState<"documents" | "more" | null>(
     null,
   );
   const menuOpen = openMenu === "more";
+  const currentSpace = spacePath[spacePath.length - 1];
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -153,6 +158,16 @@ export function TopBar({
   return (
     <header className="topbar">
       <div className="topbar__identity">
+        {spacePath.length > 0 && onNavigateBack && (
+          <button
+            aria-label="返回上层图"
+            className="space-navigation__back"
+            onClick={onNavigateBack}
+            type="button"
+          >
+            <span aria-hidden="true">‹</span>
+          </button>
+        )}
         <label className="document-title">
           <span className="sr-only">文档标题</span>
           <input
@@ -184,17 +199,29 @@ export function TopBar({
           recentDocuments={recentDocuments}
           showFileActions={showDesktopActions}
         />
+        {currentSpace && (
+          <div
+            aria-label={`当前位置：${currentSpace.typeLabel} ${currentSpace.label}`}
+            className="space-navigation"
+            title={`${currentSpace.typeLabel} · ${currentSpace.label}`}
+          >
+            <span aria-hidden="true" className="space-navigation__separator" />
+            <strong>{currentSpace.label}</strong>
+            <span className="space-navigation__type">{currentSpace.typeLabel}</span>
+          </div>
+        )}
       </div>
 
       <nav className="topbar__actions" aria-label="文档操作">
         <button
           aria-label="新建"
-          className="toolbar-button"
+          className="toolbar-button toolbar-button--labeled"
           onClick={onNew}
+          title="新建"
           type="button"
         >
           <Icon name="file" />
-          <span className="toolbar-button__label">新建</span>
+          <span>新建</span>
         </button>
         <span
           aria-hidden="true"
@@ -204,19 +231,19 @@ export function TopBar({
           aria-label="搜索"
           className="toolbar-button"
           onClick={(event) => onSearch(event.currentTarget)}
+          title="搜索"
           type="button"
         >
           <Icon name="search" />
-          <span className="toolbar-button__label">搜索</span>
         </button>
         <button
           aria-label="另存为"
-          className="toolbar-button toolbar-button--wide"
+          className="toolbar-button"
           onClick={onSaveAs}
+          title="另存为"
           type="button"
         >
           <Icon name="export" />
-          <span className="toolbar-button__label">另存为</span>
         </button>
         <div className="more-menu" ref={menuRef}>
           <button
@@ -242,10 +269,10 @@ export function TopBar({
               }
             }}
             ref={menuButtonRef}
+            title="更多"
             type="button"
           >
             <Icon name="more" />
-            <span className="toolbar-button__label">更多</span>
           </button>
           {menuOpen && (
             <div

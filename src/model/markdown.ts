@@ -1,4 +1,5 @@
 import type {
+  Code,
   Heading,
   List,
   ListItem,
@@ -13,10 +14,20 @@ import remarkStringify from "remark-stringify";
 import { unified } from "unified";
 import { createBlankDocument } from "../data/seed";
 import {
+  isMindMapDocument,
   resolveProvisionalDocumentTitle,
   topLevelRootIds,
 } from "./document";
-import type { MindMapDocument, MindNode } from "../types/mindmap";
+import type {
+  FlowEdge,
+  FlowNode,
+  FlowSpace,
+  LaniakeaSpace,
+  MapSpace,
+  MindMapDocument,
+  MindNode,
+} from "../types/mindmap";
+import { documentSpaces } from "./spaces";
 
 const markdownProcessor = unified()
   .use(remarkParse)
@@ -52,6 +63,207 @@ interface DocumentBuilder {
   nodes: Record<string, MindNode>;
   nextId: number;
   now: string;
+}
+
+interface PortableFlowSpace {
+  id: string;
+  type: "flow";
+  nodes: Record<string, FlowNode>;
+  edges: FlowEdge[];
+}
+
+interface PortableMapSpace {
+  id: string;
+  type: "map";
+  rootId: string;
+  nodes: Record<string, MindNode>;
+  floatingRoots: MindMapDocument["floatingRoots"];
+}
+
+interface PortableSpacePortal {
+  anchorRef: string;
+  space: PortableFlowSpace | PortableMapSpace;
+}
+
+interface PortableSpaceBundle {
+  version: 1 | 2;
+  portals: PortableSpacePortal[];
+}
+
+function nodeReferenceMaps(document: MindMapDocument): {
+  idByRef: Map<string, string>;
+  refById: Map<string, string>;
+} {
+  const idByRef = new Map<string, string>();
+  const refById = new Map<string, string>();
+  const pending = topLevelRootIds(document)
+    .map((id, index) => ({ id, ref: `/${index}` }))
+    .reverse();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    const node = document.nodes[current.id];
+    if (!node) continue;
+    idByRef.set(current.ref, current.id);
+    refById.set(current.id, current.ref);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      pending.push({
+        id: node.children[index],
+        ref: `${current.ref}/${index}`,
+      });
+    }
+  }
+  Object.values(documentSpaces(document))
+    .filter((space): space is MapSpace => space.type === "map")
+    .sort((left, right) => left.id.localeCompare(right.id))
+    .forEach((space) => {
+      const localPending = [
+        space.rootId,
+        ...space.floatingRoots.map(({ id }) => id),
+      ]
+        .map((id, index) => ({ id, ref: `space:${space.id}/${index}` }))
+        .reverse();
+      while (localPending.length > 0) {
+        const current = localPending.pop();
+        if (!current) continue;
+        const node = space.nodes[current.id];
+        if (!node) continue;
+        idByRef.set(current.ref, current.id);
+        refById.set(current.id, current.ref);
+        for (let index = node.children.length - 1; index >= 0; index -= 1) {
+          localPending.push({
+            id: node.children[index],
+            ref: `${current.ref}/${index}`,
+          });
+        }
+      }
+    });
+  return { idByRef, refById };
+}
+
+function portableMapNodes(
+  nodes: Record<string, MindNode>,
+): Record<string, MindNode> {
+  return Object.fromEntries(
+    Object.entries(nodes).map(([nodeId, node]) => {
+      const { subspaceId: _subspaceId, ...portableNode } = node;
+      return [nodeId, portableNode];
+    }),
+  );
+}
+
+function portableSpaceBundle(
+  document: MindMapDocument,
+): PortableSpaceBundle | null {
+  const { refById } = nodeReferenceMaps(document);
+  const portals = Object.values(documentSpaces(document))
+    .map((space): PortableSpacePortal | null => {
+      const anchorRef = refById.get(space.anchorNodeId);
+      if (!anchorRef) return null;
+      return {
+        anchorRef,
+        space: space.type === "flow"
+          ? {
+              id: space.id,
+              type: "flow",
+              nodes: space.nodes,
+              edges: space.edges,
+            }
+          : {
+              id: space.id,
+              type: "map",
+              rootId: space.rootId,
+              nodes: portableMapNodes(space.nodes),
+              floatingRoots: space.floatingRoots,
+            },
+      };
+    })
+    .filter((portal): portal is PortableSpacePortal => Boolean(portal))
+    .sort((left, right) => left.anchorRef.localeCompare(right.anchorRef));
+  return portals.length > 0
+    ? {
+        version: portals.some(({ space }) => space.type === "map") ? 2 : 1,
+        portals,
+      }
+    : null;
+}
+
+function parsePortableSpaceBundle(code: Code): PortableSpaceBundle | null {
+  try {
+    const candidate = JSON.parse(code.value) as Partial<PortableSpaceBundle>;
+    if (
+      (candidate.version !== 1 && candidate.version !== 2) ||
+      !Array.isArray(candidate.portals) ||
+      candidate.portals.some(
+        (portal) =>
+          !portal ||
+          typeof portal !== "object" ||
+          typeof portal.anchorRef !== "string" ||
+          !portal.space ||
+          typeof portal.space !== "object" ||
+          (candidate.version === 1 && portal.space.type !== "flow"),
+      )
+    ) {
+      return null;
+    }
+    return candidate as PortableSpaceBundle;
+  } catch {
+    return null;
+  }
+}
+
+function hydratePortableSpaces(
+  document: MindMapDocument,
+  bundle: PortableSpaceBundle,
+): MindMapDocument | null {
+  const nodes = { ...document.nodes };
+  const spaces: Record<string, LaniakeaSpace> = {};
+  const now = new Date().toISOString();
+  for (const portal of bundle.portals) {
+    if (spaces[portal.space.id]) return null;
+    spaces[portal.space.id] = portal.space.type === "flow"
+      ? {
+          ...portal.space,
+          anchorNodeId: "",
+          viewport: { x: 96, y: 72, zoom: 1 },
+          updatedAt: now,
+        }
+      : {
+          ...portal.space,
+          anchorNodeId: "",
+          nodes: Object.fromEntries(
+            Object.entries(portal.space.nodes).map(([nodeId, node]) => [
+              nodeId,
+              { ...node, children: [...node.children] },
+            ]),
+          ),
+          viewport: { x: 96, y: 72, zoom: 1 },
+          updatedAt: now,
+        };
+  }
+
+  const candidate: MindMapDocument = { ...document, nodes, spaces };
+  const { idByRef } = nodeReferenceMaps(candidate);
+  const mutableNodeRecord = (nodeId: string): Record<string, MindNode> | null => {
+    if (nodes[nodeId]) return nodes;
+    for (const space of Object.values(spaces)) {
+      if (space.type === "map" && space.nodes[nodeId]) return space.nodes;
+    }
+    return null;
+  };
+  for (const portal of bundle.portals) {
+    const anchorNodeId = idByRef.get(portal.anchorRef);
+    const nodeRecord = anchorNodeId ? mutableNodeRecord(anchorNodeId) : null;
+    const anchor = anchorNodeId && nodeRecord ? nodeRecord[anchorNodeId] : null;
+    const space = spaces[portal.space.id];
+    if (!anchorNodeId || !anchor || anchor.subspaceId || !space) return null;
+    nodeRecord![anchorNodeId] = {
+      ...anchor,
+      subspaceId: portal.space.id,
+    };
+    spaces[portal.space.id] = { ...space, anchorNodeId };
+  }
+  return isMindMapDocument(candidate) ? candidate : null;
 }
 
 function createBuilder(): DocumentBuilder {
@@ -178,7 +390,9 @@ export function documentToMarkdown(document: MindMapDocument): string {
     .map((id) => subtreeToMarkdown(document, id))
     .filter(Boolean)
     .join("\n");
-  return `${heading}\n\n${outline}\n`;
+  const bundle = portableSpaceBundle(document);
+  if (!bundle) return `${heading}\n\n${outline}\n`;
+  return `${heading}\n\n${outline}\n\n~~~laniakea\n${JSON.stringify(bundle, null, 2)}\n~~~\n`;
 }
 
 function isPlainParagraph(node: RootContent | undefined): node is Paragraph {
@@ -507,14 +721,36 @@ export function parseMarkdownDocument(
   }
 
   const root = markdownProcessor.parse(markdown) as Root;
-  const outline = outlineParts(root);
+  const metadataBlocks = root.children.filter(
+    (child): child is Code => child.type === "code" && child.lang === "laniakea",
+  );
+  const bundle =
+    metadataBlocks.length === 1
+      ? parsePortableSpaceBundle(metadataBlocks[0])
+      : null;
+  const outlineRoot: Root = {
+    ...root,
+    children: root.children.filter((child) => !metadataBlocks.includes(child as Code)),
+  };
+  const outline = outlineParts(outlineRoot);
   if (outline) {
+    const outlineDocument = documentFromOutlineList(
+      outline.list,
+      title,
+      outline.title,
+    );
+    const hydrated = bundle
+      ? hydratePortableSpaces(outlineDocument, bundle)
+      : null;
+    if (metadataBlocks.length > 0 && !hydrated) {
+      return {
+        document: documentFromRichMarkdown(root, title),
+        canOverwriteSource: false,
+        sourceKind: "rich",
+      };
+    }
     return {
-      document: documentFromOutlineList(
-        outline.list,
-        title,
-        outline.title,
-      ),
+      document: hydrated ?? outlineDocument,
       canOverwriteSource: true,
       sourceKind: "outline",
     };

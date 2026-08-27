@@ -5,6 +5,7 @@ export interface MindNode {
   text: string;
   parentId: string | null;
   children: string[];
+  subspaceId?: string;
   collapsed: boolean;
   createdAt: string;
   updatedAt: string;
@@ -22,12 +23,58 @@ export interface FloatingRoot {
   y: number;
 }
 
+export type FlowNodeKind = "start" | "step" | "decision" | "end";
+
+export interface FlowNode {
+  id: string;
+  text: string;
+  kind: FlowNodeKind;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FlowEdge {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+}
+
+export interface FlowSpace {
+  id: string;
+  type: "flow";
+  anchorNodeId: string;
+  nodes: Record<string, FlowNode>;
+  edges: FlowEdge[];
+  viewport: Viewport;
+  updatedAt: string;
+}
+
+export interface MapSpace {
+  id: string;
+  type: "map";
+  anchorNodeId: string;
+  rootId: string;
+  nodes: Record<string, MindNode>;
+  floatingRoots: FloatingRoot[];
+  viewport: Viewport;
+  updatedAt: string;
+}
+
+export type LaniakeaSpace = MapSpace | FlowSpace;
+
 export interface MindMapDocument {
   formatVersion: 1;
   title: string;
   rootId: string;
   nodes: Record<string, MindNode>;
   floatingRoots: FloatingRoot[];
+  /**
+   * Optional so existing formatVersion 1 browser records and recovery files
+   * remain valid. Portable space content is serialized into the reserved
+   * Laniakea Markdown block; view state remains in the local document cache.
+   */
+  spaces?: Record<string, LaniakeaSpace>;
   viewport: Viewport;
   updatedAt: string;
 }

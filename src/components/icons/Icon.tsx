@@ -13,6 +13,9 @@ export type IconName =
   | "code"
   | "undo"
   | "command"
+  | "mindMap"
+  | "flowChart"
+  | "layers"
   | "chevron"
   | "chevronDown";
 
@@ -96,6 +99,33 @@ const paths: Record<IconName, React.ReactNode> = {
       <rect x="14.9092" y="14.9091" width="18.1818" height="18.1818" />
       <path d="M38.5454 14.9091H33.0908V9.45455C33.0908 6.44208 35.5329 4 38.5454 4C41.5578 4 43.9999 6.44208 43.9999 9.45455C43.9999 12.467 41.5578 14.9091 38.5454 14.9091Z" />
       <path d="M38.5454 33.0909C41.5578 33.0909 43.9999 35.533 43.9999 38.5454C43.9999 41.5579 41.5578 44 38.5454 44C35.5329 44 33.0908 41.5579 33.0908 38.5454V33.0909H38.5454Z" />
+    </>
+  ),
+  mindMap: (
+    <>
+      <path d="M8 28C10.2091 28 12 26.2091 12 24C12 21.7909 10.2091 20 8 20C5.79086 20 4 21.7909 4 24C4 26.2091 5.79086 28 8 28Z" fill="none" stroke="currentColor" strokeWidth={2} />
+      <path d="M42 8C43.1046 8 44 7.10457 44 6C44 4.89543 43.1046 4 42 4C40.8954 4 40 4.89543 40 6C40 7.10457 40.8954 8 42 8Z" strokeWidth={2} />
+      <path d="M42 26C43.1046 26 44 25.1046 44 24C44 22.8954 43.1046 22 42 22C40.8954 22 40 22.8954 40 24C40 25.1046 40.8954 26 42 26Z" strokeWidth={2} />
+      <path d="M42 44C43.1046 44 44 43.1046 44 42C44 40.8954 43.1046 40 42 40C40.8954 40 40 40.8954 40 42C40 43.1046 40.8954 44 42 44Z" strokeWidth={2} />
+      <path d="M32 6H20V42H32" strokeWidth={2} />
+      <path d="M12 24H32" strokeWidth={2} />
+    </>
+  ),
+  flowChart: (
+    <>
+      <rect x="17" y="6" width="14" height="9" fill="none" stroke="currentColor" strokeWidth={2} />
+      <rect x="6" y="33" width="14" height="9" fill="none" stroke="currentColor" strokeWidth={2} />
+      <rect x="28" y="33" width="14" height="9" fill="none" stroke="currentColor" strokeWidth={2} />
+      <path d="M24 16V24" strokeWidth={2} />
+      <path d="M13 33V24H35V33" strokeWidth={2} />
+    </>
+  ),
+  layers: (
+    <>
+      <path d="M4 11.9143L24 19L44 11.9143L24 5L4 11.9143Z" fill="none" strokeWidth={3} />
+      <path d="M4 20L24 27L44 20" strokeWidth={3} />
+      <path d="M4 28L24 35L44 28" strokeWidth={3} />
+      <path d="M4 36L24 43L44 36" strokeWidth={3} />
     </>
   ),
   chevron: <path d="M19 12L31 24L19 36" />,

@@ -13,6 +13,7 @@ const clipboard = vi.hoisted(() => ({
   copyMarkdown: vi.fn(async () => undefined),
   cutSelection: vi.fn(async () => undefined),
   pasteClipboard: vi.fn(async () => undefined),
+  pasteText: vi.fn(() => true),
 }));
 
 vi.mock("./useMindMapClipboard", () => ({

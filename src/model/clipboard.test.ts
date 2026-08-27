@@ -41,6 +41,23 @@ describe("clipboard text import", () => {
     expect(forest.document.nodes[forest.rootIds[0]].text).toBe("一个新节点");
   });
 
+  it("titles a blank-replacing paste from its root text instead of the paste marker", () => {
+    const singleLine = clipboardTextToForest("产品规划");
+    expect(singleLine.document.title).toBe("产品规划");
+
+    const outline = clipboardTextToForest("- 产品规划\n  - 用户调研");
+    expect(outline.document.title).toBe("产品规划");
+  });
+
+  it("parses a copied one-node Markdown branch without keeping its list marker", () => {
+    const forest = clipboardTextToForest("- 单个已复制节点");
+
+    expect(forest.rootIds).toHaveLength(1);
+    expect(forest.document.nodes[forest.rootIds[0]].text).toBe(
+      "单个已复制节点",
+    );
+  });
+
   it("replaces an untouched blank document with pasted Markdown", () => {
     const forest = clipboardTextToForest(
       "# 新方案\n\n- 原点\n  - 路径",

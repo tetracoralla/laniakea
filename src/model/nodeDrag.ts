@@ -100,12 +100,15 @@ export function childInsertionPosition(
   document: MindMapDocument,
   layout: LayoutResult,
   parentId: string,
-  draggedId: string,
+  draggedIds: string | readonly string[],
   probe: NodeDropProbe,
 ): number {
   const parent = document.nodes[parentId];
   if (!parent) return 0;
-  const siblings = parent.children.filter((id) => id !== draggedId);
+  const dragged = new Set(
+    typeof draggedIds === "string" ? [draggedIds] : draggedIds,
+  );
+  const siblings = parent.children.filter((id) => !dragged.has(id));
   const visibleSiblings = siblings
     .map((id) => layout.nodes[id])
     .filter((node): node is LayoutNode => Boolean(node));
