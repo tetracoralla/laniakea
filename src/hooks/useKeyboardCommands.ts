@@ -10,6 +10,7 @@ interface KeyboardCommandOptions {
   selectionEnabled: boolean;
   onCommand: (id: CommandId) => void;
   onBeginTyping: (character: string) => void;
+  onPasteText: (value: string) => void;
 }
 
 const nativeTextCommandIds = new Set<CommandId>([
@@ -63,11 +64,14 @@ export function useKeyboardCommands({
   selectionEnabled,
   onCommand,
   onBeginTyping,
+  onPasteText,
 }: KeyboardCommandOptions) {
   const onCommandRef = useRef(onCommand);
   const onBeginTypingRef = useRef(onBeginTyping);
+  const onPasteTextRef = useRef(onPasteText);
   onCommandRef.current = onCommand;
   onBeginTypingRef.current = onBeginTyping;
+  onPasteTextRef.current = onPasteText;
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -103,6 +107,11 @@ export function useKeyboardCommands({
 
       const command = findCommandForEvent(event, "selection");
       if (command) {
+        if (command.id === "node.paste") {
+          // Keep the platform paste gesture native. Its ClipboardEvent carries
+          // the text synchronously and avoids a second clipboard-read prompt.
+          return;
+        }
         event.preventDefault();
         window.getSelection()?.removeAllRanges();
         onCommandRef.current(command.id);
@@ -115,10 +124,33 @@ export function useKeyboardCommands({
       }
     };
 
+    const handlePaste = (event: ClipboardEvent) => {
+      if (
+        !enabled ||
+        !selectionEnabled ||
+        event.defaultPrevented ||
+        isDialogTarget(event.target) ||
+        isNativeTextEditingTarget(event.target) ||
+        !isCanvasCommandTarget(event.target)
+      ) {
+        return;
+      }
+      const value = event.clipboardData?.getData("text/plain") ?? "";
+      if (!value.trim()) return;
+      event.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      onPasteTextRef.current(value);
+    };
+
     window.addEventListener("keydown", handleKeyDown, { capture: true });
-    return () =>
+    window.addEventListener("paste", handlePaste, { capture: true });
+    return () => {
       window.removeEventListener("keydown", handleKeyDown, {
         capture: true,
       });
+      window.removeEventListener("paste", handlePaste, {
+        capture: true,
+      });
+    };
   }, [enabled, selectionEnabled]);
 }

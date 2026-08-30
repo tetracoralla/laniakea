@@ -13,6 +13,7 @@ import {
   resetBrowserDocumentStoreForTests,
   restoreBrowserLibrary,
   saveBrowserDocument,
+  saveBrowserDocumentViewState,
 } from "./browserDocumentStore";
 
 describe("browser document library", () => {
@@ -107,5 +108,67 @@ describe("browser document library", () => {
     await expect(openBrowserDocument(paths[1])).rejects.toThrow(
       "已不在此浏览器",
     );
+  });
+
+  it("saves view state without bumping the revision or touching newer content", async () => {
+    const created = await createBrowserDocument(createSeedDocument());
+    const firstTab = await openBrowserDocument(created.documentPath);
+    const pannedDocument = {
+      ...firstTab.document,
+      title: "过期的标题",
+      viewport: { x: 40, y: 80, zoom: 1.25 },
+    };
+
+    const token = await saveBrowserDocumentViewState(
+      pannedDocument,
+      created.documentPath,
+    );
+
+    // The revision token stays valid for the panning tab's next content save.
+    expect(token).toBe(firstTab.sourceHash);
+    const secondTab = await openBrowserDocument(created.documentPath);
+    expect(secondTab.sourceHash).toBe(firstTab.sourceHash);
+    expect(secondTab.document.viewport).toEqual({ x: 40, y: 80, zoom: 1.25 });
+    // Content never travels through the view-state path.
+    expect(secondTab.document.title).toBe(firstTab.document.title);
+
+    // A content save from another tab keeps working without a conflict, and
+    // the stored content is not the stale body the panning tab held.
+    const newer = {
+      ...secondTab.document,
+      title: "标签页 B 的较新内容",
+      viewport: { x: 0, y: 0, zoom: 1 },
+    };
+    const saved = await saveBrowserDocument(
+      newer,
+      created.documentPath,
+      secondTab.sourceHash,
+    );
+    expect(saved.sourceHash).not.toBe(firstTab.sourceHash);
+    const after = await openBrowserDocument(created.documentPath);
+    expect(after.document.title).toBe("标签页 B 的较新内容");
+    expect(after.sourceHash).not.toBe(firstTab.sourceHash);
+
+    // Panning after that still only lifts the viewport.
+    await saveBrowserDocumentViewState(
+      { ...pannedDocument, viewport: { x: 7, y: 9, zoom: 0.5 } },
+      created.documentPath,
+    );
+    const final = await openBrowserDocument(created.documentPath);
+    expect(final.document.title).toBe("标签页 B 的较新内容");
+    expect(final.document.viewport).toEqual({ x: 7, y: 9, zoom: 0.5 });
+  });
+
+  it("skips view state for a record that no longer exists", async () => {
+    const created = await createBrowserDocument(createSeedDocument());
+    await discardBrowserDocument(created.documentPath);
+
+    const token = await saveBrowserDocumentViewState(
+      createSeedDocument(),
+      created.documentPath,
+    );
+
+    expect(token).toBeNull();
+    expect(await listBrowserDocuments()).toHaveLength(0);
   });
 });

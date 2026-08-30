@@ -12,6 +12,15 @@ export function singleSelection(id: string): SelectionState {
   return { primaryId: id, selectedIds: [id] };
 }
 
+export function selectionForContextTarget(
+  selection: SelectionState,
+  targetId: string,
+): SelectionState {
+  return selection.selectedIds.includes(targetId)
+    ? selection
+    : singleSelection(targetId);
+}
+
 export function createSelection(
   ids: Iterable<string>,
   order: readonly string[],

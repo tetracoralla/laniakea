@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { flushSync } from "react-dom";
 import {
   type CanvasHandle,
@@ -9,13 +17,13 @@ import {
   type CanvasControlsHandle,
 } from "./components/chrome/CanvasControls";
 import { TopBar } from "./components/chrome/TopBar";
-import {
-  type OverlayMode,
-  CommandOverlay,
-} from "./components/commands/CommandOverlay";
+import type { OverlayMode } from "./components/commands/CommandOverlay";
 import { StatusBar } from "./components/feedback/StatusBar";
 import { restoreFocus } from "./components/overlays/focus";
-import { ShortcutSettings } from "./components/settings/ShortcutSettings";
+import { NodeSpaceMenu } from "./components/spaces/NodeSpaceMenu";
+import { SpacePicker } from "./components/spaces/SpacePicker";
+import type { SpaceTypeChoice } from "./components/spaces/SpacePicker";
+import type { FlowWorkspaceHandle } from "./components/spaces/FlowWorkspace";
 import {
   readDesktopRuntimeStatus,
   updateDesktopGlobalShortcut,
@@ -35,7 +43,124 @@ import {
 import {
   setDocumentTitle,
   revealNode,
+  type DocumentMutation,
 } from "./model/tree";
+import {
+  createMapSpace,
+  createFlowSpace,
+  deleteSubspaceForNode,
+  documentSpaces,
+  findMindNode,
+  flowSpaceForNode,
+  mapSpaceDocument,
+  mergeMapSpaceDocument,
+  spaceForNode,
+  updateFlowSpace,
+} from "./model/spaces";
+import {
+  selectionForContextTarget,
+  singleSelection,
+} from "./model/selection";
+import type {
+  FlowSpace,
+  EditorSnapshot,
+  MindMapDocument,
+  SelectionState,
+  Viewport,
+} from "./types/mindmap";
+
+interface MapSurface {
+  kind: "map";
+  spaceId: string | null;
+}
+
+interface FlowSurface {
+  kind: "flow";
+  spaceId: string;
+  anchorNodeId: string;
+  entryRequest: number;
+  fitOnMount: boolean;
+  initialEditing: boolean;
+  initialSelectedId: string | null;
+}
+
+type EditorSurface = MapSurface | FlowSurface;
+
+interface SurfaceRestorePoint {
+  surface: EditorSurface;
+  selection: SelectionState;
+}
+
+const rootMapSurface: MapSurface = {
+  kind: "map",
+  spaceId: null,
+};
+
+let flowWorkspaceModule: Promise<
+  typeof import("./components/spaces/FlowWorkspace")
+> | null = null;
+
+function loadFlowWorkspace() {
+  flowWorkspaceModule ??= import("./components/spaces/FlowWorkspace");
+  return flowWorkspaceModule;
+}
+
+function preloadFlowWorkspace() {
+  const request = loadFlowWorkspace();
+  void request.catch(() => {
+    if (flowWorkspaceModule === request) flowWorkspaceModule = null;
+  });
+}
+
+const LazyFlowWorkspace = lazy(() =>
+  loadFlowWorkspace().then(({ FlowWorkspace }) => ({
+    default: FlowWorkspace,
+  })),
+);
+
+let commandOverlayModule: Promise<
+  typeof import("./components/commands/CommandOverlay")
+> | null = null;
+
+function loadCommandOverlay() {
+  commandOverlayModule ??= import("./components/commands/CommandOverlay");
+  return commandOverlayModule;
+}
+
+function preloadCommandOverlay() {
+  const request = loadCommandOverlay();
+  void request.catch(() => {
+    if (commandOverlayModule === request) commandOverlayModule = null;
+  });
+}
+
+const LazyCommandOverlay = lazy(() =>
+  loadCommandOverlay().then(({ CommandOverlay }) => ({
+    default: CommandOverlay,
+  })),
+);
+
+let shortcutSettingsModule: Promise<
+  typeof import("./components/settings/ShortcutSettings")
+> | null = null;
+
+function loadShortcutSettings() {
+  shortcutSettingsModule ??= import("./components/settings/ShortcutSettings");
+  return shortcutSettingsModule;
+}
+
+function preloadShortcutSettings() {
+  const request = loadShortcutSettings();
+  void request.catch(() => {
+    if (shortcutSettingsModule === request) shortcutSettingsModule = null;
+  });
+}
+
+const LazyShortcutSettings = lazy(() =>
+  loadShortcutSettings().then(({ ShortcutSettings }) => ({
+    default: ShortcutSettings,
+  })),
+);
 
 export function App() {
   const desktopRuntime = isDesktopRuntime();
@@ -71,6 +196,8 @@ export function App() {
     selectNode,
     setSelection,
     setViewport,
+    setFlowViewport,
+    setMapSpaceViewport,
     retrySave,
     preserveCurrentAsBrowserCopy,
     refreshBrowserDocuments,
@@ -84,14 +211,26 @@ export function App() {
   const hasSingleSelection =
     selection.selectedIds.length === 1 && selectedId !== null;
   const canvasRef = useRef<CanvasHandle>(null);
+  const flowWorkspaceRef = useRef<FlowWorkspaceHandle>(null);
+  const flowEntryRequestRef = useRef(0);
   const canvasControlsRef = useRef<CanvasControlsHandle>(null);
   const showZoomPreview = useCallback((zoom: number) => {
     canvasControlsRef.current?.showZoom(zoom);
   }, []);
   const overlayReturnFocusRef = useRef<HTMLElement | null>(null);
+  const suppressOverlayRestoreRef = useRef(false);
+  const drillDownReturnFocusRef = useRef<HTMLElement | null>(null);
   const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
   const initialEditStarted = useRef(false);
   const [overlay, setOverlay] = useState<OverlayMode | null>(null);
+  const [drillDownNodeId, setDrillDownNodeId] = useState<string | null>(null);
+  const [nodeSpaceMenu, setNodeSpaceMenu] = useState<{
+    nodeId: string;
+    targetRect: { left: number; right: number; top: number; bottom: number };
+    returnFocus: HTMLElement;
+  } | null>(null);
+  const [surface, setSurface] = useState<EditorSurface>(rootMapSurface);
+  const [surfaceStack, setSurfaceStack] = useState<SurfaceRestorePoint[]>([]);
   const [shortcutSettingsOpen, setShortcutSettingsOpen] =
     useState(false);
   const [desktopRuntimeStatus, setDesktopRuntimeStatus] =
@@ -109,6 +248,38 @@ export function App() {
     notify,
     saveState,
   });
+  const activeMap = useMemo(() => {
+    if (surface.kind !== "map" || !surface.spaceId) return mindMap;
+    return mapSpaceDocument(mindMap, surface.spaceId) ?? mindMap;
+  }, [mindMap, surface]);
+  const applyActiveMapMutation = useCallback((
+    mutate: (current: EditorSnapshot) => DocumentMutation,
+    expectedDocumentSessionId?: number,
+  ) => {
+    if (surface.kind !== "map" || !surface.spaceId) {
+      applyMutation(mutate, expectedDocumentSessionId);
+      return;
+    }
+    const spaceId = surface.spaceId;
+    applyMutation((current) => {
+      const scopedDocument = mapSpaceDocument(current.document, spaceId);
+      if (!scopedDocument) {
+        return { document: current.document, selection: current.selection };
+      }
+      const result = mutate({
+        document: scopedDocument,
+        selection: current.selection,
+      });
+      return {
+        document: mergeMapSpaceDocument(
+          current.document,
+          spaceId,
+          result.document,
+        ),
+        selection: result.selection,
+      };
+    }, expectedDocumentSessionId);
+  }, [applyMutation, surface]);
   const {
     editingId,
     draft,
@@ -126,17 +297,291 @@ export function App() {
     editSelectedFromSpace,
     pasteStructuredIntoBlankRoot,
   } = useEditorSession({
-    document: mindMap,
+    document: activeMap,
     selection,
-    applyMutation,
+    applyMutation: applyActiveMapMutation,
     selectNode,
     notify,
     undo,
   });
+  const activeFlowCandidate = surface.kind === "flow"
+    ? documentSpaces(mindMap)[surface.spaceId]
+    : null;
+  const activeFlow = activeFlowCandidate?.type === "flow"
+    ? activeFlowCandidate
+    : null;
+
+  useEffect(() => {
+    setSurface(rootMapSurface);
+    setSurfaceStack([]);
+    setDrillDownNodeId(null);
+    setNodeSpaceMenu(null);
+    drillDownReturnFocusRef.current = null;
+  }, [documentSessionId]);
+
+  useEffect(() => {
+    if (
+      surface.kind === "map" &&
+      surface.spaceId &&
+      !mapSpaceDocument(mindMap, surface.spaceId)
+    ) {
+      setSurface(rootMapSurface);
+      setSurfaceStack([]);
+      setSelection(singleSelection(mindMap.rootId));
+    }
+    if (surface.kind === "flow" && !activeFlow) {
+      setSurface(rootMapSurface);
+      setSurfaceStack([]);
+      setSelection(singleSelection(mindMap.rootId));
+    }
+  }, [activeFlow, mindMap, mindMap.rootId, setSelection, surface]);
+
+  const pushCurrentSurface = useCallback(() => {
+    const restorableSurface = surface.kind === "flow"
+      ? {
+          ...surface,
+          fitOnMount: false,
+          initialEditing: false,
+          initialSelectedId:
+            flowWorkspaceRef.current?.selectedId() ??
+            surface.initialSelectedId,
+        }
+      : surface;
+    setSurfaceStack((current) => [
+      ...current,
+      {
+        surface: restorableSurface,
+        selection,
+      },
+    ]);
+  }, [selection, surface]);
+
+  const enterMapForNode = useCallback((nodeId: string) => {
+    const existing = spaceForNode(activeMap, nodeId);
+    const creating = !existing;
+    const created = existing?.type === "map"
+      ? {
+          document: activeMap,
+          spaceId: existing.id,
+          selectedMapNodeId: existing.rootId,
+        }
+      : createMapSpace(activeMap, nodeId);
+    if (!created.spaceId) return;
+    if (created.document !== activeMap) {
+      applyActiveMapMutation(() => ({
+        document: created.document,
+        selection: singleSelection(nodeId),
+      }));
+    }
+    setEditingId(null);
+    setDraft("");
+    pushCurrentSurface();
+    setSurface({
+      kind: "map",
+      spaceId: created.spaceId,
+    });
+    setSelection(singleSelection(created.selectedMapNodeId));
+    window.requestAnimationFrame(() =>
+      window.requestAnimationFrame(() => {
+        if (creating) canvasRef.current?.fit();
+        else canvasRef.current?.focusCanvas();
+      }),
+    );
+  }, [
+    activeMap,
+    applyActiveMapMutation,
+    pushCurrentSurface,
+    setDraft,
+    setEditingId,
+    setSelection,
+  ]);
+
+  const enterFlowForNode = useCallback((nodeId: string) => {
+    preloadFlowWorkspace();
+    const existing = flowSpaceForNode(activeMap, nodeId);
+    const creating = !existing;
+    const created = existing
+      ? {
+          document: activeMap,
+          spaceId: existing.id,
+          selectedFlowNodeId:
+            Object.values(existing.nodes).find(({ kind }) => kind === "step")?.id ??
+            Object.keys(existing.nodes)[0] ??
+            "",
+        }
+      : createFlowSpace(activeMap, nodeId);
+    if (!created.spaceId) return;
+    if (created.document !== activeMap) {
+      applyActiveMapMutation(() => ({
+        document: created.document,
+        selection: singleSelection(nodeId),
+      }));
+    }
+    setEditingId(null);
+    setDraft("");
+    pushCurrentSurface();
+    setSurface({
+      kind: "flow",
+      spaceId: created.spaceId,
+      anchorNodeId: nodeId,
+      entryRequest: ++flowEntryRequestRef.current,
+      fitOnMount: creating,
+      initialEditing: creating,
+      initialSelectedId: created.selectedFlowNodeId || null,
+    });
+    setSelection(singleSelection(nodeId));
+  }, [
+    activeMap,
+    applyActiveMapMutation,
+    pushCurrentSurface,
+    setDraft,
+    setEditingId,
+    setSelection,
+  ]);
+
+  const openDrillDown = useCallback((
+    nodeId: string,
+    returnFocus?: HTMLElement | null,
+  ) => {
+    if (!activeMap.nodes[nodeId] || spaceForNode(activeMap, nodeId)) return;
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      activeElement.closest(".command-overlay")
+    ) {
+      suppressOverlayRestoreRef.current = true;
+    }
+    drillDownReturnFocusRef.current =
+      returnFocus ??
+      (activeElement instanceof HTMLElement && activeElement !== document.body
+        ? activeElement
+        : null);
+    setSelection(singleSelection(nodeId));
+    setDrillDownNodeId(nodeId);
+  }, [activeMap, setSelection]);
+
+  const closeDrillDown = useCallback(() => {
+    const returnFocus = drillDownReturnFocusRef.current;
+    drillDownReturnFocusRef.current = null;
+    setDrillDownNodeId(null);
+    restoreFocus(returnFocus, () => canvasRef.current?.focusCanvas());
+  }, []);
+
+  const createDrillDownSpace = useCallback((type: SpaceTypeChoice) => {
+    if (!drillDownNodeId) return;
+    const nodeId = drillDownNodeId;
+    drillDownReturnFocusRef.current = null;
+    setDrillDownNodeId(null);
+    if (type === "map") enterMapForNode(nodeId);
+    else enterFlowForNode(nodeId);
+  }, [drillDownNodeId, enterFlowForNode, enterMapForNode]);
+
+  const enterSubspaceForNode = useCallback((nodeId: string) => {
+    const space = spaceForNode(activeMap, nodeId);
+    if (space?.type === "map") enterMapForNode(nodeId);
+    if (space?.type === "flow") enterFlowForNode(nodeId);
+  }, [activeMap, enterFlowForNode, enterMapForNode]);
+
+  const invokeNodeDrillDown = useCallback((nodeId: string) => {
+    if (spaceForNode(activeMap, nodeId)) {
+      enterSubspaceForNode(nodeId);
+      return;
+    }
+    openDrillDown(nodeId);
+  }, [activeMap, enterSubspaceForNode, openDrillDown]);
+
+  const openNodeSpaceMenu = useCallback((
+    nodeId: string,
+    targetRect: { left: number; right: number; top: number; bottom: number },
+    returnFocus: HTMLElement,
+  ) => {
+    if (!activeMap.nodes[nodeId]) return;
+    const nextSelection = selectionForContextTarget(selection, nodeId);
+    if (nextSelection !== selection) setSelection(nextSelection);
+    setNodeSpaceMenu({ nodeId, targetRect, returnFocus });
+  }, [activeMap.nodes, selection.selectedIds, setSelection]);
+
+  const closeNodeSpaceMenu = useCallback(() => {
+    const returnFocus = nodeSpaceMenu?.returnFocus ?? null;
+    setNodeSpaceMenu(null);
+    restoreFocus(returnFocus, () => canvasRef.current?.focusCanvas());
+  }, [nodeSpaceMenu]);
+
+  const drillDownFromNodeMenu = useCallback(() => {
+    if (!nodeSpaceMenu) return;
+    const { nodeId, returnFocus } = nodeSpaceMenu;
+    setNodeSpaceMenu(null);
+    openDrillDown(nodeId, returnFocus);
+  }, [nodeSpaceMenu, openDrillDown]);
+
+  const enterFromNodeMenu = useCallback(() => {
+    if (!nodeSpaceMenu) return;
+    const { nodeId } = nodeSpaceMenu;
+    setNodeSpaceMenu(null);
+    enterSubspaceForNode(nodeId);
+  }, [enterSubspaceForNode, nodeSpaceMenu]);
+
+  const deleteFromNodeMenu = useCallback(() => {
+    if (!nodeSpaceMenu) return;
+    const { nodeId } = nodeSpaceMenu;
+    setNodeSpaceMenu(null);
+    applyActiveMapMutation((current) => ({
+      document: deleteSubspaceForNode(current.document, nodeId),
+      selection: current.selection,
+    }));
+    notify({
+      message: "已删除下层图",
+      actionLabel: "撤销",
+      onAction: undo,
+    });
+  }, [applyActiveMapMutation, nodeSpaceMenu, notify, undo]);
+
+  const navigateBack = useCallback(() => {
+    flowWorkspaceRef.current?.flushViewport();
+    const restore = surfaceStack[surfaceStack.length - 1];
+    if (!restore) {
+      setSurface(rootMapSurface);
+      setSelection(singleSelection(mindMap.rootId));
+      return;
+    }
+    setSurfaceStack((current) => current.slice(0, -1));
+    setSurface(restore.surface);
+    setSelection(restore.selection);
+    window.requestAnimationFrame(() => {
+      if (restore.surface.kind === "map") canvasRef.current?.focusCanvas();
+      else flowWorkspaceRef.current?.focusCanvas();
+    });
+  }, [mindMap.rootId, setSelection, surfaceStack]);
+
+  const updateActiveFlow = useCallback((nextSpace: FlowSpace | null) => {
+    if (!nextSpace) return;
+    applyMutation((current) =>
+      updateFlowSpace(current.document, nextSpace, current.selection),
+    );
+  }, [applyMutation]);
+
+  const spacePath = useMemo(() => {
+    const items: Array<{ id: string; label: string; typeLabel: string }> = [];
+    const appendSurface = (candidate: EditorSurface) => {
+      if (candidate.kind === "map" && !candidate.spaceId) return;
+      const space = documentSpaces(mindMap)[candidate.spaceId!];
+      if (!space) return;
+      const anchor = findMindNode(mindMap, space.anchorNodeId);
+      items.push({
+        id: space.id,
+        label: anchor?.text || "未命名节点",
+        typeLabel: space.type === "map" ? "思维图" : "流程",
+      });
+    };
+    surfaceStack.forEach(({ surface: candidate }) => appendSurface(candidate));
+    appendSurface(surface);
+    return items;
+  }, [mindMap, surface, surfaceStack]);
   const openOverlay = useCallback((
     mode: OverlayMode,
     returnFocus?: HTMLElement | null,
   ) => {
+    preloadCommandOverlay();
     const active = document.activeElement;
     overlayReturnFocusRef.current =
       returnFocus ??
@@ -149,15 +594,20 @@ export function App() {
 
   const closeOverlay = useCallback(() => {
     const returnFocus = overlayReturnFocusRef.current;
+    const restore = !suppressOverlayRestoreRef.current;
+    suppressOverlayRestoreRef.current = false;
     overlayReturnFocusRef.current = null;
     setOverlay(null);
-    restoreFocus(
-      returnFocus,
-      () => canvasRef.current?.focusCanvas(),
-    );
+    if (restore) {
+      restoreFocus(
+        returnFocus,
+        () => canvasRef.current?.focusCanvas(),
+      );
+    }
   }, []);
 
   const openShortcutSettings = useCallback((returnFocus: HTMLElement) => {
+    preloadShortcutSettings();
     settingsReturnFocusRef.current = returnFocus;
     setShortcutSettingsOpen(true);
   }, []);
@@ -243,36 +693,53 @@ export function App() {
     restoreActiveDocument,
   });
 
-  const { copyDocumentMarkdown, executeCommand } = useMindMapCommands({
-    mindMap,
-    selection,
-    canUndo,
-    canRedo,
-    canvasRef,
-    applyMutation,
-    documentSessionId,
-    isDocumentSessionCurrent,
-    selectNode,
-    setSelection,
-    setEditingId,
-    setDraft,
-    openOverlay,
-    notify,
-    onImport: openImport,
-    onNew: createNewDocument,
-    onSaveAs: () => void saveAsMarkdownDocument(),
-    saveNow: saveCurrentDocument,
-    undo,
-    redo,
-  });
+  const { copyDocumentMarkdown, executeCommand, pasteText } =
+    useMindMapCommands({
+      mindMap,
+      scopeDocument: surface.kind === "map" ? activeMap : undefined,
+      selection,
+      canUndo,
+      canRedo,
+      canvasRef,
+      applyMutation: applyActiveMapMutation,
+      documentSessionId,
+      isDocumentSessionCurrent,
+      selectNode,
+      setSelection,
+      setEditingId,
+      setDraft,
+      openOverlay,
+      notify,
+      onDrillDown: invokeNodeDrillDown,
+      onImport: openImport,
+      onNew: createNewDocument,
+      onSaveAs: () => void saveAsMarkdownDocument(),
+      saveNow: saveCurrentDocument,
+      undo,
+      redo,
+    });
 
   useKeyboardCommands({
     enabled:
       startupMode !== "loading" &&
       overlay === null &&
-      !shortcutSettingsOpen,
+      drillDownNodeId === null &&
+      nodeSpaceMenu === null &&
+      !shortcutSettingsOpen &&
+      surface.kind === "map",
     selectionEnabled: editingId === null,
-    onCommand: executeCommand,
+    onCommand: (command) => {
+      if (
+        command === "selection.clear" &&
+        surface.kind === "map" &&
+        surface.spaceId
+      ) {
+        navigateBack();
+        return;
+      }
+      executeCommand(command);
+    },
+    onPasteText: pasteText,
     onBeginTyping: (character) => {
       if (hasSingleSelection && selectedId) {
         beginEdit(selectedId, character);
@@ -335,37 +802,84 @@ export function App() {
         }
         recentDocuments={recentDocuments}
         showDesktopActions={desktopRuntime}
+        spacePath={spacePath}
+        onNavigateBack={spacePath.length > 0 ? navigateBack : undefined}
         title={mindMap.title}
       />
 
-      <MindMapCanvas
-        document={mindMap}
-        draft={draft}
-        editingId={editingId}
-        fitRequest={fitRequest}
-        onBeginEdit={beginEdit}
-        onCancelEdit={cancelEdit}
-        onCommitEdit={commitEdit}
-        onDraftChange={setDraft}
-        onAttachNode={attachNodeToParent}
-        onDetachNode={detachNodeToCanvas}
-        onPasteStructured={pasteStructuredIntoBlankRoot}
-        onSelectionChange={setSelection}
-        onSpaceTap={editSelectedFromSpace}
-        onToggle={toggleNode}
-        onViewportChange={setViewport}
-        onZoomPreview={showZoomPreview}
-        ref={canvasRef}
-        selection={selection}
-      />
+      {surface.kind === "map" ? (
+        <>
+          <MindMapCanvas
+            document={activeMap}
+            draft={draft}
+            editingId={editingId}
+            fitRequest={fitRequest}
+            onBeginEdit={beginEdit}
+            onCancelEdit={cancelEdit}
+            onCommitEdit={commitEdit}
+            onDraftChange={setDraft}
+            onAttachNode={attachNodeToParent}
+            onDetachNode={detachNodeToCanvas}
+            onOpenNodeContextMenu={openNodeSpaceMenu}
+            onOpenSubspace={enterSubspaceForNode}
+            onPasteStructured={pasteStructuredIntoBlankRoot}
+            onSelectionChange={setSelection}
+            onSpaceTap={editSelectedFromSpace}
+            onToggle={toggleNode}
+            onViewportChange={(viewport) => {
+              if (!surface.spaceId) {
+                setViewport(viewport);
+                return;
+              }
+              setMapSpaceViewport(surface.spaceId, viewport);
+            }}
+            onZoomPreview={showZoomPreview}
+            ref={canvasRef}
+            selection={selection}
+          />
 
-      <CanvasControls
-        onFit={() => canvasRef.current?.fit()}
-        onReset={() => canvasRef.current?.resetZoom()}
-        onZoomIn={() => canvasRef.current?.zoomIn()}
-        onZoomOut={() => canvasRef.current?.zoomOut()}
-        ref={canvasControlsRef}
-      />
+          <CanvasControls
+            onFit={() => canvasRef.current?.fit()}
+            onReset={() => canvasRef.current?.resetZoom()}
+            onZoomIn={() => canvasRef.current?.zoomIn()}
+            onZoomOut={() => canvasRef.current?.zoomOut()}
+            ref={canvasControlsRef}
+          />
+        </>
+      ) : activeFlow ? (
+        <Suspense
+          fallback={(
+            <div
+              aria-label="正在打开流程"
+              className="flow-canvas flow-canvas--loading"
+              role="status"
+            />
+          )}
+        >
+          <LazyFlowWorkspace
+            entryRequest={surface.entryRequest}
+            fitOnMount={surface.fitOnMount}
+            initialEditing={surface.initialEditing}
+            initialSelectedId={surface.initialSelectedId}
+            keyboardEnabled={
+              startupMode !== "loading" &&
+              overlay === null &&
+              !shortcutSettingsOpen
+            }
+            key={`${documentSessionId}:${activeFlow.id}`}
+            notify={notify}
+            onBack={navigateBack}
+            onRedo={redo}
+            onUndo={undo}
+            onUpdateSpace={updateActiveFlow}
+            onViewportChange={(viewport) =>
+              setFlowViewport(activeFlow.id, viewport)
+            }
+            ref={flowWorkspaceRef}
+            space={activeFlow}
+          />
+        </Suspense>
+      ) : null}
 
       <StatusBar
         notice={announcement}
@@ -379,12 +893,55 @@ export function App() {
       />
 
       {overlay && (
-        <CommandOverlay
-          document={mindMap}
-          mode={overlay}
-          onClose={closeOverlay}
-          onExecute={executeCommand}
-          onSelectNode={(id) => {
+        <Suspense
+          fallback={(
+            <div
+              aria-label="正在打开"
+              className="overlay-backdrop"
+              role="status"
+            />
+          )}
+        >
+          <LazyCommandOverlay
+            document={mindMap}
+            mode={overlay}
+            onClose={closeOverlay}
+            onExecute={executeCommand}
+            onSelectNode={(id, spaceId) => {
+            if (spaceId) {
+              const space = documentSpaces(mindMap)[spaceId];
+              if (!space?.nodes[id]) return;
+              if (space.type === "map") {
+                if (surface.kind !== "map" || surface.spaceId !== spaceId) {
+                  pushCurrentSurface();
+                }
+                setSurface({ kind: "map", spaceId });
+                setSelection(singleSelection(id));
+                window.requestAnimationFrame(() =>
+                  window.requestAnimationFrame(() =>
+                    canvasRef.current?.focusSelected(),
+                  ),
+                );
+              } else {
+                preloadFlowWorkspace();
+                if (surface.kind !== "flow" || surface.spaceId !== spaceId) {
+                  pushCurrentSurface();
+                }
+                setSurface({
+                  kind: "flow",
+                  spaceId,
+                  anchorNodeId: space.anchorNodeId,
+                  entryRequest: ++flowEntryRequestRef.current,
+                  fitOnMount: false,
+                  initialEditing: false,
+                  initialSelectedId: id,
+                });
+                setSelection(singleSelection(space.anchorNodeId));
+              }
+              return;
+            }
+            setSurface(rootMapSurface);
+            setSurfaceStack([]);
             applyMutation((current) =>
               revealNode(current.document, id),
             );
@@ -393,22 +950,55 @@ export function App() {
                 canvasRef.current?.focusSelected(),
               ),
             );
+            }}
+          />
+        </Suspense>
+      )}
+
+      {nodeSpaceMenu && activeMap.nodes[nodeSpaceMenu.nodeId] && (
+        <NodeSpaceMenu
+          nodeLabel={activeMap.nodes[nodeSpaceMenu.nodeId].text}
+          onClose={closeNodeSpaceMenu}
+          onDelete={deleteFromNodeMenu}
+          onDrillDown={drillDownFromNodeMenu}
+          onEnter={enterFromNodeMenu}
+          targetRect={nodeSpaceMenu.targetRect}
+          space={spaceForNode(activeMap, nodeSpaceMenu.nodeId)}
+        />
+      )}
+
+      {drillDownNodeId && activeMap.nodes[drillDownNodeId] && (
+        <SpacePicker
+          onCreate={createDrillDownSpace}
+          onClose={closeDrillDown}
+          onTypeIntent={(type) => {
+            if (type === "flow") preloadFlowWorkspace();
           }}
         />
       )}
 
       {shortcutSettingsOpen && (
-        <ShortcutSettings
-          currentShortcut={
-            desktopRuntimeStatus?.globalShortcut ??
-            "CommandOrControl+Shift+M"
-          }
-          onClose={closeShortcutSettings}
-          onSave={saveGlobalShortcut}
-          registered={
-            desktopRuntimeStatus?.globalShortcutRegistered ?? false
-          }
-        />
+        <Suspense
+          fallback={(
+            <div
+              aria-label="正在打开快捷键设置"
+              className="overlay-backdrop"
+              role="status"
+            />
+          )}
+        >
+          <LazyShortcutSettings
+            currentShortcut={
+              desktopRuntimeStatus?.globalShortcut ??
+              "CommandOrControl+Shift+M"
+            }
+            onClose={closeShortcutSettings}
+            onSave={saveGlobalShortcut}
+            registered={
+              desktopRuntimeStatus?.globalShortcutRegistered ?? false
+            }
+          />
+        </Suspense>
       )}
 
       <input

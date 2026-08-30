@@ -60,13 +60,12 @@ describe("node editor styles", () => {
     );
   });
 
-  it("reserves the full expanded width for the three-character save-as label", () => {
+  it("keeps only the primary new-document action persistently labeled", () => {
     expect(appStyles).toContain(
-      ".toolbar-button--wide {\n  --toolbar-expanded-width: 84px;\n  --toolbar-label-width: 46px;",
+      ".toolbar-button--labeled {\n  width: auto;\n  gap: 7px;\n  padding: 0 10px;",
     );
-    expect(appStyles).toContain(
-      "max-width: var(--toolbar-label-width);",
-    );
+    expect(appStyles).not.toContain("toolbar-button__label");
+    expect(appStyles).not.toContain("--toolbar-expanded-width");
   });
 
   it("uses a transient relation line as the primary parent-drop feedback", () => {
@@ -75,5 +74,17 @@ describe("node editor styles", () => {
       "stroke: color-mix(in srgb, var(--blue) 38%, white);",
     );
     expect(appStyles).not.toContain('content: "松手设为上级";');
+  });
+
+  it("keeps the portal as a non-sizing corner marker", () => {
+    expect(appStyles).toContain(".mind-node__portal {");
+    expect(appStyles).toContain("  top: -9px;");
+    expect(appStyles).not.toContain(":has(.mind-node__portal) .mind-node__content");
+  });
+
+  it("draws the decision outline separately from its text surface", () => {
+    expect(appStyles).toContain(".flow-node__decision-shape polygon {");
+    expect(appStyles).toContain("  stroke-width: 1.4;");
+    expect(appStyles).not.toContain("clip-path: polygon(50% 0");
   });
 });

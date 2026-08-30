@@ -5,8 +5,10 @@ import { documentToMarkdown } from "./markdown";
 import { singleSelection, visibleNodeIds } from "./selection";
 import {
   adjacentSibling,
+  attachSubtrees,
   attachSubtree,
   createChild,
+  detachSubtrees,
   detachSubtree,
   deleteNodePreserveChildren,
   deleteSelectedSubtrees,
@@ -356,6 +358,46 @@ describe("tree mutations", () => {
 
     expect(result.document.nodes.experience.collapsed).toBe(true);
     expect(result.selection).toEqual(singleSelection("experience"));
+  });
+
+  it("detaches and reattaches selected roots as one ordered group", () => {
+    const document = createSeedDocument();
+    const selection = {
+      primaryId: "experience",
+      selectedIds: ["experience", "path"],
+    };
+    const detached = detachSubtrees(
+      document,
+      [
+        { id: "experience", x: 760, y: 220 },
+        { id: "path", x: 760, y: 410 },
+      ],
+      selection,
+    );
+
+    expect(detached.document.nodes.root.children).not.toContain("experience");
+    expect(detached.document.nodes.root.children).not.toContain("path");
+    expect(detached.document.floatingRoots.slice(-2)).toEqual([
+      { id: "experience", x: 760, y: 220 },
+      { id: "path", x: 760, y: 410 },
+    ]);
+    expect(detached.selection).toEqual(selection);
+
+    const attached = attachSubtrees(
+      detached.document,
+      ["experience", "path"],
+      "scenario",
+      0,
+      detached.selection,
+    );
+    expect(attached.document.nodes.scenario.children.slice(0, 2)).toEqual([
+      "experience",
+      "path",
+    ]);
+    expect(attached.document.nodes.experience.parentId).toBe("scenario");
+    expect(attached.document.nodes.path.parentId).toBe("scenario");
+    expect(attached.document.floatingRoots).toEqual([]);
+    expect(attached.selection).toEqual(selection);
   });
 
   it("reveals every collapsed ancestor before selecting a search result", () => {

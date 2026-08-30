@@ -6,10 +6,56 @@ import {
   parseMindMapDocument,
 } from "./document";
 import { createBlankDocument } from "../data/seed";
+import { createFlowSpace } from "./spaces";
 
 describe("persisted document validation", () => {
   it("accepts a complete reachable mind map", () => {
     expect(isMindMapDocument(createSeedDocument())).toBe(true);
+  });
+
+  it("accepts an anchored flow space and rejects a dangling portal", () => {
+    const created = createFlowSpace(createSeedDocument(), "path").document;
+    expect(isMindMapDocument(created)).toBe(true);
+
+    const dangling = structuredClone(created);
+    delete dangling.spaces?.[dangling.nodes.path.subspaceId!];
+    expect(isMindMapDocument(dangling)).toBe(false);
+  });
+
+  it("rejects flow self-loops, duplicate endpoint pairs, and directed cycles", () => {
+    const created = createFlowSpace(createSeedDocument(), "path").document;
+    const flow = Object.values(created.spaces ?? {}).find(
+      (space) => space.type === "flow",
+    )!;
+    const [first, second] = flow.edges;
+
+    const selfLoop = structuredClone(created);
+    const selfLoopFlow = selfLoop.spaces![flow.id];
+    if (selfLoopFlow.type !== "flow") throw new Error("expected flow");
+    selfLoopFlow.edges.push({
+      id: "self-loop",
+      from: first.from,
+      to: first.from,
+      label: "",
+    });
+    expect(isMindMapDocument(selfLoop)).toBe(false);
+
+    const duplicate = structuredClone(created);
+    const duplicateFlow = duplicate.spaces![flow.id];
+    if (duplicateFlow.type !== "flow") throw new Error("expected flow");
+    duplicateFlow.edges.push({ ...first, id: "duplicate-edge" });
+    expect(isMindMapDocument(duplicate)).toBe(false);
+
+    const cycle = structuredClone(created);
+    const cycleFlow = cycle.spaces![flow.id];
+    if (cycleFlow.type !== "flow") throw new Error("expected flow");
+    cycleFlow.edges.push({
+      id: "cycle-edge",
+      from: second.to,
+      to: first.from,
+      label: "",
+    });
+    expect(isMindMapDocument(cycle)).toBe(false);
   });
 
   it("rejects broken parent references and unreachable nodes", () => {

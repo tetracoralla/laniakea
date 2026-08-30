@@ -9,6 +9,15 @@ import {
   type AgentTreeInput,
 } from "./mindMapTools";
 import { documentToMarkdown } from "../model/markdown";
+import { createSeedDocument } from "../data/seed";
+import {
+  createFlowSpace,
+  createMapSpace,
+  flowSpaceForNode,
+  mapSpaceDocument,
+  mergeMapSpaceDocument,
+} from "../model/spaces";
+import { createChild } from "../model/tree";
 
 describe("Laniakea Agent mind-map tools", () => {
   it("creates a human-readable Markdown outline from structured input", () => {
@@ -43,6 +52,59 @@ describe("Laniakea Agent mind-map tools", () => {
     expect(view.nodes.filter((node) => node.text === "Risk")).toEqual([
       expect.objectContaining({ ref: "/0/0" }),
       expect.objectContaining({ ref: "/0/1" }),
+    ]);
+  });
+
+  it("projects an anchored flow so an Agent can understand human flow semantics", () => {
+    const created = createFlowSpace(createSeedDocument(), "path").document;
+    const parsed = parseAgentMindMap(documentToMarkdown(created), "ignored");
+    const view = mindMapToAgentView(parsed);
+    const anchor = view.nodes.find((node) => node.text === "实现路径");
+
+    expect(anchor?.subspace).toEqual(
+      expect.objectContaining({
+        type: "flow",
+        nodeCount: 3,
+        edgeCount: 2,
+        truncated: false,
+      }),
+    );
+    expect(anchor?.subspace?.nodes).toEqual([
+      expect.objectContaining({ kind: "start", text: "开始" }),
+      expect.objectContaining({ kind: "step", text: "实现路径" }),
+      expect.objectContaining({ kind: "end", text: "完成" }),
+    ]);
+  });
+
+  it("projects an anchored map space so an Agent can understand deeper human thinking", () => {
+    const created = createMapSpace(createSeedDocument(), "path");
+    const scoped = mapSpaceDocument(created.document, created.spaceId)!;
+    const expanded = createChild(
+      scoped,
+      scoped.rootId,
+      "持久化策略",
+      "map-detail",
+    ).document;
+    const document = mergeMapSpaceDocument(
+      created.document,
+      created.spaceId,
+      expanded,
+    );
+    const parsed = parseAgentMindMap(documentToMarkdown(document), "ignored");
+    const anchor = mindMapToAgentView(parsed).nodes.find(
+      (node) => node.text === "实现路径",
+    );
+
+    expect(anchor?.subspace).toEqual(
+      expect.objectContaining({
+        type: "map",
+        nodeCount: 2,
+        truncated: false,
+      }),
+    );
+    expect(anchor?.subspace?.nodes.map((node) => node.text)).toEqual([
+      "实现路径",
+      "持久化策略",
     ]);
   });
 
@@ -185,6 +247,75 @@ describe("Laniakea Agent mind-map tools", () => {
         { type: "delete_subtree", ref: "/0" },
       ]),
     ).toThrow(/main root/);
+  });
+
+  it("rejects unknown operation types instead of treating them as deletes", () => {
+    const parsed = parseAgentMindMap(
+      "# Map\n\n- Root\n  - Keep\n",
+      "ignored",
+    );
+
+    expect(() =>
+      applyMindMapOperations(parsed, [
+        { type: "explode_everything" } as never,
+      ]),
+    ).toThrow(/Unknown operation type/);
+    expect(
+      mindMapToAgentView(parsed).nodes.find(({ text }) => text === "Keep"),
+    ).toBeDefined();
+  });
+
+  it("caps each flow node's outgoing preview and flags the truncation", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const space = flowSpaceForNode(created.document, "path")!;
+    const hubId = Object.values(space.nodes).find(
+      ({ kind }) => kind === "step",
+    )!.id;
+    const targets = Array.from({ length: 70 }, (_, index) => ({
+      id: `flow-node-target-${index}`,
+      text: `目标 ${index}`,
+      kind: "step" as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    const hubbedSpace = {
+      ...space,
+      nodes: {
+        ...space.nodes,
+        ...Object.fromEntries(targets.map((node) => [node.id, node])),
+      },
+      edges: [
+        ...space.edges,
+        ...targets.map((node) => ({
+          id: `flow-edge-${node.id}`,
+          from: hubId,
+          to: node.id,
+          label: "",
+        })),
+      ],
+    };
+    const document = {
+      ...created.document,
+      spaces: { ...created.document.spaces, [hubbedSpace.id]: hubbedSpace },
+    };
+
+    const parsed = parseAgentMindMap(documentToMarkdown(document), "ignored");
+    const anchor = mindMapToAgentView(parsed).nodes.find(
+      (node) => node.text === "实现路径",
+    );
+    const subspace = anchor?.subspace;
+    if (!subspace || subspace.type !== "flow") {
+      throw new Error("expected a flow subspace on the anchor");
+    }
+    const hubView = subspace.nodes.find((node) =>
+      node.ref.endsWith(hubId),
+    );
+
+    expect(hubView?.outgoing).toHaveLength(64);
+    expect(hubView?.outgoingTruncated).toBe(true);
+    expect(subspace).toEqual(
+      expect.objectContaining({ edgeCount: 72 }),
+    );
   });
 
   it("reads rich Markdown but refuses lossy in-place mutation", () => {

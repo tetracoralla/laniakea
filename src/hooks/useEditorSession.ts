@@ -7,13 +7,17 @@ import {
   type SetStateAction,
 } from "react";
 import { listenForWindowFocusChange } from "../desktop/applicationLifecycle";
+import {
+  adoptRootTextTitle,
+  importedPasteTitle,
+} from "../model/clipboard";
 import { isBlankMindMapDocument } from "../model/document";
 import { parseMarkdownDocument } from "../model/markdown";
 import { isDesktopRuntime } from "../persistence/localDocumentStore";
 import { singleSelection } from "../model/selection";
 import {
-  attachSubtree,
-  detachSubtree,
+  attachSubtrees,
+  detachSubtrees,
   normalizeNodeText,
   setNodeText,
   toggleCollapsed,
@@ -50,11 +54,10 @@ interface EditorSession {
   cancelEdit: (id: string) => void;
   toggleNode: (id: string) => void;
   detachNodeToCanvas: (
-    id: string,
-    position: { x: number; y: number },
+    positions: readonly { id: string; x: number; y: number }[],
   ) => void;
   attachNodeToParent: (
-    id: string,
+    ids: readonly string[],
     parentId: string,
     position: number,
   ) => void;
@@ -208,22 +211,30 @@ export function useEditorSession({
   );
 
   const detachNodeToCanvas = useCallback(
-    (id: string, position: { x: number; y: number }) => {
-      const existing = documentRef.current.floatingRoots.find(
-        (root) => root.id === id,
-      );
-      if (
-        existing &&
-        existing.x === Math.max(32, Math.round(position.x)) &&
-        existing.y === Math.max(32, Math.round(position.y))
-      ) {
+    (positions: readonly { id: string; x: number; y: number }[]) => {
+      if (positions.length === 0) return;
+      const currentDocument = documentRef.current;
+      const unchanged = positions.every((position) => {
+        const existing = currentDocument.floatingRoots.find(
+          (root) => root.id === position.id,
+        );
+        return (
+          existing &&
+          existing.x === Math.max(32, Math.round(position.x)) &&
+          existing.y === Math.max(32, Math.round(position.y))
+        );
+      });
+      if (unchanged) {
         return;
       }
       applyMutation((current) =>
-        detachSubtree(current.document, id, position),
+        detachSubtrees(current.document, positions, current.selection),
       );
       notify({
-        message: "已移到画布空白处",
+        message:
+          positions.length === 1
+            ? "已移到画布空白处"
+            : `已将 ${positions.length} 个分支移到画布空白处`,
         actionLabel: "撤销",
         onAction: undo,
       });
@@ -232,29 +243,49 @@ export function useEditorSession({
   );
 
   const attachNodeToParent = useCallback(
-    (id: string, parentId: string, position: number) => {
+    (ids: readonly string[], parentId: string, position: number) => {
       const currentDocument = documentRef.current;
-      const current = currentDocument.nodes[id];
       const parent = currentDocument.nodes[parentId];
-      if (!current || !parent) return;
-      const siblings = parent.children.filter((childId) => childId !== id);
+      const roots = ids.filter((id) => currentDocument.nodes[id]);
+      if (roots.length === 0 || !parent) return;
+      const rootSet = new Set(roots);
+      const siblings = parent.children.filter(
+        (childId) => !rootSet.has(childId),
+      );
       const insertAt = Math.max(0, Math.min(position, siblings.length));
-      siblings.splice(insertAt, 0, id);
+      siblings.splice(insertAt, 0, ...roots);
       const unchanged =
-        current.parentId === parentId &&
+        roots.every(
+          (id) => currentDocument.nodes[id]?.parentId === parentId,
+        ) &&
         !parent.collapsed &&
+        siblings.length === parent.children.length &&
         siblings.every(
           (childId, index) => parent.children[index] === childId,
         );
       if (unchanged) return;
       const parentText = currentDocument.nodes[parentId]?.text;
       applyMutation((current) =>
-        attachSubtree(current.document, id, parentId, insertAt),
+        attachSubtrees(
+          current.document,
+          roots,
+          parentId,
+          insertAt,
+          current.selection,
+        ),
       );
       notify({
         message:
-          current.parentId === parentId
-            ? "已调整同级顺序"
+          roots.length > 1
+            ? roots.every(
+                (id) => currentDocument.nodes[id]?.parentId === parentId,
+              )
+              ? `已调整 ${roots.length} 个同级分支的顺序`
+              : parentText
+                ? `已将 ${roots.length} 个分支移入“${parentText}”`
+                : `已将 ${roots.length} 个分支移入新的父节点`
+            : currentDocument.nodes[roots[0]]?.parentId === parentId
+              ? "已调整同级顺序"
             : parentText
               ? `已移入“${parentText}”`
               : "已移入新的父节点",
@@ -283,13 +314,14 @@ export function useEditorSession({
       ) {
         return false;
       }
-      const parsed = parseMarkdownDocument(value, "粘贴内容");
+      const parsed = parseMarkdownDocument(value, importedPasteTitle);
+      const document = adoptRootTextTitle(parsed.document, importedPasteTitle);
       cancelledEdit.current = id;
       setEditingId(null);
       setDraft("");
       applyMutation(() => ({
-        document: parsed.document,
-        selection: singleSelection(parsed.document.rootId),
+        document,
+        selection: singleSelection(document.rootId),
       }));
       notify({ message: "已从 Markdown 生成思维导图" });
       setFitRequest((current) => current + 1);

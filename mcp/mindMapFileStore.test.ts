@@ -1,11 +1,13 @@
 import {
   chmod,
+  lstat,
   mkdtemp,
   mkdir,
   readFile,
   rm,
   stat,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createMindMapFile,
   readMindMapFile,
+  removeStaleLockIfUnchanged,
   updateMindMapFile,
 } from "./mindMapFileStore";
 
@@ -188,5 +191,36 @@ describe("Laniakea Agent Markdown file store", () => {
     await expect(readMindMapFile(link)).rejects.toMatchObject({
       code: "invalid_path",
     });
+  });
+
+  it("does not remove a lock file that was replaced after the stale check", async () => {
+    const lockPath = join(workspace, ".laniakea-lock-check");
+    await writeFile(lockPath, `${process.pid}\n`, "utf8");
+    const staleTime = new Date(Date.now() - 10 * 60_000);
+    await utimes(lockPath, staleTime, staleTime);
+    const observed = await lstat(lockPath);
+
+    // Another writer already replaced the stale lock with its own fresh one.
+    await rm(lockPath);
+    await writeFile(lockPath, "999999\n", "utf8");
+    const replacement = await lstat(lockPath);
+
+    expect(
+      await removeStaleLockIfUnchanged(lockPath, {
+        ino: observed.ino,
+        mtimeMs: observed.mtimeMs,
+      }),
+    ).toBe(false);
+    expect((await lstat(lockPath)).ino).toBe(replacement.ino);
+
+    // The unchanged file itself is removed as the stale lock it is.
+    const current = await lstat(lockPath);
+    expect(
+      await removeStaleLockIfUnchanged(lockPath, {
+        ino: current.ino,
+        mtimeMs: current.mtimeMs,
+      }),
+    ).toBe(true);
+    await expect(lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

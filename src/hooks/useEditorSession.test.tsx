@@ -79,4 +79,39 @@ describe("editor session lifecycle", () => {
     await act(async () => session!.finishDocumentSwitch(false));
     expect(session!.fitRequest).toBe(1);
   });
+
+  it("titles a structured paste into the blank root from its root text", async () => {
+    const mindMap = createBlankDocument();
+    const applyMutation = vi.fn();
+    let session: ReturnType<typeof useEditorSession> | null = null;
+
+    function Harness() {
+      session = useEditorSession({
+        document: mindMap,
+        selection: singleSelection(mindMap.rootId),
+        applyMutation,
+        selectNode: vi.fn(),
+        notify: vi.fn(),
+        undo: vi.fn(),
+      });
+      return null;
+    }
+
+    await act(async () => root.render(<Harness />));
+    let consumed = false;
+    await act(async () => {
+      consumed = session!.pasteStructuredIntoBlankRoot(
+        mindMap.rootId,
+        "- 产品规划\n  - 用户调研",
+      );
+    });
+
+    expect(consumed).toBe(true);
+    expect(applyMutation).toHaveBeenCalledOnce();
+    const mutation = applyMutation.mock.calls[0][0]({
+      document: mindMap,
+      selection: singleSelection(mindMap.rootId),
+    });
+    expect(mutation.document.title).toBe("产品规划");
+  });
 });

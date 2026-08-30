@@ -85,6 +85,49 @@ const nodeViewSchema = z.object({
   breadcrumb: z.array(z.string()),
   breadcrumbTruncated: z.boolean(),
   textTruncated: z.boolean(),
+  subspace: z
+    .discriminatedUnion("type", [
+      z.object({
+        id: z.string(),
+        type: z.literal("flow"),
+        nodeCount: z.number().int(),
+        edgeCount: z.number().int(),
+        truncated: z.boolean(),
+        nodes: z.array(
+          z.object({
+            ref: z.string(),
+            kind: z.enum(["start", "step", "decision", "end"]),
+            text: z.string(),
+            textTruncated: z.boolean(),
+            outgoing: z.array(
+              z.object({
+                toRef: z.string(),
+                label: z.string(),
+                labelTruncated: z.boolean(),
+              }),
+            ),
+            outgoingTruncated: z.boolean(),
+          }),
+        ),
+      }),
+      z.object({
+        id: z.string(),
+        type: z.literal("map"),
+        nodeCount: z.number().int(),
+        truncated: z.boolean(),
+        nodes: z.array(
+          z.object({
+            ref: z.string(),
+            parentRef: z.string().nullable(),
+            depth: z.number().int(),
+            text: z.string(),
+            textTruncated: z.boolean(),
+            childCount: z.number().int(),
+          }),
+        ),
+      }),
+    ])
+    .optional(),
 });
 
 const truncationReasonSchema = z.enum([

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LayoutResult } from "../types/mindmap";
 import {
+  shareStableVisibleIds,
   viewportNeedsRenderWindowRefresh,
   visibleLayoutNodeIds,
 } from "./viewportCulling";
@@ -33,6 +34,12 @@ function largeLayout(count: number): LayoutResult {
 }
 
 describe("viewport node culling", () => {
+  it("reuses an equivalent mounted-node list across transient interaction state", () => {
+    const previous = ["a", "b", "c"];
+    expect(shareStableVisibleIds(previous, ["a", "b", "c"])).toBe(previous);
+    expect(shareStableVisibleIds(previous, ["a", "c"])).toEqual(["a", "c"]);
+  });
+
   it("keeps a 5,000-node map to a bounded rendered window", () => {
     const ids = visibleLayoutNodeIds(
       largeLayout(5_000),

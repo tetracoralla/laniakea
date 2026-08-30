@@ -24,6 +24,7 @@ import type { AppNotice } from "../types/feedback";
 
 interface MindMapClipboardOptions {
   mindMap: MindMapDocument;
+  documentMindMap?: MindMapDocument;
   selection: SelectionState;
   applyMutation: (
     mutate: (current: EditorSnapshot) => DocumentMutation,
@@ -49,6 +50,7 @@ async function readClipboard(): Promise<string | null> {
 
 export function useMindMapClipboard({
   mindMap,
+  documentMindMap = mindMap,
   selection,
   applyMutation,
   documentSessionId,
@@ -66,13 +68,14 @@ export function useMindMapClipboard({
     async (
       roots: string[],
       expectedDocumentSessionId?: number,
+      sourceDocument = mindMap,
     ): Promise<boolean> => {
       if (roots.length === 0) {
         notify({ message: "请先选择节点" });
         return false;
       }
       const markdown = roots
-        .map((id) => subtreeToMarkdown(mindMap, id))
+        .map((id) => subtreeToMarkdown(sourceDocument, id))
         .join("\n");
       const copied = await writeTextClipboard(markdown);
       if (
@@ -112,9 +115,13 @@ export function useMindMapClipboard({
   );
 
   const copyDocumentMarkdown = useCallback(async () => {
-    if (!(await copyRoots(topLevelRootIds(mindMap)))) return;
+    if (!(await copyRoots(
+      topLevelRootIds(documentMindMap),
+      undefined,
+      documentMindMap,
+    ))) return;
     notify({ message: "已复制整张图为 Markdown" });
-  }, [copyRoots, mindMap, notify]);
+  }, [copyRoots, documentMindMap, notify]);
 
   const cutSelection = useCallback(async () => {
     const operationSessionId = documentSessionId;
@@ -192,42 +199,69 @@ export function useMindMapClipboard({
     [isDocumentSessionCurrent, notify],
   );
 
+  const pasteForest = useCallback(
+    (
+      forest: ClipboardForest,
+      operationSessionId: number,
+    ): boolean => {
+      if (!isDocumentSessionCurrent(operationSessionId)) return false;
+      const currentDocument = mindMapRef.current;
+      const currentSelection = selectionRef.current;
+      const destinationId =
+        currentSelection.primaryId ?? currentDocument.rootId;
+      const replacingBlankDocument = isBlankMindMapDocument(currentDocument);
+      applyMutation(
+        (current) =>
+          pasteClipboardForest(current.document, destinationId, forest),
+        operationSessionId,
+      );
+      if (!isDocumentSessionCurrent(operationSessionId)) return false;
+      notify({
+        message: replacingBlankDocument
+          ? "已从 Markdown 生成思维导图"
+          : forest.rootIds.length === 1
+            ? "已粘贴节点"
+            : `已粘贴 ${forest.rootIds.length} 个分支`,
+        actionLabel: "撤销",
+        onAction: undo,
+      });
+      return true;
+    },
+    [applyMutation, isDocumentSessionCurrent, notify, undo],
+  );
+
+  const pasteText = useCallback(
+    (value: string): boolean => {
+      const operationSessionId = documentSessionId;
+      if (!value.trim()) return false;
+      try {
+        return pasteForest(
+          clipboardTextToForest(value),
+          operationSessionId,
+        );
+      } catch (error) {
+        notify({
+          message:
+            error instanceof Error
+              ? error.message
+              : "剪贴板内容无法粘贴为节点",
+          tone: "error",
+        });
+        return false;
+      }
+    },
+    [documentSessionId, notify, pasteForest],
+  );
+
   const pasteClipboard = useCallback(async () => {
     const operationSessionId = documentSessionId;
     const forest = await readClipboardForest(operationSessionId);
     if (!forest) return;
-    if (!isDocumentSessionCurrent(operationSessionId)) return;
-    const currentDocument = mindMapRef.current;
-    const currentSelection = selectionRef.current;
-    const destinationId =
-      currentSelection.primaryId ?? currentDocument.rootId;
-    const roots = forest.rootIds;
-
-    const replacingBlankDocument =
-      isBlankMindMapDocument(currentDocument);
-    applyMutation(
-      (current) =>
-        pasteClipboardForest(current.document, destinationId, forest),
-      operationSessionId,
-    );
-    if (!isDocumentSessionCurrent(operationSessionId)) return;
-    notify({
-      message:
-        replacingBlankDocument
-          ? "已从 Markdown 生成思维导图"
-          : roots.length === 1
-            ? "已粘贴节点"
-            : `已粘贴 ${roots.length} 个分支`,
-      actionLabel: "撤销",
-      onAction: undo,
-    });
+    pasteForest(forest, operationSessionId);
   }, [
-    applyMutation,
     documentSessionId,
-    isDocumentSessionCurrent,
-    notify,
+    pasteForest,
     readClipboardForest,
-    undo,
   ]);
 
   return {
@@ -235,5 +269,6 @@ export function useMindMapClipboard({
     copyMarkdown,
     cutSelection,
     pasteClipboard,
+    pasteText,
   };
 }

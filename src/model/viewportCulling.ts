@@ -8,6 +8,19 @@ export interface ViewportSize {
   height: number;
 }
 
+export function shareStableVisibleIds(
+  previous: readonly string[],
+  next: readonly string[],
+): readonly string[] {
+  if (
+    previous.length === next.length &&
+    previous.every((id, index) => id === next[index])
+  ) {
+    return previous;
+  }
+  return next;
+}
+
 export function viewportOverscan(viewportSize: ViewportSize): number {
   return Math.max(480, viewportSize.width, viewportSize.height);
 }

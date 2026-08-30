@@ -142,20 +142,50 @@ function delay(milliseconds: number) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function lockCanBeRemoved(lockPath: string): Promise<boolean> {
-  const metadata = await lstat(lockPath).catch(() => null);
-  if (!metadata) return true;
-  if (Date.now() - metadata.mtimeMs > LOCK_STALE_MS) return true;
+export interface StaleLockObservation {
+  ino: number;
+  mtimeMs: number;
+}
 
-  const owner = await readFile(lockPath, "utf8").catch(() => "");
-  const ownerPid = Number.parseInt(owner, 10);
-  if (!Number.isInteger(ownerPid) || ownerPid <= 0) return false;
-  try {
-    process.kill(ownerPid, 0);
-    return false;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH";
+async function lockCanBeRemoved(
+  lockPath: string,
+): Promise<StaleLockObservation | "gone" | null> {
+  const metadata = await lstat(lockPath).catch(() => null);
+  if (!metadata) return "gone";
+  let removable = Date.now() - metadata.mtimeMs > LOCK_STALE_MS;
+  if (!removable) {
+    const owner = await readFile(lockPath, "utf8").catch(() => "");
+    const ownerPid = Number.parseInt(owner, 10);
+    if (Number.isInteger(ownerPid) && ownerPid > 0) {
+      try {
+        process.kill(ownerPid, 0);
+      } catch (error) {
+        removable = (error as NodeJS.ErrnoException).code === "ESRCH";
+      }
+    }
   }
+  return removable
+    ? { ino: metadata.ino, mtimeMs: metadata.mtimeMs }
+    : null;
+}
+
+/**
+ * Remove a validated stale lock only if it is still the exact file that was
+ * observed. Without the inode re-check, two processes that both validated the
+ * same stale lock could each unlink, and the second unlink would delete the
+ * first process's freshly created lock, leaving two writers holding the lock.
+ */
+export async function removeStaleLockIfUnchanged(
+  lockPath: string,
+  observed: StaleLockObservation,
+): Promise<boolean> {
+  const current = await lstat(lockPath).catch(() => null);
+  if (!current) return true;
+  if (current.ino !== observed.ino || current.mtimeMs !== observed.mtimeMs) {
+    return false;
+  }
+  await unlink(lockPath).catch(() => undefined);
+  return true;
 }
 
 async function withUpdateLock<T>(
@@ -183,10 +213,12 @@ async function withUpdateLock<T>(
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (await lockCanBeRemoved(lockPath)) {
-        await unlink(lockPath).catch(() => undefined);
-        continue;
+      const stale = await lockCanBeRemoved(lockPath);
+      let removed = stale === "gone";
+      if (stale && stale !== "gone") {
+        removed = await removeStaleLockIfUnchanged(lockPath, stale);
       }
+      if (removed) continue;
       if (Date.now() >= deadline) {
         throw new MindMapFileError(
           "busy",

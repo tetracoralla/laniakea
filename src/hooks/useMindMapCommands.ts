@@ -44,6 +44,7 @@ import { useMindMapClipboard } from "./useMindMapClipboard";
 
 interface MindMapCommandOptions {
   mindMap: MindMapDocument;
+  scopeDocument?: MindMapDocument;
   selection: SelectionState;
   canUndo: boolean;
   canRedo: boolean;
@@ -60,6 +61,7 @@ interface MindMapCommandOptions {
   setDraft: Dispatch<SetStateAction<string>>;
   openOverlay: (mode: OverlayMode) => void;
   notify: (message: AppNotice) => void;
+  onDrillDown?: (nodeId: string) => void;
   onImport: () => void;
   onNew: () => void;
   onSaveAs: () => void;
@@ -76,10 +78,12 @@ const singleSelectionCommands = new Set<CommandId>([
   "node.delete-preserve",
   "node.move-up",
   "node.move-down",
+  "node.drill-down",
 ]);
 
 export function useMindMapCommands({
   mindMap,
+  scopeDocument,
   selection,
   canUndo,
   canRedo,
@@ -93,6 +97,7 @@ export function useMindMapCommands({
   setDraft,
   openOverlay,
   notify,
+  onDrillDown = () => undefined,
   onImport,
   onNew,
   onSaveAs,
@@ -101,6 +106,7 @@ export function useMindMapCommands({
   redo,
 }: MindMapCommandOptions) {
   const selectedId = selection.primaryId;
+  const commandMap = scopeDocument ?? mindMap;
   const hasSingleSelection =
     selection.selectedIds.length === 1 && selectedId !== null;
 
@@ -129,8 +135,10 @@ export function useMindMapCommands({
     copyMarkdown,
     cutSelection,
     pasteClipboard,
+    pasteText,
   } = useMindMapClipboard({
-      mindMap,
+      mindMap: commandMap,
+      documentMindMap: mindMap,
       selection,
       applyMutation,
       documentSessionId,
@@ -151,25 +159,41 @@ export function useMindMapCommands({
         case "node.create-sibling":
           createAndEdit(
             (current, createdId) =>
-              createSibling(
-                current.document,
-                current.selection.primaryId!,
-                "below",
-                "",
-                createdId,
-              ),
+              current.selection.primaryId === commandMap.rootId &&
+              commandMap.rootId !== current.document.rootId
+                ? createChild(
+                    current.document,
+                    current.selection.primaryId!,
+                    "",
+                    createdId,
+                  )
+                : createSibling(
+                    current.document,
+                    current.selection.primaryId!,
+                    "below",
+                    "",
+                    createdId,
+                  ),
           );
           break;
         case "node.create-above":
           createAndEdit(
             (current, createdId) =>
-              createSibling(
-                current.document,
-                current.selection.primaryId!,
-                "above",
-                "",
-                createdId,
-              ),
+              current.selection.primaryId === commandMap.rootId &&
+              commandMap.rootId !== current.document.rootId
+                ? createChild(
+                    current.document,
+                    current.selection.primaryId!,
+                    "",
+                    createdId,
+                  )
+                : createSibling(
+                    current.document,
+                    current.selection.primaryId!,
+                    "above",
+                    "",
+                    createdId,
+                  ),
           );
           break;
         case "node.create-child":
@@ -184,6 +208,13 @@ export function useMindMapCommands({
           );
           break;
         case "node.outdent":
+          if (
+            selectedId === commandMap.rootId &&
+            commandMap.rootId !== mindMap.rootId
+          ) {
+            notify({ message: "当前空间的中心节点不能提升" });
+            break;
+          }
           applyMutation((current) =>
             outdentNode(
               current.document,
@@ -193,13 +224,13 @@ export function useMindMapCommands({
           break;
         case "node.delete": {
           const deletableRoots = normalizeSelectedRoots(
-            mindMap,
+            commandMap,
             selection.selectedIds.filter(
-              (nodeId) => nodeId !== mindMap.rootId,
+              (nodeId) => nodeId !== commandMap.rootId,
             ),
           );
           if (deletableRoots.length === 0) {
-            if (selection.selectedIds.includes(mindMap.rootId)) {
+            if (selection.selectedIds.includes(commandMap.rootId)) {
               notify({ message: "根节点不能删除" });
             }
             break;
@@ -235,37 +266,37 @@ export function useMindMapCommands({
           break;
         case "node.parent": {
           if (!selectedId) {
-            selectNode(mindMap.rootId);
+            selectNode(commandMap.rootId);
             break;
           }
-          selectNode(parentOf(mindMap, selectedId) ?? selectedId);
+          selectNode(parentOf(commandMap, selectedId) ?? selectedId);
           break;
         }
         case "node.child": {
           if (!selectedId) {
-            selectNode(mindMap.rootId);
+            selectNode(commandMap.rootId);
             break;
           }
-          selectNode(firstChildOf(mindMap, selectedId) ?? selectedId);
+          selectNode(firstChildOf(commandMap, selectedId) ?? selectedId);
           break;
         }
         case "node.previous": {
           if (!selectedId) {
-            selectNode(mindMap.rootId);
+            selectNode(commandMap.rootId);
             break;
           }
           selectNode(
-            adjacentSibling(mindMap, selectedId, -1) ?? selectedId,
+            adjacentSibling(commandMap, selectedId, -1) ?? selectedId,
           );
           break;
         }
         case "node.next": {
           if (!selectedId) {
-            selectNode(mindMap.rootId);
+            selectNode(commandMap.rootId);
             break;
           }
           selectNode(
-            adjacentSibling(mindMap, selectedId, 1) ?? selectedId,
+            adjacentSibling(commandMap, selectedId, 1) ?? selectedId,
           );
           break;
         }
@@ -273,27 +304,27 @@ export function useMindMapCommands({
         case "selection.extend-child":
         case "selection.extend-previous":
         case "selection.extend-next": {
-          let target: string | null = mindMap.rootId;
+          let target: string | null = commandMap.rootId;
           if (selectedId) {
             if (id === "selection.extend-parent") {
-              target = parentOf(mindMap, selectedId);
+              target = parentOf(commandMap, selectedId);
             } else if (id === "selection.extend-child") {
-              target = firstChildOf(mindMap, selectedId);
+              target = firstChildOf(commandMap, selectedId);
             } else if (id === "selection.extend-previous") {
-              target = adjacentSibling(mindMap, selectedId, -1);
+              target = adjacentSibling(commandMap, selectedId, -1);
             } else {
-              target = adjacentSibling(mindMap, selectedId, 1);
+              target = adjacentSibling(commandMap, selectedId, 1);
             }
           }
           if (target) {
-            const order = visibleNodeIds(mindMap);
+            const order = visibleNodeIds(commandMap);
             const expanded = addToSelection(selection, [target], order);
             setSelection({ ...expanded, primaryId: target });
           }
           break;
         }
         case "selection.select-all": {
-          const order = visibleNodeIds(mindMap);
+          const order = visibleNodeIds(commandMap);
           setSelection(
             createSelection(order, order, selection.primaryId),
           );
@@ -336,6 +367,9 @@ export function useMindMapCommands({
               current.selection,
             ),
           );
+          break;
+        case "node.drill-down":
+          onDrillDown(selectedId!);
           break;
         case "map.collapse-all":
           applyMutation((current) =>
@@ -411,6 +445,7 @@ export function useMindMapCommands({
       hasSingleSelection,
       mindMap,
       notify,
+      onDrillDown,
       onImport,
       onNew,
       onSaveAs,
@@ -428,5 +463,10 @@ export function useMindMapCommands({
     ],
   );
 
-  return { copyDocumentMarkdown, copyMarkdown, executeCommand };
+  return {
+    copyDocumentMarkdown,
+    copyMarkdown,
+    executeCommand,
+    pasteText,
+  };
 }

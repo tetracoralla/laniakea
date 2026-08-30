@@ -23,6 +23,7 @@ export type CommandId =
   | "node.move-up"
   | "node.move-down"
   | "node.toggle"
+  | "node.drill-down"
   | "map.collapse-all"
   | "map.expand-all"
   | "history.undo"
@@ -206,6 +207,14 @@ export const commandRegistry: CommandDefinition[] = [
     shortcut: "Meta+/",
     contexts: ["selection"],
     group: "节点",
+  },
+  {
+    id: "node.drill-down",
+    label: "下钻当前节点…",
+    shortcut: "Shift+F10",
+    aliases: ["ContextMenu"],
+    contexts: ["selection"],
+    group: "视图",
   },
   {
     id: "map.collapse-all",

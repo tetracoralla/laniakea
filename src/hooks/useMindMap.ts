@@ -46,6 +46,12 @@ import type {
   StartupMode,
   Viewport,
 } from "../types/mindmap";
+import {
+  findMindNode,
+  preserveDocumentViewports,
+  setFlowViewport as setDocumentFlowViewport,
+  setMapSpaceViewport as setDocumentMapSpaceViewport,
+} from "../model/spaces";
 import { useApplicationSaveLifecycle } from "./useApplicationSaveLifecycle";
 
 function isPristineBlankDocument(document: MindMapDocument): boolean {
@@ -819,7 +825,7 @@ export function useMindMap({
 
   const selectNode = useCallback((selectedId: string) => {
     setHistory((current) =>
-      current.present.document.nodes[selectedId]
+      findMindNode(current.present.document, selectedId)
         ? {
             ...current,
             present: {
@@ -834,7 +840,7 @@ export function useMindMap({
   const setSelection = useCallback((selection: SelectionState) => {
     setHistory((current) => {
       const validIds = selection.selectedIds.filter(
-        (id) => current.present.document.nodes[id],
+        (id) => findMindNode(current.present.document, id),
       );
       const valid = createSelection(
         validIds,
@@ -871,8 +877,80 @@ export function useMindMap({
     });
   }, []);
 
-  const undo = useCallback(() => setHistory(undoEditorHistory), []);
-  const redo = useCallback(() => setHistory(redoEditorHistory), []);
+  const setFlowViewport = useCallback((spaceId: string, viewport: Viewport) => {
+    setHistory((current) => {
+      const document = setDocumentFlowViewport(
+        current.present.document,
+        spaceId,
+        viewport,
+      );
+      if (document === current.present.document) return current;
+      silentAutosaveDocuments.current.add(document);
+      return {
+        ...current,
+        present: {
+          ...current.present,
+          document,
+        },
+      };
+    });
+  }, []);
+
+  const setMapSpaceViewport = useCallback((spaceId: string, viewport: Viewport) => {
+    setHistory((current) => {
+      const document = setDocumentMapSpaceViewport(
+        current.present.document,
+        spaceId,
+        viewport,
+      );
+      if (document === current.present.document) return current;
+      silentAutosaveDocuments.current.add(document);
+      return {
+        ...current,
+        present: {
+          ...current.present,
+          document,
+        },
+      };
+    });
+  }, []);
+
+  const undo = useCallback(
+    () =>
+      setHistory((current) => {
+        const restored = undoEditorHistory(current);
+        if (restored === current) return current;
+        return {
+          ...restored,
+          present: {
+            ...restored.present,
+            document: preserveDocumentViewports(
+              restored.present.document,
+              current.present.document,
+            ),
+          },
+        };
+      }),
+    [],
+  );
+  const redo = useCallback(
+    () =>
+      setHistory((current) => {
+        const restored = redoEditorHistory(current);
+        if (restored === current) return current;
+        return {
+          ...restored,
+          present: {
+            ...restored.present,
+            document: preserveDocumentViewports(
+              restored.present.document,
+              current.present.document,
+            ),
+          },
+        };
+      }),
+    [],
+  );
   const removeRecentDocument = useCallback((path: string) => {
     setRecentDocuments((current) =>
       forgetRecentDocument(current, path),
@@ -905,6 +983,8 @@ export function useMindMap({
     selectNode,
     setSelection,
     setViewport,
+    setFlowViewport,
+    setMapSpaceViewport,
     retrySave: saveNow,
     preserveCurrentAsBrowserCopy,
     refreshBrowserDocuments,

@@ -12,6 +12,7 @@ import {
 import type {
   LayoutResult,
   MindMapDocument,
+  SelectionState,
   Viewport,
 } from "../types/mindmap";
 import { passedDragThreshold, type CanvasPoint } from "../model/marquee";
@@ -21,19 +22,36 @@ import {
   childInsertionPosition,
   clientPointToCanvas,
   dragConnectorPath,
-  floatingPositionFromPointer,
   nodeDropParentHitTest,
   nodeDropCandidateIds,
 } from "../model/nodeDrag";
+import {
+  createSelection,
+  normalizeSelectedRoots,
+  selectionEquals,
+} from "../model/selection";
 
 export type NodeDropIntent = "attach" | "detach" | "retain";
+
+export interface DraggedRootPosition extends CanvasPoint {
+  id: string;
+}
+
+interface DragRoot {
+  id: string;
+  offsetX: number;
+  offsetY: number;
+}
 
 interface NodeDragGesture {
   document: MindMapDocument;
   pointerId: number;
-  nodeId: string;
+  leadId: string;
+  roots: DragRoot[];
+  nextSelection: SelectionState;
   startClient: CanvasPoint;
   grabOffset: CanvasPoint;
+  minimumOffset: CanvasPoint;
   excludedIds: Set<string>;
   startedFloating: boolean;
   moved: boolean;
@@ -51,10 +69,16 @@ interface NodeDragOptions {
   panModifierHeld: RefObject<boolean>;
   document: MindMapDocument;
   layout: LayoutResult;
+  selection: SelectionState;
   editingId: string | null;
   liveViewport: RefObject<Viewport>;
-  onAttach: (id: string, parentId: string, position: number) => void;
-  onDetach: (id: string, position: CanvasPoint) => void;
+  onSelectionChange: (selection: SelectionState) => void;
+  onAttach: (
+    ids: readonly string[],
+    parentId: string,
+    position: number,
+  ) => void;
+  onDetach: (positions: readonly DraggedRootPosition[]) => void;
 }
 
 interface NodeDragBindings {
@@ -79,6 +103,32 @@ function subtreeIds(document: MindMapDocument, rootId: string): Set<string> {
   return ids;
 }
 
+function leadPosition(
+  gesture: NodeDragGesture,
+  point: CanvasPoint,
+): CanvasPoint {
+  const unclamped = {
+    x: point.x - gesture.grabOffset.x,
+    y: point.y - gesture.grabOffset.y,
+  };
+  return {
+    x: Math.round(Math.max(32 - gesture.minimumOffset.x, unclamped.x)),
+    y: Math.round(Math.max(32 - gesture.minimumOffset.y, unclamped.y)),
+  };
+}
+
+function positionedRoots(
+  gesture: NodeDragGesture,
+  point = gesture.point,
+): DraggedRootPosition[] {
+  const lead = leadPosition(gesture, point);
+  return gesture.roots.map(({ id, offsetX, offsetY }) => ({
+    id,
+    x: lead.x + offsetX,
+    y: lead.y + offsetY,
+  }));
+}
+
 export function useNodeDrag({
   containerRef,
   connectorPreviewRef,
@@ -86,14 +136,17 @@ export function useNodeDrag({
   panModifierHeld,
   document,
   layout,
+  selection,
   editingId,
   liveViewport,
+  onSelectionChange,
   onAttach,
   onDetach,
 }: NodeDragOptions): {
   beginNodeDrag: PointerEventHandler<HTMLDivElement>;
   bindings: NodeDragBindings;
   draggingId: string | null;
+  draggingIds: readonly string[];
   dropTargetId: string | null;
   dropPosition: number | null;
   dropIntent: NodeDropIntent | null;
@@ -102,21 +155,26 @@ export function useNodeDrag({
   const suppressNextClick = useRef(false);
   const documentRef = useRef(document);
   const layoutRef = useRef(layout);
+  const selectionRef = useRef(selection);
   const dropSpatialIndex = useMemo(
     () => buildNodeDropSpatialIndex(layout),
     [layout],
   );
   const dropSpatialIndexRef = useRef(dropSpatialIndex);
   const editingIdRef = useRef(editingId);
+  const onSelectionChangeRef = useRef(onSelectionChange);
   const onAttachRef = useRef(onAttach);
   const onDetachRef = useRef(onDetach);
   documentRef.current = document;
   layoutRef.current = layout;
+  selectionRef.current = selection;
   dropSpatialIndexRef.current = dropSpatialIndex;
   editingIdRef.current = editingId;
+  onSelectionChangeRef.current = onSelectionChange;
   onAttachRef.current = onAttach;
   onDetachRef.current = onDetach;
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [draggingIds, setDraggingIds] = useState<readonly string[]>([]);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dropPosition, setDropPosition] = useState<number | null>(null);
   const [dropIntent, setDropIntent] = useState<NodeDropIntent | null>(null);
@@ -136,12 +194,9 @@ export function useNodeDrag({
   const syncPreview = useCallback(() => {
     const gesture = gestureRef.current;
     if (!gesture?.moved) return;
-    const source = layoutRef.current.nodes[gesture.nodeId];
+    const source = layoutRef.current.nodes[gesture.leadId];
     if (!source) return;
-    const position = floatingPositionFromPointer(
-      gesture.point,
-      gesture.grabOffset,
-    );
+    const position = leadPosition(gesture, gesture.point);
     const preview = previewRef.current;
     if (preview) {
       preview.dataset.dropIntent = gesture.dropIntent;
@@ -152,7 +207,7 @@ export function useNodeDrag({
       }
       preview.style.opacity =
         gesture.dropIntent === "retain" ? "0.58" : "0.86";
-      preview.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
+      preview.style.transform = `translate3d(${position.x + gesture.minimumOffset.x}px, ${position.y + gesture.minimumOffset.y}px, 0)`;
     }
 
     const connector = connectorPreviewRef.current;
@@ -188,6 +243,7 @@ export function useNodeDrag({
       suppressNextClick.current = true;
     }
     setDraggingId(null);
+    setDraggingIds([]);
     setDropTargetId(null);
     setDropPosition(null);
     setDropIntent(null);
@@ -203,7 +259,7 @@ export function useNodeDrag({
     if (
       gesture &&
       (gesture.document !== document ||
-        !document.nodes[gesture.nodeId] ||
+        gesture.roots.some(({ id }) => !document.nodes[id]) ||
         editingId !== null)
     ) {
       clearGesture(true);
@@ -260,25 +316,76 @@ export function useNodeDrag({
       ) {
         return;
       }
-      const source = currentLayout.nodes[id];
+
+      const currentSelection = selectionRef.current;
+      const requestedSelection = currentSelection.selectedIds.includes(id)
+        ? currentSelection.selectedIds.filter(
+            (selectedId) => selectedId !== currentDocument.rootId,
+          )
+        : [id];
+      const rootIds = normalizeSelectedRoots(
+        currentDocument,
+        requestedSelection,
+      ).filter((rootId) => rootId !== currentDocument.rootId);
+      const leadId =
+        rootIds.find((rootId) => subtreeIds(currentDocument, rootId).has(id)) ??
+        rootIds[0];
+      const source = leadId ? currentLayout.nodes[leadId] : null;
       if (!source) return;
+      const roots = rootIds
+        .map((rootId) => {
+          const root = currentLayout.nodes[rootId];
+          return root
+            ? {
+                id: rootId,
+                offsetX: root.x - source.x,
+                offsetY: root.y - source.y,
+              }
+            : null;
+        })
+        .filter((root): root is DragRoot => Boolean(root));
+      if (roots.length === 0) return;
+
+      const nextSelection = createSelection(
+        requestedSelection,
+        currentLayout.visibleIds,
+        id,
+      );
       const point = clientPointToCanvas(
         event.clientX,
         event.clientY,
         container.getBoundingClientRect(),
         liveViewport.current,
       );
+      const excludedIds = new Set<string>();
+      roots.forEach(({ id: rootId }) => {
+        subtreeIds(currentDocument, rootId).forEach((subtreeId) => {
+          excludedIds.add(subtreeId);
+        });
+      });
+      const minimumOffset = roots.reduce(
+        (minimum, root) => ({
+          x: Math.min(minimum.x, root.offsetX),
+          y: Math.min(minimum.y, root.offsetY),
+        }),
+        { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY },
+      );
       gestureRef.current = {
         document: currentDocument,
         pointerId: event.pointerId,
-        nodeId: id,
+        leadId,
+        roots,
+        nextSelection,
         startClient: { x: event.clientX, y: event.clientY },
         grabOffset: {
           x: point.x - source.x,
           y: point.y - source.y,
         },
-        excludedIds: subtreeIds(currentDocument, id),
-        startedFloating: source.rootKind === "floating",
+        minimumOffset,
+        excludedIds,
+        startedFloating: roots.every(
+          ({ id: rootId }) => currentLayout.nodes[rootId]?.rootKind === "floating",
+        ),
         moved: false,
         point,
         dropTargetId: null,
@@ -305,11 +412,7 @@ export function useNodeDrag({
     onPointerMove: (event) => {
       const gesture = gestureRef.current;
       const container = containerRef.current;
-      if (
-        !gesture ||
-        gesture.pointerId !== event.pointerId ||
-        !container
-      ) {
+      if (!gesture || gesture.pointerId !== event.pointerId || !container) {
         return;
       }
       const moved =
@@ -332,16 +435,20 @@ export function useNodeDrag({
       event.preventDefault();
       if (
         !gesture.moved &&
+        !selectionEquals(selectionRef.current, gesture.nextSelection)
+      ) {
+        selectionRef.current = gesture.nextSelection;
+        onSelectionChangeRef.current(gesture.nextSelection);
+      }
+      if (
+        !gesture.moved &&
         !gesture.captureElement.hasPointerCapture(event.pointerId)
       ) {
         gesture.captureElement.setPointerCapture(event.pointerId);
       }
-      const source = layoutRef.current.nodes[gesture.nodeId];
+      const source = layoutRef.current.nodes[gesture.leadId];
       if (!source) return;
-      const position = floatingPositionFromPointer(
-        point,
-        gesture.grabOffset,
-      );
+      const position = leadPosition(gesture, point);
       const probe = {
         ...position,
         height: source.height,
@@ -366,7 +473,7 @@ export function useNodeDrag({
             documentRef.current,
             layoutRef.current,
             targetId,
-            gesture.nodeId,
+            gesture.roots.map(({ id: rootId }) => rootId),
             probe,
           )
         : null;
@@ -387,7 +494,13 @@ export function useNodeDrag({
       gesture.dropPosition = nextDropPosition;
       gesture.dropIntent = nextDropIntent;
       setDraggingId((current) =>
-        current === gesture.nodeId ? current : gesture.nodeId,
+        current === gesture.leadId ? current : gesture.leadId,
+      );
+      setDraggingIds((current) =>
+        current.length === gesture.roots.length &&
+        current.every((rootId, index) => rootId === gesture.roots[index].id)
+          ? current
+          : gesture.roots.map(({ id: rootId }) => rootId),
       );
       setDropTargetId((current) =>
         current === targetId ? current : targetId,
@@ -405,24 +518,19 @@ export function useNodeDrag({
       if (!gesture || gesture.pointerId !== event.pointerId) return;
       clearGesture(gesture.moved);
       if (gesture.moved) {
+        const ids = gesture.roots.map(({ id }) => id);
         if (
           gesture.dropIntent === "attach" &&
           gesture.dropTargetId &&
           gesture.dropPosition !== null
         ) {
           onAttachRef.current(
-            gesture.nodeId,
+            ids,
             gesture.dropTargetId,
             gesture.dropPosition,
           );
         } else if (gesture.dropIntent === "detach") {
-          onDetachRef.current(
-            gesture.nodeId,
-            floatingPositionFromPointer(
-              gesture.point,
-              gesture.grabOffset,
-            ),
-          );
+          onDetachRef.current(positionedRoots(gesture));
         }
       }
     },
@@ -437,6 +545,7 @@ export function useNodeDrag({
     beginNodeDrag,
     bindings,
     draggingId,
+    draggingIds,
     dropTargetId,
     dropPosition,
     dropIntent,

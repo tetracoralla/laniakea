@@ -9,7 +9,15 @@ import {
   parseMarkdownDocument,
   subtreeToMarkdown,
 } from "./markdown";
-import { deleteSubtree, setNodeText } from "./tree";
+import { createChild, deleteSubtree, setNodeText } from "./tree";
+import {
+  createFlowSpace,
+  createMapSpace,
+  flowSpaceForNode,
+  mapSpaceDocument,
+  mapSpaceForNode,
+  mergeMapSpaceDocument,
+} from "./spaces";
 
 describe("Markdown import and export", () => {
   it("exports a selected subtree with stable indentation", () => {
@@ -74,6 +82,105 @@ describe("Markdown import and export", () => {
         (id) => parsed.document.nodes[id].text,
       ),
     ).toEqual(["使用场景", "核心体验", "实现路径", "第一版边界"]);
+  });
+
+  it("round-trips a portable flow space through its anchor path", () => {
+    const source = createSeedDocument();
+    const created = createFlowSpace(source, "path");
+    const markdown = documentToMarkdown(created.document);
+    const reopened = parseMarkdownDocument(markdown, "ignored filename");
+    const reopenedAnchor = Object.values(reopened.document.nodes).find(
+      (node) => node.text === "实现路径",
+    )!;
+    const flow = flowSpaceForNode(reopened.document, reopenedAnchor.id);
+
+    expect(markdown).toContain("~~~laniakea");
+    expect(markdown).toContain('"anchorRef": "/0/2"');
+    expect(reopened.canOverwriteSource).toBe(true);
+    expect(flow?.anchorNodeId).toBe(reopenedAnchor.id);
+    expect(Object.values(flow?.nodes ?? {}).map((node) => node.text)).toEqual([
+      "开始",
+      "实现路径",
+      "完成",
+    ]);
+  });
+
+  it("round-trips a permanent map space with a nested flow", () => {
+    const source = createSeedDocument();
+    const mapCreated = createMapSpace(source, "path");
+    const mapDocument = mapSpaceDocument(
+      mapCreated.document,
+      mapCreated.spaceId,
+    )!;
+    const expandedMap = createChild(
+      mapDocument,
+      mapDocument.rootId,
+      "实现细节",
+      "nested-map-node",
+    ).document;
+    const flowCreated = createFlowSpace(expandedMap, "nested-map-node");
+    const complete = mergeMapSpaceDocument(
+      mapCreated.document,
+      mapCreated.spaceId,
+      flowCreated.document,
+    );
+
+    const markdown = documentToMarkdown(complete);
+    const reopened = parseMarkdownDocument(markdown, "ignored filename");
+    const anchor = Object.values(reopened.document.nodes).find(
+      (node) => node.text === "实现路径",
+    )!;
+    const reopenedMap = mapSpaceForNode(reopened.document, anchor.id)!;
+    const reopenedMapDocument = mapSpaceDocument(
+      reopened.document,
+      reopenedMap.id,
+    )!;
+    const nestedNode = Object.values(reopenedMap.nodes).find(
+      (node) => node.text === "实现细节",
+    )!;
+
+    expect(markdown).toContain('"version": 2');
+    expect(reopenedMap.nodes[reopenedMap.rootId].text).toBe("实现路径");
+    expect(flowSpaceForNode(reopenedMapDocument, nestedNode.id)).not.toBeNull();
+  });
+
+  it("protects an invalid Laniakea metadata block as rich Markdown", () => {
+    const parsed = parseMarkdownDocument(
+      "# 方案\n\n- 原点\n\n~~~laniakea\n{not-json}\n~~~\n",
+      "方案",
+    );
+
+    expect(parsed.canOverwriteSource).toBe(false);
+    expect(parsed.sourceKind).toBe("rich");
+    expect(
+      Object.values(parsed.document.nodes).some((node) =>
+        node.text.includes("{not-json}"),
+      ),
+    ).toBe(true);
+  });
+
+  it("protects the whole source when two Laniakea metadata blocks are present", () => {
+    const bundle = '~~~laniakea\n{"version":2,"portals":[]}\n~~~';
+    const parsed = parseMarkdownDocument(
+      `# 方案\n\n- 原点\n\n${bundle}\n\n${bundle}\n`,
+      "方案",
+    );
+
+    expect(parsed.canOverwriteSource).toBe(false);
+    expect(parsed.sourceKind).toBe("rich");
+  });
+
+  it("protects the whole source when a portal anchor is dangling", () => {
+    const source = createSeedDocument();
+    const markdown = documentToMarkdown(
+      createFlowSpace(source, "path").document,
+    );
+    const broken = markdown.replace('"anchorRef": "/0/2"', '"anchorRef": "/9/9"');
+
+    const parsed = parseMarkdownDocument(broken, "ignored filename");
+
+    expect(parsed.canOverwriteSource).toBe(false);
+    expect(parsed.sourceKind).toBe("rich");
   });
 
   it("treats an untitled heading as provisional when a file has a meaningful name", () => {

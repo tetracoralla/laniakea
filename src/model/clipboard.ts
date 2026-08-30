@@ -16,20 +16,35 @@ export interface ClipboardForest {
   rootIds: string[];
 }
 
+export const importedPasteTitle = "粘贴内容";
+
+export function adoptRootTextTitle(
+  document: MindMapDocument,
+  importMarker: string,
+): MindMapDocument {
+  const rootText = document.nodes[document.rootId]?.text;
+  if (document.title !== importMarker || !rootText.trim()) return document;
+  return { ...document, title: rootText };
+}
+
 export function clipboardTextToForest(text: string): ClipboardForest {
   const value = text.trim();
   if (!value) throw new Error("剪贴板中没有可粘贴的内容");
 
-  if (!value.includes("\n")) {
+  const oneLineMarkdownList = /^(?:[-+*]|\d+[.)])\s+\S/u.test(value);
+  if (!value.includes("\n") && !oneLineMarkdownList) {
     const document = createBlankDocument();
-    document.title = "粘贴内容";
+    document.title = importedPasteTitle;
     document.nodes[document.rootId].text = value;
-    return { document, rootIds: [document.rootId] };
+    return {
+      document: adoptRootTextTitle(document, importedPasteTitle),
+      rootIds: [document.rootId],
+    };
   }
 
   let document: MindMapDocument;
   try {
-    document = markdownToDocument(value, "粘贴内容");
+    document = markdownToDocument(value, importedPasteTitle);
   } catch {
     const lines = value
       .split(/\r?\n/)
@@ -37,20 +52,17 @@ export function clipboardTextToForest(text: string): ClipboardForest {
       .filter(Boolean);
     if (lines.length === 1) {
       document = createBlankDocument();
-      document.title = "粘贴内容";
+      document.title = importedPasteTitle;
       document.nodes[document.rootId].text = lines[0];
     } else {
       document = markdownToDocument(
         lines.map((line) => `- ${line}`).join("\n"),
-        "粘贴内容",
+        importedPasteTitle,
       );
     }
   }
 
-  const root = document.nodes[document.rootId];
-  if (document.title === "粘贴内容" && root) {
-    document.title = root.text;
-  }
+  document = adoptRootTextTitle(document, importedPasteTitle);
   return {
     document,
     rootIds: topLevelRootIds(document),

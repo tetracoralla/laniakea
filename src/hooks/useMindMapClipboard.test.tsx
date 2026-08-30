@@ -189,4 +189,52 @@ describe("clipboard document-session isolation", () => {
     expect(applyMutation).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
   });
+
+  it("pastes native event text synchronously without reading the clipboard again", async () => {
+    const document = createSeedDocument();
+    const applyMutation = vi.fn();
+    const notify = vi.fn();
+    const readText = vi.fn();
+    let pasteText: ((value: string) => boolean) | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: vi.fn(),
+        readText,
+      },
+    });
+
+    function Harness() {
+      const clipboard = useMindMapClipboard({
+        mindMap: document,
+        selection: singleSelection("experience"),
+        applyMutation,
+        documentSessionId: 1,
+        isDocumentSessionCurrent: () => true,
+        notify,
+        undo: vi.fn(),
+      });
+      pasteText = clipboard.pasteText;
+      return null;
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      expect(pasteText?.("- 单个节点")).toBe(true);
+    });
+
+    expect(readText).not.toHaveBeenCalled();
+    expect(applyMutation).toHaveBeenCalledOnce();
+    const mutate = applyMutation.mock.calls[0][0];
+    const result = mutate({
+      document,
+      selection: singleSelection("experience"),
+    });
+    const appendedId = result.document.nodes.experience.children.at(-1)!;
+    expect(result.document.nodes[appendedId].text).toBe("单个节点");
+    expect(result.document.nodes[appendedId].parentId).toBe("experience");
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "已粘贴节点" }),
+    );
+  });
 });
