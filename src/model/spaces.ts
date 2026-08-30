@@ -602,9 +602,19 @@ export function deleteFlowNode(
     (edge) => edge.from !== nodeId && edge.to !== nodeId,
   );
   const bridgeTarget = outgoing[0]?.to;
+  const remainingPairs = new Set(
+    remaining.map((edge) => `${edge.from}\u0000${edge.to}`),
+  );
   const bridges = bridgeTarget
     ? incoming
-        .filter((edge) => edge.from !== bridgeTarget)
+        .filter((edge) => {
+          const endpointPair = `${edge.from}\u0000${bridgeTarget}`;
+          if (edge.from === bridgeTarget || remainingPairs.has(endpointPair)) {
+            return false;
+          }
+          remainingPairs.add(endpointPair);
+          return true;
+        })
         .map((edge) => createFlowEdge(edge.from, bridgeTarget, edge.label))
     : [];
   const nodes = { ...space.nodes };

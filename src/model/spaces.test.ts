@@ -113,6 +113,33 @@ describe("typed Laniakea spaces", () => {
     expect(removed.space.edges).toHaveLength(2);
   });
 
+  it("does not duplicate an existing connection while bridging a deleted step", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const startId = Object.values(initial.nodes).find(
+      ({ kind }) => kind === "start",
+    )!.id;
+    const endId = Object.values(initial.nodes).find(
+      ({ kind }) => kind === "end",
+    )!.id;
+    const withDirectBranch = connectFlowNodes(initial, startId, endId);
+
+    const removed = deleteFlowNode(
+      withDirectBranch,
+      created.selectedFlowNodeId,
+    );
+
+    expect(
+      removed.space.edges.filter(
+        (edge) => edge.from === startId && edge.to === endId,
+      ),
+    ).toHaveLength(1);
+    expect(isMindMapDocument({
+      ...created.document,
+      spaces: { [created.spaceId]: removed.space },
+    })).toBe(true);
+  });
+
   it("edits branch language and merges branches without creating cycles", () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;

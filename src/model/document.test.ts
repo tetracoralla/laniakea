@@ -22,6 +22,42 @@ describe("persisted document validation", () => {
     expect(isMindMapDocument(dangling)).toBe(false);
   });
 
+  it("rejects flow self-loops, duplicate endpoint pairs, and directed cycles", () => {
+    const created = createFlowSpace(createSeedDocument(), "path").document;
+    const flow = Object.values(created.spaces ?? {}).find(
+      (space) => space.type === "flow",
+    )!;
+    const [first, second] = flow.edges;
+
+    const selfLoop = structuredClone(created);
+    const selfLoopFlow = selfLoop.spaces![flow.id];
+    if (selfLoopFlow.type !== "flow") throw new Error("expected flow");
+    selfLoopFlow.edges.push({
+      id: "self-loop",
+      from: first.from,
+      to: first.from,
+      label: "",
+    });
+    expect(isMindMapDocument(selfLoop)).toBe(false);
+
+    const duplicate = structuredClone(created);
+    const duplicateFlow = duplicate.spaces![flow.id];
+    if (duplicateFlow.type !== "flow") throw new Error("expected flow");
+    duplicateFlow.edges.push({ ...first, id: "duplicate-edge" });
+    expect(isMindMapDocument(duplicate)).toBe(false);
+
+    const cycle = structuredClone(created);
+    const cycleFlow = cycle.spaces![flow.id];
+    if (cycleFlow.type !== "flow") throw new Error("expected flow");
+    cycleFlow.edges.push({
+      id: "cycle-edge",
+      from: second.to,
+      to: first.from,
+      label: "",
+    });
+    expect(isMindMapDocument(cycle)).toBe(false);
+  });
+
   it("rejects broken parent references and unreachable nodes", () => {
     const brokenParent = createSeedDocument();
     brokenParent.nodes["experience-1"].parentId = "path";

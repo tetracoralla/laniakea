@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap, HashSet},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque},
     fs::{self, File, OpenOptions},
     hash::{Hash, Hasher},
     io::{ErrorKind, Write},
@@ -307,13 +307,49 @@ fn validate_document(document_json: &str) -> Result<(), String> {
                     }
                 }
                 let mut edge_ids = HashSet::new();
+                let mut endpoint_pairs = HashSet::new();
+                let mut outgoing: HashMap<&str, Vec<&str>> = flow
+                    .nodes
+                    .keys()
+                    .map(|node_id| (node_id.as_str(), Vec::new()))
+                    .collect();
+                let mut indegree: HashMap<&str, usize> = flow
+                    .nodes
+                    .keys()
+                    .map(|node_id| (node_id.as_str(), 0))
+                    .collect();
                 for edge in &flow.edges {
                     if !edge_ids.insert(edge.id.as_str())
+                        || !endpoint_pairs.insert((edge.from.as_str(), edge.to.as_str()))
+                        || edge.from == edge.to
                         || !flow.nodes.contains_key(&edge.from)
                         || !flow.nodes.contains_key(&edge.to)
                     {
                         return Err("流程空间包含无效连接".to_string());
                     }
+                    outgoing
+                        .get_mut(edge.from.as_str())
+                        .unwrap()
+                        .push(edge.to.as_str());
+                    *indegree.get_mut(edge.to.as_str()).unwrap() += 1;
+                }
+                let mut pending: VecDeque<&str> = indegree
+                    .iter()
+                    .filter_map(|(node_id, count)| (*count == 0).then_some(*node_id))
+                    .collect();
+                let mut visited = 0;
+                while let Some(node_id) = pending.pop_front() {
+                    visited += 1;
+                    for target_id in outgoing.get(node_id).into_iter().flatten() {
+                        let remaining = indegree.get_mut(target_id).unwrap();
+                        *remaining -= 1;
+                        if *remaining == 0 {
+                            pending.push_back(target_id);
+                        }
+                    }
+                }
+                if visited != flow.nodes.len() {
+                    return Err("流程空间包含循环连接".to_string());
                 }
             }
             StoredSpace::Map(map) => {
@@ -1628,6 +1664,48 @@ mod tests {
         assert!(validate_document(&missing_target.to_string())
             .unwrap_err()
             .contains("无效连接"));
+
+        let mut self_loop: serde_json::Value = serde_json::from_str(&flow_document(0)).unwrap();
+        self_loop["spaces"]["flow-1"]["edges"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id": "edge-self",
+                "from": "step",
+                "to": "step",
+                "label": ""
+            }));
+        assert!(validate_document(&self_loop.to_string())
+            .unwrap_err()
+            .contains("无效连接"));
+
+        let mut duplicate: serde_json::Value = serde_json::from_str(&flow_document(0)).unwrap();
+        duplicate["spaces"]["flow-1"]["edges"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id": "edge-duplicate",
+                "from": "start",
+                "to": "step",
+                "label": "重复"
+            }));
+        assert!(validate_document(&duplicate.to_string())
+            .unwrap_err()
+            .contains("无效连接"));
+
+        let mut cycle: serde_json::Value = serde_json::from_str(&flow_document(0)).unwrap();
+        cycle["spaces"]["flow-1"]["edges"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id": "edge-cycle",
+                "from": "end",
+                "to": "start",
+                "label": ""
+            }));
+        assert!(validate_document(&cycle.to_string())
+            .unwrap_err()
+            .contains("循环连接"));
     }
 
     #[test]
