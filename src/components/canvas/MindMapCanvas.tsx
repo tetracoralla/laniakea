@@ -119,6 +119,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const contentRef = useRef<HTMLDivElement>(null);
     const dragPreviewRef = useRef<HTMLDivElement>(null);
     const dragConnectorPreviewRef = useRef<SVGPathElement>(null);
+    const dragAnnouncementRef = useRef<HTMLDivElement>(null);
     const persistTimer = useRef<number | null>(null);
     const pendingViewportCommitRef = useRef<{
       emit: (viewport: Viewport) => void;
@@ -381,18 +382,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onViewportChange: commitViewportImmediately,
     });
     activeSelectionRef.current = activeSelection;
-    const {
-      beginNodeDrag,
-      bindings: nodeDragBindings,
-      draggingId,
-      draggingIds,
-      dropTargetId,
-      dropPosition,
-      dropIntent,
-    } = useNodeDrag({
+    const { beginNodeDrag, bindings: nodeDragBindings } = useNodeDrag({
       containerRef,
+      containerBoundsRef,
       connectorPreviewRef: dragConnectorPreviewRef,
       previewRef: dragPreviewRef,
+      announcementRef: dragAnnouncementRef,
       panModifierHeld,
       document,
       layout,
@@ -407,26 +402,15 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       () => new Set(activeSelection.selectedIds),
       [activeSelection.selectedIds],
     );
-    const draggingIdSet = useMemo(
-      () => new Set(draggingIds),
-      [draggingIds],
-    );
-    const pinnedIds = useMemo(() => {
-      const required = nodeIdsRequiredInDom(
+    const pinnedIds = useMemo(
+      () => nodeIdsRequiredInDom(
         activeSelection.primaryId,
         editingId,
-        draggingId,
-        dropTargetId,
-      );
-      draggingIds.forEach((id) => required.add(id));
-      return required;
-    }, [
-      activeSelection.primaryId,
-      draggingId,
-      draggingIds,
-      dropTargetId,
-      editingId,
-    ]);
+        null,
+        null,
+      ),
+      [activeSelection.primaryId, editingId],
+    );
     const renderedIds = useMemo(() => {
       const next = visibleLayoutNodeIds(
           layout,
@@ -438,33 +422,6 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       renderedIdsRef.current = stable;
       return stable;
     }, [containerSize, layout, pinnedIds, renderViewportState]);
-    const dragPreviewLayout = useMemo(() => {
-      const roots = draggingIds
-        .map((id) => layout.nodes[id])
-        .filter((node): node is NonNullable<typeof node> => Boolean(node));
-      if (roots.length === 0) return null;
-      const bounds = roots.reduce(
-        (current, node) => ({
-          minX: Math.min(current.minX, node.x),
-          minY: Math.min(current.minY, node.y),
-          maxX: Math.max(current.maxX, node.x + node.width),
-          maxY: Math.max(current.maxY, node.y + node.height),
-        }),
-        {
-          minX: Number.POSITIVE_INFINITY,
-          minY: Number.POSITIVE_INFINITY,
-          maxX: Number.NEGATIVE_INFINITY,
-          maxY: Number.NEGATIVE_INFINITY,
-        },
-      );
-      return {
-        minX: bounds.minX,
-        minY: bounds.minY,
-        width: bounds.maxX - bounds.minX,
-        height: bounds.maxY - bounds.minY,
-        roots,
-      };
-    }, [draggingIds, layout]);
     const handleNodeSelect = useCallback(
       (id: string, additive: boolean) => {
         onSelectionChange(
@@ -677,7 +634,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     return (
       <div
         aria-label="思维导图画布"
-        className={`${className}${draggingId ? " is-node-dragging" : ""}`}
+        className={className}
         onClickCapture={(event) => {
           nodeDragBindings.onClickCapture(event);
           if (!event.defaultPrevented) bindings.onClickCapture(event);
@@ -733,8 +690,6 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
             return (
               <MindMapNode
                 draft={draftForNode(id, editingId, draft)}
-                dragging={draggingIdSet.has(id)}
-                dropTarget={dropTargetId === id}
                 editing={editingId === id}
                 key={id}
                 layout={layout.nodes[id]}
@@ -761,62 +716,24 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
               />
             );
           })}
-          {draggingId && dragPreviewLayout && (
-            <div
-              aria-hidden="true"
-              className="node-drag-preview"
-              ref={dragPreviewRef}
-              style={{
-                height: dragPreviewLayout.height,
-                width: dragPreviewLayout.width,
-              }}
-            >
-              {dragPreviewLayout.roots.map((root) => (
-                <div
-                  className="node-drag-preview__item"
-                  key={root.id}
-                  style={{
-                    height: root.height,
-                    left: root.x - dragPreviewLayout.minX,
-                    top: root.y - dragPreviewLayout.minY,
-                    width: root.width,
-                    fontSize:
-                      root.rootKind === "main"
-                        ? 19
-                        : root.rootKind === "floating"
-                          ? 17
-                          : root.depth === 1
-                            ? 16
-                            : 15,
-                    fontWeight:
-                      root.rootKind === "main"
-                        ? 580
-                        : root.rootKind === "floating"
-                          ? 650
-                          : root.depth === 1
-                            ? 620
-                            : 530,
-                  }}
-                >
-                  {document.nodes[root.id]?.text}
-                </div>
-              ))}
-            </div>
-          )}
+          <div
+            aria-hidden="true"
+            className="node-drag-preview"
+            hidden
+            ref={dragPreviewRef}
+          />
         </div>
         {marqueeRect && <SelectionMarquee rect={marqueeRect} />}
-        <div aria-live="polite" className="sr-only">
-          {draggingId
-            ? dropTargetId
-              ? `松手将${draggingIds.length > 1 ? `${draggingIds.length} 个分支` : "分支"}移入“${document.nodes[dropTargetId]?.text || "未命名节点"}”${dropPosition === null ? "" : `，排在第 ${dropPosition + 1} 个`}`
-              : dropIntent === "detach"
-                ? `松手将${draggingIds.length > 1 ? `${draggingIds.length} 个分支` : "分支"}移到画布空白处`
-                : "继续拖动以选择上级节点"
-            : selection.selectedIds.length === 0
-              ? "未选择节点"
-              : selection.selectedIds.length === 1
-                ? "已选择 1 个节点"
-                : `已选择 ${selection.selectedIds.length} 个节点`}
+        <div
+          aria-live="polite"
+          className="sr-only"
+          ref={dragAnnouncementRef}
+        >
+          {selection.selectedIds.length === 0
+            ? "未选择节点"
+            : selection.selectedIds.length === 1
+              ? "已选择 1 个节点"
+              : `已选择 ${selection.selectedIds.length} 个节点`}
         </div>
       </div>
     );

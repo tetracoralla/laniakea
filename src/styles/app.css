@@ -463,9 +463,7 @@
   cursor: crosshair;
 }
 
-.mindmap-canvas.is-node-dragging,
-.mindmap-canvas.is-node-dragging .mind-node__content,
-.mindmap-canvas.is-node-dragging .mind-node__disclosure {
+.mindmap-canvas[data-node-dragging="true"] {
   cursor: grabbing;
 }
 
@@ -668,18 +666,18 @@
   box-shadow: var(--shadow-selection);
 }
 
-.mind-node.is-dragging {
+.mind-node[data-node-dragging="true"] {
   opacity: 0.32;
 }
 
-.mind-node.is-drop-target .mind-node__content {
+.mind-node[data-node-drop-target="true"] .mind-node__content {
   border-color: color-mix(in srgb, var(--blue) 42%, white);
   box-shadow:
     0 0 0 4px color-mix(in srgb, var(--blue) 10%, transparent),
     0 7px 20px rgba(59, 130, 246, 0.09);
 }
 
-.mind-node.is-drop-target {
+.mind-node[data-node-drop-target="true"] {
   z-index: 3;
 }
 

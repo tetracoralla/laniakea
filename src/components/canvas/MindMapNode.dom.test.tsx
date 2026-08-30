@@ -42,8 +42,6 @@ describe("node editor input method handling", () => {
       return (
         <MindMapNode
           draft={draft}
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}
@@ -158,8 +156,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft="初始"
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}
@@ -210,8 +206,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft="已有文字"
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}
@@ -284,8 +278,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft=""
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}
@@ -337,8 +329,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft=""
-          dragging={false}
-          dropTarget={false}
           editing={false}
           layout={layout}
           node={node}
@@ -381,8 +371,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft={node.text}
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}

@@ -1,10 +1,10 @@
 import {
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   type MouseEventHandler,
   type PointerEventHandler,
   type RefObject,
@@ -55,6 +55,7 @@ interface NodeDragGesture {
   excludedIds: Set<string>;
   startedFloating: boolean;
   moved: boolean;
+  selectionChanged: boolean;
   point: CanvasPoint;
   dropTargetId: string | null;
   dropPosition: number | null;
@@ -64,8 +65,15 @@ interface NodeDragGesture {
 
 interface NodeDragOptions {
   containerRef: RefObject<HTMLDivElement | null>;
+  containerBoundsRef: RefObject<{
+    height: number;
+    left: number;
+    top: number;
+    width: number;
+  } | null>;
   connectorPreviewRef: RefObject<SVGPathElement | null>;
   previewRef: RefObject<HTMLDivElement | null>;
+  announcementRef: RefObject<HTMLDivElement | null>;
   panModifierHeld: RefObject<boolean>;
   document: MindMapDocument;
   layout: LayoutResult;
@@ -129,10 +137,131 @@ function positionedRoots(
   }));
 }
 
+function nodeElement(
+  container: HTMLElement,
+  id: string,
+): HTMLElement | null {
+  const node = container.ownerDocument.getElementById(`mind-node-${id}`);
+  return node && container.contains(node) ? node : null;
+}
+
+function syncVisibleSelection(
+  container: HTMLElement,
+  current: SelectionState,
+  next: SelectionState,
+) {
+  const affectedIds = new Set([
+    ...current.selectedIds,
+    ...next.selectedIds,
+    ...(current.primaryId ? [current.primaryId] : []),
+    ...(next.primaryId ? [next.primaryId] : []),
+  ]);
+  const selectedIds = new Set(next.selectedIds);
+  affectedIds.forEach((id) => {
+    const node = nodeElement(container, id);
+    if (!node) return;
+    const selected = selectedIds.has(id);
+    node.classList.toggle("is-selected", selected);
+    node.classList.toggle("is-primary", next.primaryId === id);
+    node
+      .querySelector<HTMLElement>(".mind-node__content")
+      ?.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+function populatePreview(
+  preview: HTMLDivElement,
+  gesture: NodeDragGesture,
+  layout: LayoutResult,
+  document: MindMapDocument,
+) {
+  const roots = gesture.roots
+    .map(({ id }) => layout.nodes[id])
+    .filter((node): node is NonNullable<typeof node> => Boolean(node));
+  if (roots.length === 0) return;
+  const bounds = roots.reduce(
+    (current, node) => ({
+      minX: Math.min(current.minX, node.x),
+      minY: Math.min(current.minY, node.y),
+      maxX: Math.max(current.maxX, node.x + node.width),
+      maxY: Math.max(current.maxY, node.y + node.height),
+    }),
+    {
+      minX: Number.POSITIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+    },
+  );
+  preview.replaceChildren();
+  preview.style.height = `${bounds.maxY - bounds.minY}px`;
+  preview.style.width = `${bounds.maxX - bounds.minX}px`;
+  roots.forEach((root) => {
+    const item = preview.ownerDocument.createElement("div");
+    item.className = "node-drag-preview__item";
+    item.style.height = `${root.height}px`;
+    item.style.left = `${root.x - bounds.minX}px`;
+    item.style.top = `${root.y - bounds.minY}px`;
+    item.style.width = `${root.width}px`;
+    item.style.fontSize = `${
+      root.rootKind === "main"
+        ? 19
+        : root.rootKind === "floating"
+          ? 17
+          : root.depth === 1
+            ? 16
+            : 15
+    }px`;
+    item.style.fontWeight = String(
+      root.rootKind === "main"
+        ? 580
+        : root.rootKind === "floating"
+          ? 650
+          : root.depth === 1
+            ? 620
+            : 530,
+    );
+    item.textContent = document.nodes[root.id]?.text ?? "";
+    preview.append(item);
+  });
+  preview.hidden = false;
+}
+
+function dragAnnouncement(
+  gesture: NodeDragGesture,
+  document: MindMapDocument,
+): string {
+  const subject =
+    gesture.roots.length > 1
+      ? `${gesture.roots.length} 个分支`
+      : "分支";
+  if (gesture.dropTargetId) {
+    const target = document.nodes[gesture.dropTargetId];
+    return `松手将${subject}移入“${target?.text || "未命名节点"}”${
+      gesture.dropPosition === null
+        ? ""
+        : `，排在第 ${gesture.dropPosition + 1} 个`
+    }`;
+  }
+  return gesture.dropIntent === "detach"
+    ? `松手将${subject}移到画布空白处`
+    : "继续拖动以选择上级节点";
+}
+
+function selectionAnnouncement(selection: SelectionState): string {
+  return selection.selectedIds.length === 0
+    ? "未选择节点"
+    : selection.selectedIds.length === 1
+      ? "已选择 1 个节点"
+      : `已选择 ${selection.selectedIds.length} 个节点`;
+}
+
 export function useNodeDrag({
   containerRef,
+  containerBoundsRef,
   connectorPreviewRef,
   previewRef,
+  announcementRef,
   panModifierHeld,
   document,
   layout,
@@ -145,11 +274,6 @@ export function useNodeDrag({
 }: NodeDragOptions): {
   beginNodeDrag: PointerEventHandler<HTMLDivElement>;
   bindings: NodeDragBindings;
-  draggingId: string | null;
-  draggingIds: readonly string[];
-  dropTargetId: string | null;
-  dropPosition: number | null;
-  dropIntent: NodeDropIntent | null;
 } {
   const gestureRef = useRef<NodeDragGesture | null>(null);
   const suppressNextClick = useRef(false);
@@ -173,17 +297,16 @@ export function useNodeDrag({
   onSelectionChangeRef.current = onSelectionChange;
   onAttachRef.current = onAttach;
   onDetachRef.current = onDetach;
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [draggingIds, setDraggingIds] = useState<readonly string[]>([]);
-  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
-  const [dropPosition, setDropPosition] = useState<number | null>(null);
-  const [dropIntent, setDropIntent] = useState<NodeDropIntent | null>(null);
-
   const hidePreview = useCallback(() => {
     if (previewRef.current) {
+      previewRef.current.hidden = true;
       previewRef.current.style.opacity = "0";
+      previewRef.current.style.removeProperty("height");
+      previewRef.current.style.removeProperty("transform");
+      previewRef.current.style.removeProperty("width");
       delete previewRef.current.dataset.dropIntent;
       delete previewRef.current.dataset.dropPosition;
+      previewRef.current.replaceChildren();
     }
     if (connectorPreviewRef.current) {
       connectorPreviewRef.current.style.opacity = "0";
@@ -242,17 +365,36 @@ export function useNodeDrag({
     if (suppressClick && gesture?.moved) {
       suppressNextClick.current = true;
     }
-    setDraggingId(null);
-    setDraggingIds([]);
-    setDropTargetId(null);
-    setDropPosition(null);
-    setDropIntent(null);
+    if (
+      gesture?.selectionChanged &&
+      gesture.document === documentRef.current
+    ) {
+      // Keep the 10k-node tree out of the pointer-move lane. The visible
+      // selection is already synchronized below; React can yield while it
+      // adopts the same state after the gesture finishes.
+      startTransition(() => {
+        onSelectionChangeRef.current(gesture.nextSelection);
+      });
+    }
+    const container = containerRef.current;
+    if (container) {
+      delete container.dataset.nodeDragging;
+      gesture?.roots.forEach(({ id }) => {
+        const root = nodeElement(container, id);
+        if (root) delete root.dataset.nodeDragging;
+      });
+      if (gesture?.dropTargetId) {
+        const target = nodeElement(container, gesture.dropTargetId);
+        if (target) delete target.dataset.nodeDropTarget;
+      }
+    }
+    if (announcementRef.current) {
+      announcementRef.current.textContent = selectionAnnouncement(
+        selectionRef.current,
+      );
+    }
     hidePreview();
-  }, [hidePreview]);
-
-  useLayoutEffect(() => {
-    syncPreview();
-  }, [draggingId, dropIntent, dropPosition, dropTargetId, syncPreview]);
+  }, [announcementRef, containerRef, hidePreview]);
 
   useLayoutEffect(() => {
     const gesture = gestureRef.current;
@@ -263,8 +405,15 @@ export function useNodeDrag({
         editingId !== null)
     ) {
       clearGesture(true);
+      return;
     }
-  }, [clearGesture, document, editingId]);
+    if (gesture?.moved && announcementRef.current) {
+      announcementRef.current.textContent = dragAnnouncement(
+        gesture,
+        document,
+      );
+    }
+  }, [announcementRef, clearGesture, document, editingId, selection]);
 
   useEffect(() => {
     const cancelForInterruption = () => clearGesture(true);
@@ -354,7 +503,7 @@ export function useNodeDrag({
       const point = clientPointToCanvas(
         event.clientX,
         event.clientY,
-        container.getBoundingClientRect(),
+        containerBoundsRef.current ?? container.getBoundingClientRect(),
         liveViewport.current,
       );
       const excludedIds = new Set<string>();
@@ -387,6 +536,7 @@ export function useNodeDrag({
           ({ id: rootId }) => currentLayout.nodes[rootId]?.rootKind === "floating",
         ),
         moved: false,
+        selectionChanged: false,
         point,
         dropTargetId: null,
         dropPosition: null,
@@ -394,7 +544,7 @@ export function useNodeDrag({
         captureElement: event.currentTarget,
       };
     },
-    [containerRef, liveViewport, panModifierHeld],
+    [containerBoundsRef, containerRef, liveViewport, panModifierHeld],
   );
 
   const bindings: NodeDragBindings = {
@@ -424,7 +574,7 @@ export function useNodeDrag({
       const point = clientPointToCanvas(
         event.clientX,
         event.clientY,
-        container.getBoundingClientRect(),
+        containerBoundsRef.current ?? container.getBoundingClientRect(),
         liveViewport.current,
       );
       if (!moved) {
@@ -437,8 +587,14 @@ export function useNodeDrag({
         !gesture.moved &&
         !selectionEquals(selectionRef.current, gesture.nextSelection)
       ) {
+        const currentSelection = selectionRef.current;
         selectionRef.current = gesture.nextSelection;
-        onSelectionChangeRef.current(gesture.nextSelection);
+        syncVisibleSelection(
+          container,
+          currentSelection,
+          gesture.nextSelection,
+        );
+        gesture.selectionChanged = true;
       }
       if (
         !gesture.moved &&
@@ -488,29 +644,47 @@ export function useNodeDrag({
             (gesture.startedFloating || hasDetachTravel)
           ? "detach"
           : "retain";
+      const firstMove = !gesture.moved;
+      const previousTargetId = gesture.dropTargetId;
       gesture.moved = true;
       gesture.point = point;
       gesture.dropTargetId = targetId;
       gesture.dropPosition = nextDropPosition;
       gesture.dropIntent = nextDropIntent;
-      setDraggingId((current) =>
-        current === gesture.leadId ? current : gesture.leadId,
-      );
-      setDraggingIds((current) =>
-        current.length === gesture.roots.length &&
-        current.every((rootId, index) => rootId === gesture.roots[index].id)
-          ? current
-          : gesture.roots.map(({ id: rootId }) => rootId),
-      );
-      setDropTargetId((current) =>
-        current === targetId ? current : targetId,
-      );
-      setDropPosition((current) =>
-        current === nextDropPosition ? current : nextDropPosition,
-      );
-      setDropIntent((current) =>
-        current === nextDropIntent ? current : nextDropIntent,
-      );
+      if (firstMove) {
+        // Drag-only feedback is intentionally independent from React state.
+        // Updating five parent states here reconciled every mounted overview
+        // node even though only roots, one target, and one preview can change.
+        container.dataset.nodeDragging = "true";
+        gesture.roots.forEach(({ id }) => {
+          const root = nodeElement(container, id);
+          if (root) root.dataset.nodeDragging = "true";
+        });
+        if (previewRef.current) {
+          populatePreview(
+            previewRef.current,
+            gesture,
+            layoutRef.current,
+            documentRef.current,
+          );
+        }
+      }
+      if (previousTargetId !== targetId) {
+        if (previousTargetId) {
+          const previousTarget = nodeElement(container, previousTargetId);
+          if (previousTarget) delete previousTarget.dataset.nodeDropTarget;
+        }
+        if (targetId) {
+          const target = nodeElement(container, targetId);
+          if (target) target.dataset.nodeDropTarget = "true";
+        }
+      }
+      if (announcementRef.current) {
+        announcementRef.current.textContent = dragAnnouncement(
+          gesture,
+          documentRef.current,
+        );
+      }
       syncPreview();
     },
     onPointerUp: (event) => {
@@ -524,13 +698,17 @@ export function useNodeDrag({
           gesture.dropTargetId &&
           gesture.dropPosition !== null
         ) {
-          onAttachRef.current(
-            ids,
-            gesture.dropTargetId,
-            gesture.dropPosition,
-          );
+          startTransition(() => {
+            onAttachRef.current(
+              ids,
+              gesture.dropTargetId!,
+              gesture.dropPosition!,
+            );
+          });
         } else if (gesture.dropIntent === "detach") {
-          onDetachRef.current(positionedRoots(gesture));
+          startTransition(() => {
+            onDetachRef.current(positionedRoots(gesture));
+          });
         }
       }
     },
@@ -544,10 +722,5 @@ export function useNodeDrag({
   return {
     beginNodeDrag,
     bindings,
-    draggingId,
-    draggingIds,
-    dropTargetId,
-    dropPosition,
-    dropIntent,
   };
 }

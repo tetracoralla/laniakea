@@ -19,8 +19,6 @@ interface MindMapNodeProps {
   primary: boolean;
   editing: boolean;
   draft: string;
-  dragging: boolean;
-  dropTarget: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onBeginEdit: (id: string) => void;
   onDraftChange: (value: string) => void;
@@ -45,8 +43,6 @@ export const MindMapNode = memo(function MindMapNode({
   primary,
   editing,
   draft,
-  dragging,
-  dropTarget,
   onSelect,
   onBeginEdit,
   onDraftChange,
@@ -133,8 +129,9 @@ export const MindMapNode = memo(function MindMapNode({
 
   return (
     <div
-      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${editing ? "is-editing" : ""} ${dragging ? "is-dragging" : ""} ${dropTarget ? "is-drop-target" : ""}`}
+      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${editing ? "is-editing" : ""}`}
       data-node-id={node.id}
+      id={`mind-node-${node.id}`}
       onContextMenu={
         editing
           ? undefined

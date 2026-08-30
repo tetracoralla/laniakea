@@ -73,6 +73,20 @@ function frameStats(frameTimes) {
   };
 }
 
+function longFrameWindows(frameTimes, thresholdMilliseconds = 50) {
+  return frameTimes.slice(1).flatMap((time, index) => {
+    const previous = frameTimes[index];
+    const duration = time - previous;
+    return duration > thresholdMilliseconds
+      ? [{
+          start: Number(previous.toFixed(1)),
+          end: Number(time.toFixed(1)),
+          duration: Number(duration.toFixed(1)),
+        }]
+      : [];
+  });
+}
+
 function overviewFixture() {
   const lines = ["# 10k overview drag", ""];
   let depthTwoIndex = 0;
@@ -220,7 +234,15 @@ try {
   await sleep(1_000);
   await evaluate(`(() => {
     window.__laniakeaFrames = [];
+    window.__laniakeaEvents = [];
     window.__laniakeaSampling = false;
+    for (const type of ["pointerdown", "pointermove", "pointerup"]) {
+      document.addEventListener(type, () => {
+        if (window.__laniakeaSampling) {
+          window.__laniakeaEvents.push({ type, time: performance.now() });
+        }
+      }, true);
+    }
     const sample = (time) => {
       if (window.__laniakeaSampling) window.__laniakeaFrames.push(time);
       requestAnimationFrame(sample);
@@ -292,6 +314,7 @@ try {
   await sleep(500);
   await evaluate("window.__laniakeaSampling = false");
   const frameTimes = await evaluate("window.__laniakeaFrames");
+  const eventTimes = await evaluate("window.__laniakeaEvents");
   const finalNodes = await evaluate(
     "document.querySelectorAll('.mind-node').length",
   );
@@ -304,6 +327,8 @@ try {
     viewport: "1600x1000",
     nodes: finalNodes,
     frameDurationMs: frameStats(frameTimes),
+    longFrameWindows: longFrameWindows(frameTimes),
+    interactionEvents: eventTimes,
   }));
 } finally {
   socket?.close();

@@ -1556,7 +1556,7 @@ describe("rendered interaction regressions", () => {
       dispatchPointer(canvas, "pointermove", nearTarget.x, nearTarget.y);
     });
 
-    expect(target.classList.contains("is-drop-target")).toBe(true);
+    expect(target.dataset.nodeDropTarget).toBe("true");
     expect(
       container.querySelector<HTMLElement>(".node-drag-preview")?.dataset
         .dropIntent,
@@ -1647,8 +1647,8 @@ describe("rendered interaction regressions", () => {
         nearTarget.y,
       );
     });
-    expect(canvas.classList.contains("is-node-dragging")).toBe(true);
-    expect(target.classList.contains("is-drop-target")).toBe(true);
+    expect(canvas.dataset.nodeDragging).toBe("true");
+    expect(target.dataset.nodeDropTarget).toBe("true");
 
     await act(async () => {
       window.dispatchEvent(
@@ -1659,9 +1659,11 @@ describe("rendered interaction regressions", () => {
         }),
       );
     });
-    expect(canvas.classList.contains("is-node-dragging")).toBe(false);
-    expect(target.classList.contains("is-drop-target")).toBe(false);
-    expect(container.querySelector(".node-drag-preview")).toBeNull();
+    expect(canvas.dataset.nodeDragging).toBeUndefined();
+    expect(target.dataset.nodeDropTarget).toBeUndefined();
+    expect(
+      container.querySelector<HTMLDivElement>(".node-drag-preview")?.hidden,
+    ).toBe(true);
 
     await act(async () => {
       dispatchPointer(
@@ -1755,7 +1757,7 @@ describe("rendered interaction regressions", () => {
       );
     });
 
-    expect(target.classList.contains("is-drop-target")).toBe(true);
+    expect(target.dataset.nodeDropTarget).toBe("true");
     expect(canvas.textContent).toContain("排在第 2 个");
 
     await act(async () => {
@@ -1827,7 +1829,7 @@ describe("rendered interaction regressions", () => {
       );
     });
 
-    expect(target.classList.contains("is-drop-target")).toBe(false);
+    expect(target.dataset.nodeDropTarget).toBeUndefined();
     expect(
       container
         .querySelector<SVGPathElement>(
@@ -1900,11 +1902,13 @@ describe("rendered interaction regressions", () => {
 
     expect(container.querySelectorAll(".node-drag-preview__item")).toHaveLength(2);
     expect(
-      container.querySelector("[data-node-id='node-1']")?.classList,
-    ).toContain("is-dragging");
+      container.querySelector<HTMLElement>("[data-node-id='node-1']")
+        ?.dataset.nodeDragging,
+    ).toBe("true");
     expect(
-      container.querySelector("[data-node-id='node-2']")?.classList,
-    ).toContain("is-dragging");
+      container.querySelector<HTMLElement>("[data-node-id='node-2']")
+        ?.dataset.nodeDragging,
+    ).toBe("true");
     expect(canvas.textContent).toContain("松手将2 个分支移到画布空白处");
 
     await act(async () => {
@@ -1971,18 +1975,23 @@ describe("rendered interaction regressions", () => {
       dispatchPointer(canvas, "pointermove", 1180, 760);
     });
 
-    expect(onSelectionChange).toHaveBeenCalled();
-    expect(onSelectionChange.mock.calls.at(-1)![0]).toEqual({
-      primaryId: "node-1",
-      selectedIds: ["node-1", "node-2"],
-    });
-    expect(container.querySelectorAll(".node-drag-preview__item")).toHaveLength(2);
+    expect(onSelectionChange).not.toHaveBeenCalled();
     expect(
       container.querySelector("[data-node-id='root']")?.classList,
-    ).not.toContain("is-dragging");
+    ).not.toContain("is-selected");
+    expect(source.classList).toContain("is-primary");
+    expect(container.querySelectorAll(".node-drag-preview__item")).toHaveLength(2);
+    expect(
+      container.querySelector<HTMLElement>("[data-node-id='root']")
+        ?.dataset.nodeDragging,
+    ).toBeUndefined();
 
     await act(async () => {
       dispatchPointer(canvas, "pointerup", 1180, 760);
+    });
+    expect(onSelectionChange.mock.calls.at(-1)![0]).toEqual({
+      primaryId: "node-1",
+      selectedIds: ["node-1", "node-2"],
     });
     const positions = onDetachNode.mock.calls[0][0] as Array<{
       id: string;
@@ -2115,6 +2124,8 @@ describe("rendered interaction regressions", () => {
     expect(onAttachNode).not.toHaveBeenCalled();
     expect(onDetachNode).not.toHaveBeenCalled();
     expect(onSelectionChange).not.toHaveBeenCalled();
-    expect(container.querySelector(".node-drag-preview")).toBeNull();
+    expect(
+      container.querySelector<HTMLDivElement>(".node-drag-preview")?.hidden,
+    ).toBe(true);
   });
 });
