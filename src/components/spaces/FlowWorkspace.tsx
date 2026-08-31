@@ -13,9 +13,12 @@ import {
 } from "../../model/flowLayout";
 import {
   addFlowBranch,
+  addFlowNodeAtPosition,
+  addFlowNodeInDirection,
   addFlowStepAfter,
   connectFlowNodes,
   deleteFlowNode,
+  reconnectFlowEdge,
   setFlowEdgeLabel,
   setFlowNodeKind,
   setFlowNodeText,
@@ -23,6 +26,8 @@ import {
 import type { AppNotice } from "../../types/feedback";
 import type {
   FlowNodeKind,
+  FlowNodePosition,
+  FlowPlacementDirection,
   FlowSpace,
   Viewport,
 } from "../../types/mindmap";
@@ -49,6 +54,7 @@ interface FlowWorkspaceProps {
   onRedo: () => void;
   onUndo: () => void;
   onUpdateSpace: (space: FlowSpace) => void;
+  onPositionsChange?: (positions: Record<string, FlowNodePosition>) => void;
   onViewportChange: (viewport: Viewport) => void;
   space: FlowSpace;
 }
@@ -67,6 +73,7 @@ export const FlowWorkspace = forwardRef<
   onRedo,
   onUndo,
   onUpdateSpace,
+  onPositionsChange = () => undefined,
   onViewportChange,
   space,
 }, ref) {
@@ -161,6 +168,46 @@ export const FlowWorkspace = forwardRef<
     setDraft("");
   }, [applySpace]);
 
+  const addNode = useCallback((
+    nodeId: string,
+    kind: Extract<FlowNodeKind, "step" | "decision">,
+    direction: FlowPlacementDirection,
+    currentPositions: Record<string, FlowNodePosition>,
+  ) => {
+    const created = addFlowNodeInDirection(
+      appliedSpaceRef.current,
+      nodeId,
+      kind,
+      direction,
+      currentPositions,
+    );
+    if (created.space === appliedSpaceRef.current) return;
+    applySpace(created.space);
+    setSelectedId(created.nodeId);
+    editingIdRef.current = created.nodeId;
+    setEditingId(created.nodeId);
+    setDraft("");
+  }, [applySpace]);
+
+  const addShape = useCallback((
+    kind: FlowNodeKind,
+    position: FlowNodePosition,
+    currentPositions: Record<string, FlowNodePosition>,
+  ) => {
+    const created = addFlowNodeAtPosition(
+      appliedSpaceRef.current,
+      kind,
+      position,
+      currentPositions,
+    );
+    if (created.space === appliedSpaceRef.current || !created.nodeId) return;
+    applySpace(created.space);
+    setSelectedId(created.nodeId);
+    editingIdRef.current = created.nodeId;
+    setEditingId(created.nodeId);
+    setDraft("");
+  }, [applySpace]);
+
   const addBranch = useCallback((nodeId: string) => {
     const created = addFlowBranch(appliedSpaceRef.current, nodeId);
     if (created.space === appliedSpaceRef.current) return;
@@ -179,11 +226,39 @@ export const FlowWorkspace = forwardRef<
     applySpace(setFlowEdgeLabel(appliedSpaceRef.current, edgeId, label));
   }, [applySpace]);
 
-  const connect = useCallback((fromId: string, toId: string) => {
-    const connected = connectFlowNodes(appliedSpaceRef.current, fromId, toId);
+  const connect = useCallback((
+    fromId: string,
+    toId: string,
+    ports?: {
+      fromPort?: FlowPlacementDirection;
+      toPort?: FlowPlacementDirection;
+    },
+  ) => {
+    const connected = connectFlowNodes(
+      appliedSpaceRef.current,
+      fromId,
+      toId,
+      ports,
+    );
     if (connected === appliedSpaceRef.current) return;
     applySpace(connected);
     setSelectedId(toId);
+  }, [applySpace]);
+
+  const reconnectEdge = useCallback((
+    edgeId: string,
+    endpoint: "from" | "to",
+    nodeId: string,
+    port: FlowPlacementDirection,
+  ) => {
+    const reconnected = reconnectFlowEdge(
+      appliedSpaceRef.current,
+      edgeId,
+      endpoint,
+      nodeId,
+      port,
+    );
+    if (reconnected !== appliedSpaceRef.current) applySpace(reconnected);
   }, [applySpace]);
 
   const navigate = useCallback((direction: FlowNavigationDirection) => {
@@ -199,7 +274,7 @@ export const FlowWorkspace = forwardRef<
   const remove = useCallback((nodeId: string) => {
     const removed = deleteFlowNode(appliedSpaceRef.current, nodeId);
     if (removed.space === appliedSpaceRef.current) {
-      notify({ message: "开始节点不能删除" });
+      notify({ message: "流程至少保留一个节点" });
       return;
     }
     applySpace(removed.space);
@@ -231,6 +306,8 @@ export const FlowWorkspace = forwardRef<
       draft={draft}
       editingId={editingId}
       onAddBranch={addBranch}
+      onAddNode={addNode}
+      onAddShape={addShape}
       onAddNext={addNext}
       onBeginEdit={beginEdit}
       onCancelEdit={cancelEdit}
@@ -241,6 +318,8 @@ export const FlowWorkspace = forwardRef<
       onDelete={remove}
       onDraftChange={setDraft}
       onSelect={setSelectedId}
+      onPositionsChange={onPositionsChange}
+      onReconnectEdge={reconnectEdge}
       onViewportChange={onViewportChange}
       ref={canvasRef}
       selectedId={selectedId}

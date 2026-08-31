@@ -80,6 +80,28 @@ describe("editor session lifecycle", () => {
     expect(session!.fitRequest).toBe(1);
   });
 
+  it("requests a canvas fit when a blank document begins so its root starts centered", async () => {
+    const mindMap = createBlankDocument();
+    let session: ReturnType<typeof useEditorSession> | null = null;
+
+    function Harness() {
+      session = useEditorSession({
+        document: mindMap,
+        selection: singleSelection(mindMap.rootId),
+        applyMutation: vi.fn(),
+        selectNode: vi.fn(),
+        notify: vi.fn(),
+        undo: vi.fn(),
+      });
+      return null;
+    }
+
+    await act(async () => root.render(<Harness />));
+    expect(session!.fitRequest).toBe(0);
+    await act(async () => session!.beginBlankDocument(mindMap.rootId));
+    expect(session!.fitRequest).toBe(1);
+  });
+
   it("titles a structured paste into the blank root from its root text", async () => {
     const mindMap = createBlankDocument();
     const applyMutation = vi.fn();

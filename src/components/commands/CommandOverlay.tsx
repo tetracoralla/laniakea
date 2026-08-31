@@ -68,14 +68,32 @@ export function CommandOverlay({
   const searchEntries = useMemo<SearchEntry[]>(() => {
     if (mode !== "search") return [];
     const entries: SearchEntry[] = [];
+    const parentByNodeId = new Map<string, string>();
+    Object.values(document.nodes).forEach((node) => {
+      node.children.forEach((childId) => {
+        parentByNodeId.set(childId, node.id);
+      });
+    });
+    const ancestorTrail = (nodeId: string): string => {
+      const trail: string[] = [];
+      let cursor = parentByNodeId.get(nodeId);
+      while (cursor && cursor !== document.rootId) {
+        const parent = document.nodes[cursor];
+        if (!parent) break;
+        trail.unshift(parent.text.trim());
+        cursor = parentByNodeId.get(cursor);
+      }
+      return trail.filter(Boolean).join(" · ");
+    };
     Object.values(document.nodes).forEach((node) => {
       if (!node.text.trim()) return;
+      const trail = ancestorTrail(node.id);
       entries.push({
         id: `map:${node.id}`,
         nodeId: node.id,
         title: node.text,
         normalizedTitle: node.text.toLocaleLowerCase(),
-        meta: node.children.length ? `${node.children.length} 个子节点` : "",
+        meta: trail || (node.children.length ? `${node.children.length} 个子节点` : ""),
         metaKind: "context",
       });
     });

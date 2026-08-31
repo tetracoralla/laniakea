@@ -113,11 +113,10 @@ const paths: Record<IconName, React.ReactNode> = {
   ),
   flowChart: (
     <>
-      <rect x="17" y="6" width="14" height="9" fill="none" stroke="currentColor" strokeWidth={2} />
-      <rect x="6" y="33" width="14" height="9" fill="none" stroke="currentColor" strokeWidth={2} />
-      <rect x="28" y="33" width="14" height="9" fill="none" stroke="currentColor" strokeWidth={2} />
-      <path d="M24 16V24" strokeWidth={2} />
-      <path d="M13 33V24H35V33" strokeWidth={2} />
+      <rect x="4" y="18" width="15" height="12" rx="3" fill="none" strokeWidth={2} />
+      <path d="M21.5 24H28.5" strokeWidth={2} />
+      <path d="M26 20.5L29.5 24L26 27.5" strokeWidth={2} />
+      <path d="M38.5 16.5L46 24L38.5 31.5L31 24L38.5 16.5Z" fill="none" strokeWidth={2} />
     </>
   ),
   layers: (

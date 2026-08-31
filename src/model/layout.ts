@@ -8,7 +8,8 @@ import { nodePlaceholder } from "./canvasRender";
 
 const tones: BranchTone[] = ["violet", "blue", "emerald", "amber"];
 const emphasizedNodeHeight = 48;
-const leafNodeHeight = 44;
+const secondaryNodeHeight = 44;
+const leafNodeHeight = 40;
 const siblingGap = 14;
 const branchGap = 30;
 const rootX = 92;
@@ -73,21 +74,26 @@ export function sizeForNode(
 ) {
   const isMainRoot = rootKind === "main";
   const isFloatingRoot = rootKind === "floating";
-  const isLeaf = !isMainRoot && !isFloatingRoot && depth >= 2;
+  const isSecondary = !isMainRoot && !isFloatingRoot && depth === 2;
+  const isLeaf = !isMainRoot && !isFloatingRoot && depth >= 3;
   const fontSize = isMainRoot
     ? 19
     : isFloatingRoot
       ? 17
       : depth === 1
         ? 16
-        : 15;
+        : isSecondary
+          ? 15
+          : 14;
   const horizontalPadding = isMainRoot
     ? 50
     : isFloatingRoot
       ? 44
       : depth === 1
         ? 40
-        : 36;
+        : isSecondary
+          ? 36
+          : 32;
   const horizontalChrome = horizontalPadding + 4;
   const maximumWidth = isMainRoot
     ? Number.POSITIVE_INFINITY
@@ -95,14 +101,18 @@ export function sizeForNode(
       ? 640
       : depth === 1
         ? 600
-        : 560;
+        : isSecondary
+          ? 560
+          : 520;
   const fontWeight = isMainRoot
     ? 580
     : isFloatingRoot
       ? 650
       : depth === 1
         ? 620
-        : 530;
+        : isSecondary
+          ? 530
+          : 500;
   const letterSpacing = isMainRoot ? fontSize * 0.01 : 0;
   const measuredText = visibleText(depth, text, rootKind);
   const explicitLines = measuredText.split("\n");
@@ -130,11 +140,13 @@ export function sizeForNode(
           Math.max(1, Math.ceil(lineWidth / lineCapacity))
         );
       }, 0);
-  const verticalPadding = 20;
+  const verticalPadding = isLeaf ? 18 : 20;
   const verticalBorders = 2;
   const minimumHeight = isLeaf
     ? leafNodeHeight
-    : emphasizedNodeHeight;
+    : isSecondary
+      ? secondaryNodeHeight
+      : emphasizedNodeHeight;
   return {
     width,
     height: Math.max(
@@ -360,6 +372,39 @@ export function computeLayout(
     height = Math.max(height, node.y + node.height + 120);
   });
   return { nodes: result, visibleIds, width, height };
+}
+
+export interface CanvasContentBounds {
+  height: number;
+  minX: number;
+  minY: number;
+  width: number;
+}
+
+// 可见节点的联合包围盒：fit 用它对齐真实内容，而不是把 1200×900 的
+// 布局地板一起居中（空文档时那会把唯一的主原点推到角落）。
+export function canvasContentBounds(
+  layout: LayoutResult,
+): CanvasContentBounds {
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  Object.values(layout.nodes).forEach((node) => {
+    minX = Math.min(minX, node.x);
+    minY = Math.min(minY, node.y);
+    maxX = Math.max(maxX, node.x + node.width);
+    maxY = Math.max(maxY, node.y + node.height);
+  });
+  if (!Number.isFinite(minX)) {
+    return { height: layout.height, minX: 0, minY: 0, width: layout.width };
+  }
+  return {
+    height: Math.max(1, maxY - minY),
+    minX,
+    minY,
+    width: Math.max(1, maxX - minX),
+  };
 }
 
 function sameOrderedIds(left: readonly string[], right: readonly string[]) {

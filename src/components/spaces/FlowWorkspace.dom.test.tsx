@@ -8,7 +8,11 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../../data/seed";
-import { createFlowSpace, flowSpaceForNode } from "../../model/spaces";
+import {
+  addFlowStepAfter,
+  createFlowSpace,
+  flowSpaceForNode,
+} from "../../model/spaces";
 import type { FlowSpace } from "../../types/mindmap";
 import {
   FlowWorkspace,
@@ -126,8 +130,10 @@ describe("FlowWorkspace", () => {
 
   it("accepts a new search-entry request without remounting the workspace", async () => {
     const created = createFlowSpace(createSeedDocument(), "path");
-    const space = flowSpaceForNode(created.document, "path")!;
-    const endId = Object.values(space.nodes).find(({ kind }) => kind === "end")!.id;
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowStepAfter(initial, created.selectedFlowNodeId);
+    const space = added.space;
+    const endId = added.nodeId;
     const workspaceRef = createRef<FlowWorkspaceHandle>();
     const common = {
       fitOnMount: false,

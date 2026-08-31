@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { FlowNode, FlowSpace } from "../types/mindmap";
 import {
   computeFlowLayout,
+  flowConnectorCrossings,
   flowConnectorPath,
   flowConnectorPoint,
+  flowConnectorRoute,
   flowNavigationTarget,
 } from "./flowLayout";
 
@@ -110,7 +112,7 @@ describe("computeFlowLayout node sizing", () => {
     );
   });
 
-  it("routes edges that skip a row through a side lane with the label", () => {
+  it("routes long edges as rounded orthogonal lines and keeps the label on that route", () => {
     const from = {
       id: "from",
       x: 100,
@@ -129,9 +131,79 @@ describe("computeFlowLayout node sizing", () => {
     };
     const point = flowConnectorPoint(from, to);
     expect(flowConnectorPath(from, to)).toContain(" L ");
-    expect(point.x).toBeGreaterThan(from.x + from.width / 2 + 100);
-    expect(point.y).toBe(from.y + from.height + 64);
+    expect(flowConnectorPath(from, to)).toContain(" Q ");
+    expect(flowConnectorPath(from, to)).not.toContain(" C ");
     expect(point.y).toBeGreaterThan(from.y + from.height);
+    expect(point.y).toBeLessThan(to.y);
+  });
+
+  it("honors an explicitly chosen source and target connector side", () => {
+    const from = {
+      id: "from",
+      x: 100,
+      y: 100,
+      width: 196,
+      height: 54,
+      level: 0,
+    };
+    const to = {
+      id: "to",
+      x: 420,
+      y: 100,
+      width: 196,
+      height: 54,
+      level: 0,
+    };
+
+    expect(flowConnectorPath(from, to, "down", "up")).toMatch(
+      /^M 198 154 L 198 /,
+    );
+  });
+
+  it("keeps a reverse mixed-port route fully orthogonal", () => {
+    const from = {
+      id: "from",
+      x: 388,
+      y: 340,
+      width: 196,
+      height: 54,
+      level: 0,
+    };
+    const to = {
+      id: "to",
+      x: 140,
+      y: 64,
+      width: 172,
+      height: 76,
+      level: 0,
+    };
+    const route = flowConnectorRoute(from, to, "right", "down");
+
+    expect(route.points.slice(0, -1).every((point, index) => {
+      const next = route.points[index + 1];
+      return Math.abs(point.x - next.x) < 0.01 ||
+        Math.abs(point.y - next.y) < 0.01;
+    })).toBe(true);
+    expect(flowConnectorPath(from, to, "right", "down")).not.toContain(" C ");
+  });
+
+  it("adds a bridge to the horizontal edge at an unrelated line crossing", () => {
+    const left = { id: "left", x: 0, y: 100, width: 196, height: 54, level: 0 };
+    const right = { id: "right", x: 500, y: 100, width: 196, height: 54, level: 0 };
+    const top = { id: "top", x: 202, y: -120, width: 196, height: 54, level: 0 };
+    const bottom = { id: "bottom", x: 202, y: 300, width: 196, height: 54, level: 0 };
+    const horizontal = flowConnectorRoute(left, right, "right", "left");
+    const vertical = flowConnectorRoute(top, bottom, "down", "up");
+    const crossings = flowConnectorCrossings([
+      { edgeId: "horizontal", fromId: "left", route: horizontal, toId: "right" },
+      { edgeId: "vertical", fromId: "top", route: vertical, toId: "bottom" },
+    ]);
+
+    expect(crossings.horizontal).toHaveLength(1);
+    expect(crossings.horizontal[0]).toMatchObject({ x: 300, y: 127 });
+    expect(
+      flowConnectorPath(left, right, "right", "left", crossings.horizontal),
+    ).toContain("Q 300 121");
   });
 
   it("resolves the longest level in a dense merge graph without a visit budget", () => {

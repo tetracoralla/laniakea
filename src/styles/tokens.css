@@ -3,29 +3,98 @@
   --font-sans:
     -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC",
     "Hiragino Sans GB", "Segoe UI", sans-serif;
+
+  /* 表面与文字 */
   --canvas: #f8f9fc;
   --surface: #ffffff;
   --surface-soft: #fbfbfd;
+  --surface-hover: #f4f4f8;
   --ink: #17182b;
   --ink-strong: #111225;
   --muted: #777a8d;
   --muted-soft: #a2a5b4;
   --line: #e1e3eb;
   --line-strong: #d3d5df;
+  --line-hover: #c1c3cf;
+  --canvas-dot: #dfe1e9;
+
+  /* 主色与语义色 */
   --violet: #7557f6;
   --violet-deep: #171331;
   --violet-soft: #f3f0ff;
   --violet-ring: rgba(117, 87, 246, 0.18);
+  --violet-strong: #6547e9;
   --blue: #3b82f6;
   --emerald: #13a976;
   --amber: #ee9b18;
   --danger: #d84646;
+  --success: #27845f;
+
+  /* 字号刻度：节点角色沿用产品视觉规格，框架界面共用一套 UI 刻度 */
+  --fs-10: 10px;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-15: 15px;
+  --fs-16: 16px;
+  --fs-17: 17px;
+  --fs-19: 19px;
+  --fs-21: 21px;
+  --fs-node-root: var(--fs-19);
+  --fs-node-floating: var(--fs-17);
+  --fs-node-branch: var(--fs-16);
+  --fs-node: var(--fs-15);
+  --fs-node-leaf: var(--fs-14);
+  --fs-ui-xs: var(--fs-10);
+  --fs-ui-sm: var(--fs-11);
+  --fs-ui: var(--fs-12);
+  --fs-ui-lg: var(--fs-13);
+  --fs-heading: var(--fs-16);
+  --fs-heading-lg: var(--fs-21);
+
+  /* 字重刻度：节点角色 + UI 五档 */
+  --fw-quiet: 500;
+  --fw-node-leaf: 500;
+  --fw-node: 530;
+  --fw-node-root: 580;
+  --fw-node-branch: 620;
+  --fw-node-floating: 650;
+  --fw-ui: 540;
+  --fw-ui-medium: 570;
+  --fw-ui-strong: 590;
+  --fw-emphasis: 620;
+  --fw-strong: 660;
+  --fw-heading: 680;
+
+  /* 圆角刻度 */
+  --radius-4: 4px;
+  --radius-5: 5px;
+  --radius-6: 6px;
+  --radius-8: 8px;
+  --radius-10: 10px;
+  --radius-12: 12px;
+  --radius-16: 16px;
+  --radius-squircle: 34px;
+  --radius-node: var(--radius-10);
+  --radius-control: var(--radius-8);
+
+  /* 海拔：画布 < 悬浮控件 < 弹层；焦点环与拖拽态单独成 token */
+  --shadow-chrome: 0 7px 24px rgba(31, 32, 55, 0.07);
+  --shadow-hover: 0 4px 12px rgba(35, 36, 60, 0.05);
+  --shadow-hairline: 0 2px 6px rgba(40, 40, 64, 0.08);
+  --shadow-raised: 0 10px 28px rgba(40, 36, 74, 0.14);
+  --shadow-overlay: 0 16px 48px rgba(28, 27, 55, 0.16);
   --shadow-selection:
     0 0 0 4px var(--violet-ring), 0 8px 24px rgba(54, 43, 98, 0.09);
-  --shadow-float:
-    0 18px 50px rgba(28, 28, 50, 0.12), 0 2px 8px rgba(28, 28, 50, 0.06);
-  --radius-node: 10px;
-  --radius-control: 9px;
+  --shadow-float: var(--shadow-overlay);
+
+  /* 覆盖层遮罩：命令/搜索/设置用轻遮罩，不可逆确认用重遮罩 */
+  --veil-light: rgba(244, 245, 249, 0.38);
+  --blur-light: blur(3px);
+  --veil-strong: rgba(239, 240, 247, 0.62);
+  --blur-strong: blur(8px);
+
   --motion-fast: 140ms;
   --motion-standard: 220ms;
 }

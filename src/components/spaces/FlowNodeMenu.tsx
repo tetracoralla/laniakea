@@ -90,7 +90,6 @@ export function FlowNodeMenu({
         编辑文字
       </button>
       <button
-        disabled={node.kind === "end"}
         onClick={onAddNext}
         role="menuitem"
         type="button"
@@ -98,7 +97,6 @@ export function FlowNodeMenu({
         添加下一步
       </button>
       <button
-        disabled={node.kind === "end"}
         onClick={onAddBranch}
         role="menuitem"
         type="button"
@@ -149,7 +147,6 @@ export function FlowNodeMenu({
       <div className="node-space-menu__separator" role="separator" />
       <button
         className="node-space-menu__danger"
-        disabled={node.kind === "start"}
         onClick={onDelete}
         role="menuitem"
         type="button"

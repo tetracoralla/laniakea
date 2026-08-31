@@ -165,7 +165,7 @@ export function TopBar({
             onClick={onNavigateBack}
             type="button"
           >
-            <span aria-hidden="true">‹</span>
+            <Icon name="chevron" size={16} />
           </button>
         )}
         <label className="document-title">

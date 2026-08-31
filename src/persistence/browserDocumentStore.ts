@@ -348,7 +348,16 @@ export async function saveBrowserDocumentViewState(
         Object.entries(currentSpaces).map(([spaceId, space]) => {
           const twin = incomingSpaces[spaceId];
           return twin && twin.type === space.type
-            ? [spaceId, { ...space, viewport: twin.viewport }]
+            ? [
+                spaceId,
+                space.type === "flow" && twin.type === "flow"
+                  ? {
+                      ...space,
+                      viewport: twin.viewport,
+                      positions: twin.positions,
+                    }
+                  : { ...space, viewport: twin.viewport },
+              ]
             : [spaceId, space];
         }),
       );

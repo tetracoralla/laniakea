@@ -64,15 +64,13 @@ describe("Laniakea Agent mind-map tools", () => {
     expect(anchor?.subspace).toEqual(
       expect.objectContaining({
         type: "flow",
-        nodeCount: 3,
-        edgeCount: 2,
+        nodeCount: 1,
+        edgeCount: 0,
         truncated: false,
       }),
     );
     expect(anchor?.subspace?.nodes).toEqual([
-      expect.objectContaining({ kind: "start", text: "开始" }),
       expect.objectContaining({ kind: "step", text: "实现路径" }),
-      expect.objectContaining({ kind: "end", text: "完成" }),
     ]);
   });
 
@@ -314,7 +312,7 @@ describe("Laniakea Agent mind-map tools", () => {
     expect(hubView?.outgoing).toHaveLength(64);
     expect(hubView?.outgoingTruncated).toBe(true);
     expect(subspace).toEqual(
-      expect.objectContaining({ edgeCount: 72 }),
+      expect.objectContaining({ edgeCount: 70 }),
     );
   });
 

@@ -49,6 +49,7 @@ import type {
 import {
   findMindNode,
   preserveDocumentViewports,
+  setFlowPositions as setDocumentFlowPositions,
   setFlowViewport as setDocumentFlowViewport,
   setMapSpaceViewport as setDocumentMapSpaceViewport,
 } from "../model/spaces";
@@ -896,6 +897,25 @@ export function useMindMap({
     });
   }, []);
 
+  const setFlowPositions = useCallback((
+    spaceId: string,
+    positions: Record<string, { x: number; y: number }>,
+  ) => {
+    setHistory((current) => {
+      const document = setDocumentFlowPositions(
+        current.present.document,
+        spaceId,
+        positions,
+      );
+      if (document === current.present.document) return current;
+      silentAutosaveDocuments.current.add(document);
+      return {
+        ...current,
+        present: { ...current.present, document },
+      };
+    });
+  }, []);
+
   const setMapSpaceViewport = useCallback((spaceId: string, viewport: Viewport) => {
     setHistory((current) => {
       const document = setDocumentMapSpaceViewport(
@@ -983,6 +1003,7 @@ export function useMindMap({
     selectNode,
     setSelection,
     setViewport,
+    setFlowPositions,
     setFlowViewport,
     setMapSpaceViewport,
     retrySave: saveNow,

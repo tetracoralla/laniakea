@@ -99,9 +99,7 @@ describe("Markdown import and export", () => {
     expect(reopened.canOverwriteSource).toBe(true);
     expect(flow?.anchorNodeId).toBe(reopenedAnchor.id);
     expect(Object.values(flow?.nodes ?? {}).map((node) => node.text)).toEqual([
-      "开始",
       "实现路径",
-      "完成",
     ]);
   });
 

@@ -1,20 +1,33 @@
 import {
   memo,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
+  flowConnectorCrossings,
   flowConnectorPath,
   flowConnectorPoint,
+  flowConnectorRoute,
   type FlowLayoutResult,
 } from "../../model/flowLayout";
-import type { FlowEdge } from "../../types/mindmap";
+import type { FlowEdge, FlowPlacementDirection } from "../../types/mindmap";
 
 interface FlowEdgeLayerProps {
   edges: readonly FlowEdge[];
   layout: FlowLayoutResult;
   onChangeLabel: (edgeId: string, label: string) => void;
+  onEndpointPointerDown: (
+    edge: FlowEdge,
+    endpoint: "from" | "to",
+    movingPort: FlowPlacementDirection,
+    fixedPort: FlowPlacementDirection,
+    event: ReactPointerEvent<SVGCircleElement>,
+  ) => void;
+  onSelectEdge: (edgeId: string) => void;
+  selectedEdgeId: string | null;
   spaceId: string;
 }
 
@@ -22,6 +35,9 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   edges,
   layout,
   onChangeLabel,
+  onEndpointPointerDown,
+  onSelectEdge,
+  selectedEdgeId,
   spaceId,
 }: FlowEdgeLayerProps) {
   const editorRef = useRef<HTMLInputElement>(null);
@@ -29,6 +45,26 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   const editFinishedByKeyRef = useRef(false);
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const routes = useMemo(() => edges.flatMap((edge) => {
+    const from = layout.nodes[edge.from];
+    const to = layout.nodes[edge.to];
+    if (!from || !to) return [];
+    return [{
+      edge,
+      edgeId: edge.id,
+      fromId: edge.from,
+      route: flowConnectorRoute(from, to, edge.fromPort, edge.toPort),
+      toId: edge.to,
+    }];
+  }), [edges, layout.nodes]);
+  const crossings = useMemo(
+    () => flowConnectorCrossings(routes),
+    [routes],
+  );
+  const routeByEdgeId = useMemo(
+    () => new Map(routes.map(({ edge, route }) => [edge.id, route])),
+    [routes],
+  );
 
   useEffect(() => {
     if (!editingEdgeId) return;
@@ -58,7 +94,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   return (
     <>
       <svg
-        aria-hidden="true"
+        aria-label="流程连线"
         className="flow-connectors"
         height={layout.height}
         viewBox={`0 0 ${layout.width} ${layout.height}`}
@@ -80,23 +116,111 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
           const from = layout.nodes[edge.from];
           const to = layout.nodes[edge.to];
           if (!from || !to) return null;
-          const path = flowConnectorPath(from, to);
+          const path = flowConnectorPath(
+            from,
+            to,
+            edge.fromPort,
+            edge.toPort,
+            crossings[edge.id],
+          );
           return (
             <g key={edge.id}>
               <path
-                className="flow-connector"
+                className={`flow-connector${selectedEdgeId === edge.id ? " is-selected" : ""}`}
                 d={path}
                 markerEnd={`url(#flow-arrow-${spaceId})`}
               />
               <path
                 className="flow-connector__hit"
-                d={path}
-                onDoubleClick={() => beginEdit(edge)}
+                d={flowConnectorPath(
+                  from,
+                  to,
+                  edge.fromPort,
+                  edge.toPort,
+                  crossings[edge.id],
+                )}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectEdge(edge.id);
+                }}
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  onSelectEdge(edge.id);
+                  beginEdit(edge);
+                }}
               />
             </g>
           );
         })}
       </svg>
+
+      {selectedEdgeId && (() => {
+          const edge = edges.find((candidate) => candidate.id === selectedEdgeId);
+          const route = routeByEdgeId.get(selectedEdgeId);
+          if (!edge || !route) return null;
+          return (
+            <svg
+              aria-label="连线端点"
+              className="flow-edge-handle-layer"
+              height={layout.height}
+              viewBox={`0 0 ${layout.width} ${layout.height}`}
+              width={layout.width}
+            >
+              <g className="flow-edge-handles">
+                <circle
+                  aria-label="拖动连线起点"
+                  className="flow-edge-handle flow-edge-handle--from"
+                  cx={route.start.x}
+                  cy={route.start.y}
+                  data-flow-edge-endpoint="from"
+                  data-flow-edge-id={edge.id}
+                  onPointerDown={(event) => onEndpointPointerDown(
+                    edge,
+                    "from",
+                    route.fromPort,
+                    route.toPort,
+                    event,
+                  )}
+                  r="6"
+                  role="button"
+                  tabIndex={0}
+                />
+                <circle
+                  aria-hidden="true"
+                  className="flow-edge-handle__core"
+                  cx={route.start.x}
+                  cy={route.start.y}
+                  r="2.4"
+                />
+                <circle
+                  aria-label="拖动连线终点"
+                  className="flow-edge-handle flow-edge-handle--to"
+                  cx={route.end.x}
+                  cy={route.end.y}
+                  data-flow-edge-endpoint="to"
+                  data-flow-edge-id={edge.id}
+                  onPointerDown={(event) => onEndpointPointerDown(
+                    edge,
+                    "to",
+                    route.toPort,
+                    route.fromPort,
+                    event,
+                  )}
+                  r="6"
+                  role="button"
+                  tabIndex={0}
+                />
+                <circle
+                  aria-hidden="true"
+                  className="flow-edge-handle__core"
+                  cx={route.end.x}
+                  cy={route.end.y}
+                  r="2.4"
+                />
+              </g>
+            </svg>
+          );
+        })()}
 
       {edges.map((edge) => {
         const from = layout.nodes[edge.from];
@@ -104,7 +228,13 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
         if (!from || !to || (!edge.label && editingEdgeId !== edge.id)) {
           return null;
         }
-        const point = flowConnectorPoint(from, to);
+        const point = flowConnectorPoint(
+          from,
+          to,
+          0.34,
+          edge.fromPort,
+          edge.toPort,
+        );
         return editingEdgeId === edge.id ? (
           <input
             aria-label="编辑分支名称"

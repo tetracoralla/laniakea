@@ -65,4 +65,33 @@ describe("CommandOverlay result limits", () => {
     expect(container.querySelector("[role='status']")?.textContent)
       .toBe(`显示前 ${overlayItemLimit} 条，共 ${overlayItemLimit + 3} 条`);
   });
+
+  it("shows a nested result's ancestor trail instead of a flat list", async () => {
+    const document = createSeedDocument();
+
+    await act(async () => {
+      root.render(
+        <CommandOverlay
+          document={document}
+          mode="search"
+          onClose={() => undefined}
+          onExecute={() => undefined}
+          onSelectNode={() => undefined}
+        />,
+      );
+    });
+
+    const options = [
+      ...container.querySelectorAll<HTMLButtonElement>("[role='option']"),
+    ];
+    const nested = options.find((option) =>
+      option.textContent?.includes("接到新需求"),
+    );
+    expect(nested?.textContent).toContain("使用场景");
+    const branch = options.find((option) =>
+      option.textContent?.includes("使用场景") &&
+      option !== nested,
+    );
+    expect(branch?.textContent).toContain("3 个子节点");
+  });
 });

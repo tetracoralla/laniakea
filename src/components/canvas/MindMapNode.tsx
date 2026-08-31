@@ -9,8 +9,9 @@ import {
   isMarkdownThematicBreak,
   nodePlaceholder,
 } from "../../model/canvasRender";
-import type { LayoutNode, MindNode } from "../../types/mindmap";
+import type { FlowSpace, LayoutNode, MindNode } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
+import { FlowPortalPreview } from "./FlowPortalPreview";
 
 interface MindMapNodeProps {
   node: MindNode;
@@ -33,6 +34,7 @@ interface MindMapNodeProps {
   ) => void;
   onOpenSubspace?: (id: string) => void;
   portalSummary?: string;
+  portalFlow?: FlowSpace;
   onDragPointerDown: PointerEventHandler<HTMLDivElement>;
 }
 
@@ -53,6 +55,7 @@ export const MindMapNode = memo(function MindMapNode({
   onOpenContextMenu = () => undefined,
   onOpenSubspace = () => undefined,
   portalSummary,
+  portalFlow,
   onDragPointerDown,
 }: MindMapNodeProps) {
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -129,7 +132,7 @@ export const MindMapNode = memo(function MindMapNode({
 
   return (
     <div
-      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${editing ? "is-editing" : ""}`}
+      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : layout.depth === 2 ? "secondary" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${editing ? "is-editing" : ""}`}
       data-node-id={node.id}
       id={`mind-node-${node.id}`}
       onContextMenu={
@@ -272,19 +275,27 @@ export const MindMapNode = memo(function MindMapNode({
         </button>
       )}
       {node.subspaceId && (
-        <button
-          aria-label={`进入${portalSummary ?? "下层图"}`}
-          className="mind-node__portal"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenSubspace(node.id);
-          }}
-          onPointerDown={(event) => event.stopPropagation()}
-          title={portalSummary ?? "进入下层图"}
-          type="button"
-        >
-          <Icon name="layers" size={14} />
-        </button>
+        <div className="mind-node__portal-cluster">
+          <button
+            aria-label={`进入${portalSummary ?? "下层图"}`}
+            className="mind-node__portal"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenSubspace(node.id);
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            title={portalSummary ?? "进入下层图"}
+            type="button"
+          >
+            <Icon name="layers" size={14} />
+          </button>
+          {portalFlow && (
+            <FlowPortalPreview
+              onOpen={() => onOpenSubspace(node.id)}
+              space={portalFlow}
+            />
+          )}
+        </div>
       )}
     </div>
   );

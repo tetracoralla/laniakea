@@ -33,11 +33,20 @@ export interface FlowNode {
   updatedAt: string;
 }
 
+export interface FlowNodePosition {
+  x: number;
+  y: number;
+}
+
+export type FlowPlacementDirection = "up" | "right" | "down" | "left";
+
 export interface FlowEdge {
   id: string;
   from: string;
   to: string;
   label: string;
+  fromPort?: FlowPlacementDirection;
+  toPort?: FlowPlacementDirection;
 }
 
 export interface FlowSpace {
@@ -46,6 +55,11 @@ export interface FlowSpace {
   anchorNodeId: string;
   nodes: Record<string, FlowNode>;
   edges: FlowEdge[];
+  /**
+   * Human canvas arrangement. It is persisted with local view state but is
+   * deliberately omitted from the portable Markdown space bundle.
+   */
+  positions?: Record<string, FlowNodePosition>;
   viewport: Viewport;
   updatedAt: string;
 }

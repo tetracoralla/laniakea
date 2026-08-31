@@ -4,7 +4,9 @@ export const maxCanvasZoom = 1.8;
 
 const wheelLineHeight = 16;
 const maxWheelZoomDelta = 60;
-const wheelPixelsPerZoomDoubling = 280;
+// Keep trackpad pinch continuous while making one gesture slightly more
+// responsive than the previous calibration.
+const wheelPixelsPerZoomDoubling = 260;
 
 export function clampCanvasZoom(
   value: number,

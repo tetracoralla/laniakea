@@ -6,7 +6,7 @@ import {
   parseMindMapDocument,
 } from "./document";
 import { createBlankDocument } from "../data/seed";
-import { createFlowSpace } from "./spaces";
+import { addFlowStepAfter, createFlowSpace, flowSpaceForNode } from "./spaces";
 
 describe("persisted document validation", () => {
   it("accepts a complete reachable mind map", () => {
@@ -23,10 +23,15 @@ describe("persisted document validation", () => {
   });
 
   it("rejects flow self-loops, duplicate endpoint pairs, and directed cycles", () => {
-    const created = createFlowSpace(createSeedDocument(), "path").document;
-    const flow = Object.values(created.spaces ?? {}).find(
-      (space) => space.type === "flow",
-    )!;
+    const base = createFlowSpace(createSeedDocument(), "path");
+    const firstSpace = flowSpaceForNode(base.document, "path")!;
+    const secondNode = addFlowStepAfter(firstSpace, base.selectedFlowNodeId);
+    const thirdNode = addFlowStepAfter(secondNode.space, secondNode.nodeId);
+    const created = {
+      ...base.document,
+      spaces: { [base.spaceId]: thirdNode.space },
+    };
+    const flow = thirdNode.space;
     const [first, second] = flow.edges;
 
     const selfLoop = structuredClone(created);

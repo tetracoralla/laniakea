@@ -87,4 +87,28 @@ describe("node editor styles", () => {
     expect(appStyles).toContain("  stroke-width: 1.4;");
     expect(appStyles).not.toContain("clip-path: polygon(50% 0");
   });
+
+  it("keeps in-place flow labels transparent and free of input chrome", () => {
+    const editorRuleStart = appStyles.indexOf(".flow-edge-label__editor,");
+    const editorRuleEnd = appStyles.indexOf("\n}", editorRuleStart);
+    const editorRule = appStyles.slice(editorRuleStart, editorRuleEnd);
+
+    expect(editorRule).toContain("background: transparent;");
+    expect(editorRule).toContain("border: 0;");
+    expect(editorRule).toContain("box-shadow: none;");
+  });
+
+  it("gives third-level nodes a tighter visual role than second-level nodes", () => {
+    expect(appStyles).toContain(
+      ".mind-node--leaf .mind-node__content,\n.mind-node--leaf .mind-node__editor-shell {",
+    );
+    expect(appStyles).toContain("  font-size: 14px;");
+    expect(appStyles).toContain("  --node-padding-inline: 16px;");
+  });
+
+  it("keeps flow creation and connection controls contextual to selection", () => {
+    expect(appStyles).toContain(".flow-node__quick-actions {");
+    expect(appStyles).toContain(".flow-node__port {");
+    expect(appStyles).toContain(".flow-node.is-connection-target .flow-node__content {");
+  });
 });

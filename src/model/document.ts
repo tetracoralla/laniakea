@@ -69,7 +69,28 @@ function isFlowEdge(value: unknown): value is FlowEdge {
     typeof value.id === "string" &&
     typeof value.from === "string" &&
     typeof value.to === "string" &&
-    typeof value.label === "string"
+    typeof value.label === "string" &&
+    (value.fromPort === undefined ||
+      ["up", "right", "down", "left"].includes(String(value.fromPort))) &&
+    (value.toPort === undefined ||
+      ["up", "right", "down", "left"].includes(String(value.toPort)))
+  );
+}
+
+function isFlowPositions(
+  value: unknown,
+  nodes: Record<string, unknown>,
+): boolean {
+  return value === undefined || (
+    isRecord(value) &&
+    Object.entries(value).every(([nodeId, position]) =>
+      Boolean(nodes[nodeId]) &&
+      isRecord(position) &&
+      typeof position.x === "number" &&
+      Number.isFinite(position.x) &&
+      typeof position.y === "number" &&
+      Number.isFinite(position.y),
+    )
   );
 }
 
@@ -95,6 +116,7 @@ function isFlowSpace(value: unknown, id: string): value is FlowSpace {
     !isRecord(value.nodes) ||
     !Array.isArray(value.edges) ||
     !value.edges.every(isFlowEdge) ||
+    !isFlowPositions(value.positions, value.nodes) ||
     !isViewport(value.viewport) ||
     typeof value.updatedAt !== "string"
   ) {

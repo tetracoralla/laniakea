@@ -89,6 +89,14 @@ export function useFlowKeyboardCommands({
       const target = event.target as Element | null;
       // 菜单自己管理 Escape 与方向键；先让它关闭，再谈返回上层。
       if (target?.closest?.("[role='menu']")) return;
+      // 直接连线由画布自己的取消路径收尾，不能把同一次 Escape
+      // 同时解释成“取消连线”和“返回上层”。
+      if (
+        event.key === "Escape" &&
+        document.querySelector(".flow-canvas[data-flow-connecting='true']")
+      ) {
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();

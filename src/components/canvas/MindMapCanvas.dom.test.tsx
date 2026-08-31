@@ -5,7 +5,7 @@ import { Profiler, StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../App";
-import { computeLayout } from "../../model/layout";
+import { canvasContentBounds, computeLayout } from "../../model/layout";
 import { createSelection, singleSelection } from "../../model/selection";
 import { canvasZoomToFit, minCanvasZoom } from "../../model/zoom";
 import type {
@@ -241,6 +241,42 @@ describe("rendered interaction regressions", () => {
     editor.remove();
   });
 
+  it("uses the shared Armorial icon component for returning from a subspace", async () => {
+    const onNavigateBack = vi.fn();
+    await act(async () => {
+      root.render(
+        <TopBar
+          currentDocumentPath={null}
+          onCopyMarkdown={() => undefined}
+          onImport={() => undefined}
+          onMoveRecent={() => undefined}
+          onNew={() => undefined}
+          onCopyRecentPath={() => undefined}
+          onForgetRecent={() => undefined}
+          onOpenRecent={() => undefined}
+          onRevealRecent={() => undefined}
+          onSave={() => undefined}
+          onSaveAs={() => undefined}
+          onSearch={() => undefined}
+          onShortcutSettings={() => undefined}
+          onTitleChange={() => undefined}
+          onNavigateBack={onNavigateBack}
+          recentDocuments={[]}
+          spacePath={[{ id: "flow-1", label: "当前流程", typeLabel: "流程" }]}
+          title="测试"
+        />,
+      );
+    });
+
+    const back = container.querySelector<HTMLButtonElement>(
+      "button[aria-label='返回上层图']",
+    )!;
+    expect(back.querySelector("svg")).not.toBeNull();
+    expect(back.textContent).toBe("");
+    await act(async () => back.click());
+    expect(onNavigateBack).toHaveBeenCalledOnce();
+  });
+
   it("switches among five recent documents without duplicating Open in More", async () => {
     const onOpenRecent = vi.fn();
     await act(async () => {
@@ -469,17 +505,18 @@ describe("rendered interaction regressions", () => {
     await act(async () => root.render(renderCanvas(imported, 1)));
 
     const layout = computeLayout(imported);
+    const content = canvasContentBounds(layout);
     const expectedZoom = canvasZoomToFit(
-      layout.width,
-      layout.height,
+      content.width,
+      content.height,
       1_200,
       900,
     );
     expect(expectedZoom).toBeLessThan(minCanvasZoom);
     expect(onViewportChange).toHaveBeenLastCalledWith({
       zoom: expectedZoom,
-      x: (1_200 - layout.width * expectedZoom) / 2,
-      y: (900 - layout.height * expectedZoom) / 2,
+      x: (1_200 - content.width * expectedZoom) / 2 - content.minX * expectedZoom,
+      y: (900 - content.height * expectedZoom) / 2 - content.minY * expectedZoom,
     });
   });
 
@@ -781,7 +818,7 @@ describe("rendered interaction regressions", () => {
 
     expect(onZoomPreview).toHaveBeenCalledOnce();
     expect(onZoomPreview.mock.calls[0][0]).toBeCloseTo(
-      0.8619728212,
+      0.8521803964,
       10,
     );
     expect(onViewportChange).toHaveBeenCalledTimes(viewportCallsBeforeZoom);

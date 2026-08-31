@@ -196,6 +196,7 @@ export function App() {
     selectNode,
     setSelection,
     setViewport,
+    setFlowPositions,
     setFlowViewport,
     setMapSpaceViewport,
     retrySave,
@@ -625,8 +626,8 @@ export function App() {
   useEffect(() => {
     if (startupMode !== "fresh" || initialEditStarted.current) return;
     initialEditStarted.current = true;
-    beginEdit(mindMap.rootId, "");
-  }, [beginEdit, mindMap.rootId, startupMode]);
+    beginBlankDocument(mindMap.rootId);
+  }, [beginBlankDocument, mindMap.rootId, startupMode]);
 
   useEffect(() => {
     if (!startupNotice) return;
@@ -872,6 +873,9 @@ export function App() {
             onRedo={redo}
             onUndo={undo}
             onUpdateSpace={updateActiveFlow}
+            onPositionsChange={(positions) =>
+              setFlowPositions(activeFlow.id, positions)
+            }
             onViewportChange={(viewport) =>
               setFlowViewport(activeFlow.id, viewport)
             }

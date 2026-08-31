@@ -11,7 +11,7 @@ describe("canvas zoom", () => {
   it("preserves fine trackpad deltas instead of turning them into fixed steps", () => {
     const next = canvasZoomFromWheel(1, 1, 0, 900);
 
-    expect(next).toBeCloseTo(0.997528, 6);
+    expect(next).toBeCloseTo(0.997338, 6);
     expect(1 - next).toBeLessThan(0.003);
   });
 
@@ -22,7 +22,7 @@ describe("canvas zoom", () => {
       zoom = canvasZoomFromWheel(zoom, 24, 0, 900);
     }
 
-    expect(zoom).toBeCloseTo(0.742997, 6);
+    expect(zoom).toBeCloseTo(0.726211, 6);
   });
 
   it("keeps equal opposite deltas continuous and reversible", () => {

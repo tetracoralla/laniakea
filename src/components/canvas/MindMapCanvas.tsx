@@ -17,6 +17,7 @@ import {
 } from "../../model/canvasRender";
 import {
   applyDraftWidth,
+  canvasContentBounds,
   computeLayout,
   mainBranchAnchorForCollapseTransition,
   shareStableLayout,
@@ -460,17 +461,18 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const fit = useCallback(() => {
       const bounds = containerRef.current?.getBoundingClientRect();
       if (!bounds) return;
+      const content = canvasContentBounds(layout);
       const zoom = canvasZoomToFit(
-        layout.width,
-        layout.height,
+        content.width,
+        content.height,
         bounds.width,
         bounds.height,
       );
       onZoomPreview?.(zoom);
       commitViewportImmediately({
         zoom,
-        x: (bounds.width - layout.width * zoom) / 2,
-        y: (bounds.height - layout.height * zoom) / 2,
+        x: (bounds.width - content.width * zoom) / 2 - content.minX * zoom,
+        y: (bounds.height - content.height * zoom) / 2 - content.minY * zoom,
       });
     }, [commitViewportImmediately, layout, onZoomPreview]);
 
@@ -687,6 +689,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           {renderedIds.map((id) => {
             const node = document.nodes[id];
             const selected = selectedIdSet.has(id);
+            const portalSpace = node.subspaceId
+              ? document.spaces?.[node.subspaceId]
+              : undefined;
             return (
               <MindMapNode
                 draft={draftForNode(id, editingId, draft)}
@@ -705,11 +710,14 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
                 onToggle={onToggle}
                 onOpenSubspace={onOpenSubspace}
                 portalSummary={
-                  node.subspaceId && document.spaces?.[node.subspaceId]
-                    ? document.spaces[node.subspaceId].type === "map"
-                      ? `思维图 · ${Object.keys(document.spaces[node.subspaceId].nodes).length} 个节点`
-                      : `流程 · ${Object.keys(document.spaces[node.subspaceId].nodes).length} 步`
+                  portalSpace
+                    ? portalSpace.type === "map"
+                      ? `思维图 · ${Object.keys(portalSpace.nodes).length} 个节点`
+                      : `流程 · ${Object.values(portalSpace.nodes).filter(({ kind }) => kind !== "start" && kind !== "end").length} 步`
                     : undefined
+                }
+                portalFlow={
+                  portalSpace?.type === "flow" ? portalSpace : undefined
                 }
                 primary={activeSelection.primaryId === id}
                 selected={selected}

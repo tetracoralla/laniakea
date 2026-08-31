@@ -138,11 +138,22 @@ struct StoredFlowNode {
 }
 
 #[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 struct StoredFlowEdge {
     id: String,
     from: String,
     to: String,
     label: String,
+    #[serde(default)]
+    from_port: Option<String>,
+    #[serde(default)]
+    to_port: Option<String>,
+}
+
+#[derive(Deserialize, PartialEq)]
+struct StoredFlowPosition {
+    x: f64,
+    y: f64,
 }
 
 #[derive(Deserialize, PartialEq)]
@@ -154,6 +165,8 @@ struct StoredFlowSpace {
     anchor_node_id: String,
     nodes: HashMap<String, StoredFlowNode>,
     edges: Vec<StoredFlowEdge>,
+    #[serde(default)]
+    positions: HashMap<String, StoredFlowPosition>,
     viewport: StoredViewport,
     updated_at: String,
 }
@@ -306,6 +319,13 @@ fn validate_document(document_json: &str) -> Result<(), String> {
                         return Err("流程空间包含无效节点".to_string());
                     }
                 }
+                if flow.positions.iter().any(|(node_id, position)| {
+                    !flow.nodes.contains_key(node_id)
+                        || !position.x.is_finite()
+                        || !position.y.is_finite()
+                }) {
+                    return Err("流程空间包含无效节点位置".to_string());
+                }
                 let mut edge_ids = HashSet::new();
                 let mut endpoint_pairs = HashSet::new();
                 let mut outgoing: HashMap<&str, Vec<&str>> = flow
@@ -324,6 +344,12 @@ fn validate_document(document_json: &str) -> Result<(), String> {
                         || edge.from == edge.to
                         || !flow.nodes.contains_key(&edge.from)
                         || !flow.nodes.contains_key(&edge.to)
+                        || edge.from_port.as_deref().is_some_and(|port| {
+                            !matches!(port, "up" | "right" | "down" | "left")
+                        })
+                        || edge.to_port.as_deref().is_some_and(|port| {
+                            !matches!(port, "up" | "right" | "down" | "left")
+                        })
                     {
                         return Err("流程空间包含无效连接".to_string());
                     }

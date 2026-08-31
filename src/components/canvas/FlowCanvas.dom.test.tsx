@@ -1,20 +1,40 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../../data/seed";
 import {
   addFlowBranch,
+  addFlowNodeAfter,
+  connectFlowNodes,
   createFlowSpace,
   flowSpaceForNode,
   setFlowNodeText,
 } from "../../model/spaces";
 import { FlowCanvas } from "./FlowCanvas";
 
+function dispatchPointer(
+  target: HTMLElement,
+  type: string,
+  clientX: number,
+  clientY: number,
+  pointerId = 7,
+) {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    button: 0,
+    clientX,
+    clientY,
+  });
+  Object.defineProperty(event, "pointerId", { value: pointerId });
+  target.dispatchEvent(event);
+}
+
 describe("FlowCanvas", () => {
   let container: HTMLDivElement;
   let root: Root;
+  let pointerCaptures: WeakMap<HTMLElement, Set<number>>;
 
   beforeEach(() => {
     (
@@ -22,6 +42,29 @@ describe("FlowCanvas", () => {
         IS_REACT_ACT_ENVIRONMENT?: boolean;
       }
     ).IS_REACT_ACT_ENVIRONMENT = true;
+    pointerCaptures = new WeakMap();
+    Object.defineProperties(HTMLElement.prototype, {
+      hasPointerCapture: {
+        configurable: true,
+        value: vi.fn(function (this: HTMLElement, pointerId: number) {
+          return pointerCaptures.get(this)?.has(pointerId) ?? false;
+        }),
+      },
+      releasePointerCapture: {
+        configurable: true,
+        value: vi.fn(function (this: HTMLElement, pointerId: number) {
+          pointerCaptures.get(this)?.delete(pointerId);
+        }),
+      },
+      setPointerCapture: {
+        configurable: true,
+        value: vi.fn(function (this: HTMLElement, pointerId: number) {
+          const captures = pointerCaptures.get(this) ?? new Set<number>();
+          captures.add(pointerId);
+          pointerCaptures.set(this, captures);
+        }),
+      },
+    });
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -30,6 +73,10 @@ describe("FlowCanvas", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    delete (HTMLElement.prototype as Partial<HTMLElement>).hasPointerCapture;
+    delete (HTMLElement.prototype as Partial<HTMLElement>).releasePointerCapture;
+    delete (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture;
+    vi.restoreAllMocks();
   });
 
   it("renders semantic shapes for the seeded space", async () => {
@@ -60,15 +107,17 @@ describe("FlowCanvas", () => {
     });
 
     const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
-    expect(container.querySelectorAll(".flow-node")).toHaveLength(3);
-    expect(container.querySelector(".flow-node--start")).not.toBeNull();
-    expect(container.querySelector(".flow-node--end")).not.toBeNull();
+    expect(container.querySelectorAll(".flow-node")).toHaveLength(1);
+    expect(container.querySelector(".flow-node--step")).not.toBeNull();
+    expect(container.querySelector(".flow-node--start")).toBeNull();
+    expect(container.querySelector(".flow-node--end")).toBeNull();
     expect(canvas.getAttribute("role")).toBe("application");
   });
 
-  it("keeps ordinary selection quiet and opens operations only on right click", async () => {
+  it("shows selected-only direct creation controls and keeps the right-click fallback", async () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
+    const onAddNode = vi.fn();
 
     await act(async () => {
       root.render(
@@ -76,6 +125,7 @@ describe("FlowCanvas", () => {
           draft=""
           editingId={null}
           onAddBranch={() => undefined}
+          onAddNode={onAddNode}
           onAddNext={() => undefined}
           onBeginEdit={() => undefined}
           onCancelEdit={() => undefined}
@@ -92,6 +142,35 @@ describe("FlowCanvas", () => {
         />,
       );
     });
+
+    const directActions = container.querySelector(".flow-node__quick-actions");
+    expect(directActions).not.toBeNull();
+    expect(container.querySelectorAll(".flow-node__port")).toHaveLength(4);
+    await act(async () => {
+      directActions
+        ?.querySelector<HTMLButtonElement>("[aria-label='添加判断']")
+        ?.click();
+    });
+    expect(onAddNode).toHaveBeenCalledWith(
+      created.selectedFlowNodeId,
+      "decision",
+      "right",
+      expect.objectContaining({
+        [created.selectedFlowNodeId]: { x: 140, y: 140 },
+      }),
+    );
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>(".flow-node__port--right")
+        ?.click();
+    });
+    expect(onAddNode).toHaveBeenLastCalledWith(
+      created.selectedFlowNodeId,
+      "step",
+      "right",
+      expect.any(Object),
+    );
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>(".flow-node__content")!.click();
@@ -238,7 +317,7 @@ describe("FlowCanvas", () => {
       .not.toBeNull();
     const label = Array.from(
       container.querySelectorAll<HTMLButtonElement>(".flow-edge-label"),
-    ).find((button) => button.textContent === "分支 2")!;
+    ).find((button) => button.textContent === "否")!;
     await act(async () => label.click());
     const editor = container.querySelector<HTMLInputElement>(
       ".flow-edge-label__editor",
@@ -251,6 +330,461 @@ describe("FlowCanvas", () => {
     expect(onChangeEdgeLabel).toHaveBeenCalledWith(
       expect.any(String),
       "已通过",
+    );
+  });
+
+  it("connects two different sources to one existing target through direct drag", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const firstBranch = addFlowBranch(
+      initial,
+      created.selectedFlowNodeId,
+    ).space;
+    const sourceIds = firstBranch.edges
+      .filter((edge) => edge.from === created.selectedFlowNodeId)
+      .map((edge) => edge.to);
+    expect(sourceIds).toHaveLength(2);
+    const inserted = addFlowNodeAfter(firstBranch, sourceIds[0], "step");
+    const prepared = {
+      ...inserted.space,
+      viewport: { x: 0, y: 0, zoom: 1 },
+    };
+    const targetId = inserted.nodeId;
+
+    const rect = (left: number, top: number, width: number, height: number) => ({
+      x: left,
+      y: top,
+      top,
+      right: left + width,
+      bottom: top + height,
+      left,
+      width,
+      height,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        if (this.classList.contains("flow-canvas")) {
+          return rect(0, 0, 1000, 800);
+        }
+        if (this.classList.contains("flow-node")) {
+          return rect(
+            Number.parseFloat(this.style.left),
+            Number.parseFloat(this.style.top),
+            Number.parseFloat(this.style.width),
+            Number.parseFloat(this.style.height),
+          );
+        }
+        if (this.classList.contains("flow-node__port")) {
+          const nodeBounds = this.parentElement!.getBoundingClientRect();
+          if (this.classList.contains("flow-node__port--up")) {
+            return rect((nodeBounds.left + nodeBounds.right) / 2 - 8, nodeBounds.top - 8, 16, 16);
+          }
+          if (this.classList.contains("flow-node__port--right")) {
+            return rect(nodeBounds.right - 8, (nodeBounds.top + nodeBounds.bottom) / 2 - 8, 16, 16);
+          }
+          if (this.classList.contains("flow-node__port--left")) {
+            return rect(nodeBounds.left - 8, (nodeBounds.top + nodeBounds.bottom) / 2 - 8, 16, 16);
+          }
+          return rect(
+            (nodeBounds.left + nodeBounds.right) / 2 - 8,
+            nodeBounds.bottom - 8,
+            16,
+            16,
+          );
+        }
+        return rect(0, 0, 0, 0);
+      },
+    );
+
+    let latestSpace = prepared;
+    const onAddNode = vi.fn();
+    function Harness() {
+      const [space, setSpace] = useState(prepared);
+      const [selectedId, setSelectedId] = useState<string | null>(sourceIds[0]);
+      latestSpace = space;
+      return (
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNode={onAddNode}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={(fromId, toId, ports) => {
+            setSpace((current) => connectFlowNodes(current, fromId, toId, ports));
+            setSelectedId(toId);
+          }}
+          onDelete={() => undefined}
+          onDraftChange={() => undefined}
+          onSelect={setSelectedId}
+          onViewportChange={() => undefined}
+          selectedId={selectedId}
+          space={space}
+        />
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+
+    const pressedSource = container.querySelector<HTMLElement>(
+      `[data-flow-node-id="${sourceIds[1]}"]`,
+    )!;
+    const pressedPort = pressedSource.querySelector<HTMLButtonElement>(
+      ".flow-node__port--right",
+    )!;
+    const pressedBounds = pressedPort.getBoundingClientRect();
+    const pressedX = (pressedBounds.left + pressedBounds.right) / 2;
+    const pressedY = (pressedBounds.top + pressedBounds.bottom) / 2;
+    await act(async () => {
+      dispatchPointer(pressedPort, "pointerdown", pressedX, pressedY, 10);
+      dispatchPointer(
+        container.querySelector<HTMLElement>(".flow-canvas")!,
+        "pointerup",
+        pressedX,
+        pressedY,
+        10,
+      );
+    });
+    expect(onAddNode).toHaveBeenCalledWith(
+      sourceIds[1],
+      "step",
+      "right",
+      expect.any(Object),
+    );
+
+    const dragSourceToTarget = async (
+      sourceId: string,
+      releaseType: "pointerup" | "pointercancel",
+    ) => {
+      const sourceNode = container.querySelector<HTMLElement>(
+        `[data-flow-node-id="${sourceId}"]`,
+      )!;
+      await act(async () => {
+        sourceNode.querySelector<HTMLButtonElement>(".flow-node__content")!.click();
+      });
+      const handle = sourceNode.querySelector<HTMLButtonElement>(
+        ".flow-node__port--right",
+      )!;
+      const handleBounds = handle.getBoundingClientRect();
+      const targetNode = container.querySelector<HTMLElement>(
+        `[data-flow-node-id="${targetId}"]`,
+      )!;
+      const targetBounds = targetNode.getBoundingClientRect();
+      const startX = (handleBounds.left + handleBounds.right) / 2;
+      const startY = (handleBounds.top + handleBounds.bottom) / 2;
+      const targetX = (targetBounds.left + targetBounds.right) / 2;
+      const targetY = (targetBounds.top + targetBounds.bottom) / 2;
+
+      await act(async () => {
+        dispatchPointer(handle, "pointerdown", startX, startY);
+        dispatchPointer(
+          container.querySelector<HTMLElement>(".flow-canvas")!,
+          "pointermove",
+          targetX,
+          targetY,
+        );
+      });
+      expect(targetNode.classList.contains("is-connection-target")).toBe(true);
+      await act(async () => {
+        dispatchPointer(
+          container.querySelector<HTMLElement>(".flow-canvas")!,
+          releaseType,
+          targetX,
+          targetY,
+        );
+      });
+      expect(targetNode.classList.contains("is-connection-target")).toBe(false);
+    };
+
+    await dragSourceToTarget(sourceIds[1], "pointercancel");
+    expect(latestSpace.edges.filter((edge) => edge.to === targetId)).toHaveLength(1);
+    await dragSourceToTarget(sourceIds[1], "pointerup");
+
+    expect(latestSpace.edges.filter((edge) => edge.to === targetId)).toHaveLength(2);
+    expect(
+      latestSpace.edges.find(
+        (edge) => edge.from === sourceIds[1] && edge.to === targetId,
+      ),
+    ).toMatchObject({ fromPort: "right", toPort: "up" });
+    expect(new Set(latestSpace.edges.map((edge) => edge.id)).size).toBe(
+      latestSpace.edges.length,
+    );
+  });
+
+  it("moves a node directly and discards an interrupted drag", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const space = {
+      ...flowSpaceForNode(created.document, "path")!,
+      viewport: { x: 0, y: 0, zoom: 1 },
+    };
+    const onPositionsChange = vi.fn();
+    const renderCanvas = (currentSpace: typeof space) => (
+      <FlowCanvas
+        draft=""
+        editingId={null}
+        onAddBranch={() => undefined}
+        onAddNext={() => undefined}
+        onBeginEdit={() => undefined}
+        onCancelEdit={() => undefined}
+        onChangeKind={() => undefined}
+        onChangeEdgeLabel={() => undefined}
+        onCommitEdit={() => undefined}
+        onConnect={() => undefined}
+        onDelete={() => undefined}
+        onDraftChange={() => undefined}
+        onPositionsChange={onPositionsChange}
+        onSelect={() => undefined}
+        onViewportChange={() => undefined}
+        selectedId={created.selectedFlowNodeId}
+        space={currentSpace}
+      />
+    );
+
+    await act(async () => root.render(renderCanvas(space)));
+
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    const content = container.querySelector<HTMLElement>(".flow-node__content")!;
+    await act(async () => {
+      dispatchPointer(content, "pointerdown", 200, 180);
+      dispatchPointer(canvas, "pointermove", 260, 220);
+      dispatchPointer(canvas, "pointerup", 260, 220);
+    });
+    expect(onPositionsChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        [created.selectedFlowNodeId]: { x: 200, y: 180 },
+      }),
+    );
+    const committedPositions = onPositionsChange.mock.calls[0][0];
+    await act(async () => {
+      root.render(renderCanvas({ ...space, positions: committedPositions }));
+    });
+    expect(
+      container.querySelector<HTMLElement>(".flow-node")?.style.left,
+    ).toBe("200px");
+    expect(
+      container.querySelector<HTMLElement>(".flow-node")?.style.top,
+    ).toBe("180px");
+
+    const callsAfterCommit = onPositionsChange.mock.calls.length;
+    const movedContent = container.querySelector<HTMLElement>(
+      ".flow-node__content",
+    )!;
+    await act(async () => {
+      dispatchPointer(movedContent, "pointerdown", 200, 180, 8);
+      dispatchPointer(canvas, "pointermove", 320, 260, 8);
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(onPositionsChange).toHaveBeenCalledTimes(callsAfterCommit);
+    expect(movedContent.parentElement?.style.transform).toBe("");
+
+    await act(async () => {
+      dispatchPointer(movedContent, "pointerdown", 200, 180, 9);
+      dispatchPointer(canvas, "pointerup", 240, 210, 9);
+    });
+    expect(onPositionsChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        [created.selectedFlowNodeId]: { x: 240, y: 210 },
+      }),
+    );
+  });
+
+  it("adds palette shapes by click or drag without forcing a terminal", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const space = {
+      ...flowSpaceForNode(created.document, "path")!,
+      viewport: { x: 0, y: 0, zoom: 1 },
+    };
+    const onAddShape = vi.fn();
+    const rect = (left: number, top: number, width: number, height: number) => ({
+      x: left,
+      y: top,
+      top,
+      right: left + width,
+      bottom: top + height,
+      left,
+      width,
+      height,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        return this.classList.contains("flow-canvas")
+          ? rect(0, 0, 1000, 800)
+          : rect(0, 0, 0, 0);
+      },
+    );
+
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onAddShape={onAddShape}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDraftChange={() => undefined}
+          onSelect={() => undefined}
+          onViewportChange={() => undefined}
+          selectedId={null}
+          space={space}
+        />,
+      );
+    });
+
+    expect(container.querySelectorAll(".flow-shape-palette__item")).toHaveLength(3);
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[aria-label='添加起止图形']",
+      )!.click();
+    });
+    expect(onAddShape).toHaveBeenCalledWith(
+      "start",
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+      expect.any(Object),
+    );
+    const clickPosition = onAddShape.mock.calls[0][1];
+    const existingNode = container.querySelector<HTMLElement>(".flow-node")!;
+    expect(clickPosition.x).toBeGreaterThanOrEqual(
+      Number.parseFloat(existingNode.style.left) +
+      Number.parseFloat(existingNode.style.width) +
+      18,
+    );
+
+    const decision = container.querySelector<HTMLButtonElement>(
+      "[aria-label='添加判断图形']",
+    )!;
+    await act(async () => {
+      dispatchPointer(decision, "pointerdown", 48, 400, 21);
+      dispatchPointer(decision, "pointermove", 420, 310, 21);
+      dispatchPointer(decision, "pointerup", 420, 310, 21);
+    });
+    expect(onAddShape).toHaveBeenLastCalledWith(
+      "decision",
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+      expect.any(Object),
+    );
+  });
+
+  it("selects a connector and drags its existing endpoint to another side", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
+    const sourceId = created.selectedFlowNodeId;
+    const targetId = added.nodeId;
+    const space = {
+      ...added.space,
+      positions: {
+        [sourceId]: { x: 140, y: 180 },
+        [targetId]: { x: 500, y: 180 },
+      },
+      viewport: { x: 0, y: 0, zoom: 1 },
+    };
+    const onReconnectEdge = vi.fn();
+    const rect = (left: number, top: number, width: number, height: number) => ({
+      x: left,
+      y: top,
+      top,
+      right: left + width,
+      bottom: top + height,
+      left,
+      width,
+      height,
+      toJSON: () => ({}),
+    });
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: Element) {
+        if (this instanceof HTMLElement && this.classList.contains("flow-canvas")) {
+          return rect(0, 0, 1000, 800) as DOMRect;
+        }
+        if (this instanceof HTMLElement && this.classList.contains("flow-node")) {
+          return rect(
+            Number.parseFloat(this.style.left),
+            Number.parseFloat(this.style.top),
+            Number.parseFloat(this.style.width),
+            Number.parseFloat(this.style.height),
+          ) as DOMRect;
+        }
+        if (this instanceof SVGElement && this.tagName.toLowerCase() === "circle") {
+          const cx = Number(this.getAttribute("cx"));
+          const cy = Number(this.getAttribute("cy"));
+          return rect(cx - 6, cy - 6, 12, 12) as DOMRect;
+        }
+        return rect(0, 0, 0, 0) as DOMRect;
+      },
+    );
+
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDraftChange={() => undefined}
+          onReconnectEdge={onReconnectEdge}
+          onSelect={() => undefined}
+          onViewportChange={() => undefined}
+          selectedId={null}
+          space={space}
+        />,
+      );
+    });
+
+    await act(async () => {
+      container.querySelector<SVGPathElement>(".flow-connector__hit")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const handle = container.querySelector<SVGCircleElement>(
+      ".flow-edge-handle--from",
+    )!;
+    expect(handle).not.toBeNull();
+    expect(handle.closest(".flow-edge-handle-layer")).not.toBeNull();
+    const source = container.querySelector<HTMLElement>(
+      `[data-flow-node-id="${sourceId}"]`,
+    )!;
+    const sourceBounds = source.getBoundingClientRect();
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    await act(async () => {
+      dispatchPointer(handle as unknown as HTMLElement, "pointerdown", 336, 207, 22);
+      dispatchPointer(
+        canvas,
+        "pointermove",
+        sourceBounds.left,
+        (sourceBounds.top + sourceBounds.bottom) / 2,
+        22,
+      );
+      dispatchPointer(
+        canvas,
+        "pointerup",
+        sourceBounds.left,
+        (sourceBounds.top + sourceBounds.bottom) / 2,
+        22,
+      );
+    });
+    expect(onReconnectEdge).toHaveBeenCalledWith(
+      space.edges[0].id,
+      "from",
+      sourceId,
+      "left",
     );
   });
 
@@ -337,12 +871,13 @@ describe("FlowCanvas", () => {
     const callsBeforeRelayout = onViewportChange.mock.calls.length;
     expect(callsBeforeRelayout).toBeGreaterThan(0);
 
-    // Growing the start node shifts the selected step's row. That relayout
+    // Growing the selected node shifts the row. That relayout
     // must not drag the user's manual pan back toward the selection.
-    const startId = Object.values(space.nodes).find(
-      ({ kind }) => kind === "start",
-    )!.id;
-    const edited = setFlowNodeText(space, startId, "开始\n第二行");
+    const edited = setFlowNodeText(
+      space,
+      created.selectedFlowNodeId,
+      "实现路径\n第二行",
+    );
     await act(async () => root.render(renderCanvas(edited)));
     await act(async () => {
       vi.advanceTimersByTime(200);

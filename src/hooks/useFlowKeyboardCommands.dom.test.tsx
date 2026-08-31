@@ -25,7 +25,7 @@ describe("flow keyboard commands", () => {
     container.remove();
   });
 
-  function Harness(props: { selectedId?: string | null }) {
+  function Harness(props: { connecting?: boolean; selectedId?: string | null }) {
     useFlowKeyboardCommands({
       enabled: true,
       selectedId: props.selectedId === undefined ? "step-1" : props.selectedId,
@@ -39,7 +39,10 @@ describe("flow keyboard commands", () => {
       onRedo: handlers.onRedo,
     });
     return (
-      <div className="flow-canvas">
+      <div
+        className="flow-canvas"
+        data-flow-connecting={props.connecting ? "true" : undefined}
+      >
         <div role="menu">
           <button type="button">判断</button>
         </div>
@@ -114,6 +117,13 @@ describe("flow keyboard commands", () => {
     const menuItem = container.querySelector("[role='menu'] button")!;
     await act(async () => pressKey(menuItem, "Escape"));
     expect(handlers.onBack).toHaveBeenCalledOnce();
+  });
+
+  it("does not return to the parent while Escape is cancelling a direct connection", async () => {
+    await act(async () => root.render(<Harness connecting />));
+    const canvas = container.querySelector(".flow-canvas")!;
+    await act(async () => pressKey(canvas, "Escape"));
+    expect(handlers.onBack).not.toHaveBeenCalled();
   });
 
   it("keeps native activation keys on the fit button", async () => {

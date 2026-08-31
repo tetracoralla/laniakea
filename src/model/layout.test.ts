@@ -164,11 +164,15 @@ describe("automatic layout", () => {
     expect(multiline.height).toBeGreaterThan(48);
   });
 
-  it("keeps second-level nodes compact without sacrificing text padding", () => {
+  it("keeps third-level and deeper nodes visibly tighter than second-level nodes", () => {
     expect(sizeForNode(0, "中心主题", "main").height).toBe(48);
     expect(sizeForNode(1, "一级主题").height).toBe(48);
     expect(sizeForNode(2, "二级主题").height).toBe(44);
-    expect(sizeForNode(4, "更深层主题").height).toBe(44);
+    expect(sizeForNode(3, "三级主题").height).toBe(40);
+    expect(sizeForNode(4, "更深层主题").height).toBe(40);
+    expect(sizeForNode(2, "同样文字").width).toBeGreaterThan(
+      sizeForNode(3, "同样文字").width,
+    );
     expect(sizeForNode(2, "第一行\n第二行\n第三行").height).toBe(83);
   });
 

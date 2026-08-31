@@ -116,9 +116,13 @@ export function useEditorSession({
 
   const beginBlankDocument = useCallback((rootId: string) => {
     cancelledEdit.current = null;
+    selectNode(rootId);
     setEditingId(rootId);
     setDraft("");
-  }, []);
+    // 空白稿没有可恢复的视口：请求一次画布 fit，把唯一的主原点居中呈现。
+    // 令牌由画布挂载后的 layout effect 消费，早于挂载发出也不会丢失。
+    setFitRequest((current) => current + 1);
+  }, [selectNode]);
 
   const finishDocumentSwitch = useCallback((fitContent: boolean) => {
     cancelledEdit.current = null;

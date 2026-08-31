@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { createSeedDocument } from "../data/seed";
 import {
   addFlowBranch,
+  addFlowNodeAfter,
+  addFlowNodeAtPosition,
+  addFlowNodeInDirection,
   addFlowStepAfter,
   canConnectFlowNodes,
   connectableFlowNodeIds,
@@ -15,6 +18,7 @@ import {
   mapSpaceForNode,
   mergeMapSpaceDocument,
   preserveDocumentViewports,
+  reconnectFlowEdge,
   setFlowNodeText,
   setFlowEdgeLabel,
   setFlowViewport,
@@ -85,7 +89,7 @@ describe("typed Laniakea spaces", () => {
     expect(isMindMapDocument(deleted)).toBe(true);
   });
 
-  it("uses semantic next and branch operations instead of free coordinates", () => {
+  it("keeps keyboard next and branch operations semantic before manual placement", () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const stepId = created.selectedFlowNodeId;
@@ -101,6 +105,23 @@ describe("typed Laniakea spaces", () => {
     ).toHaveLength(2);
   });
 
+  it("creates a decision directly and preserves the existing continuation", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const stepId = created.selectedFlowNodeId;
+    const continuation = addFlowStepAfter(initial, stepId);
+    const added = addFlowNodeAfter(continuation.space, stepId, "decision");
+
+    expect(added.space.nodes[added.nodeId].kind).toBe("decision");
+    expect(added.space.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: stepId, to: added.nodeId }),
+      expect.objectContaining({ from: added.nodeId, to: continuation.nodeId }),
+    ]));
+    expect(added.space.edges.some(
+      (edge) => edge.from === stepId && edge.to === continuation.nodeId,
+    )).toBe(false);
+  });
+
   it("rewires a deleted step and preserves an editable selection target", () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
@@ -110,23 +131,21 @@ describe("typed Laniakea spaces", () => {
 
     expect(removed.space.nodes[added.nodeId]).toBeUndefined();
     expect(removed.nextSelectedId).toBe(created.selectedFlowNodeId);
-    expect(removed.space.edges).toHaveLength(2);
+    expect(removed.space.edges).toHaveLength(0);
   });
 
   it("does not duplicate an existing connection while bridging a deleted step", () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
-    const startId = Object.values(initial.nodes).find(
-      ({ kind }) => kind === "start",
-    )!.id;
-    const endId = Object.values(initial.nodes).find(
-      ({ kind }) => kind === "end",
-    )!.id;
-    const withDirectBranch = connectFlowNodes(initial, startId, endId);
+    const startId = created.selectedFlowNodeId;
+    const middle = addFlowStepAfter(initial, startId);
+    const ending = addFlowStepAfter(middle.space, middle.nodeId);
+    const endId = ending.nodeId;
+    const withDirectBranch = connectFlowNodes(ending.space, startId, endId);
 
     const removed = deleteFlowNode(
       withDirectBranch,
-      created.selectedFlowNodeId,
+      middle.nodeId,
     );
 
     expect(
@@ -145,20 +164,134 @@ describe("typed Laniakea spaces", () => {
     const initial = flowSpaceForNode(created.document, "path")!;
     const decisionId = created.selectedFlowNodeId;
     const branched = addFlowBranch(initial, decisionId).space;
-    const endId = Object.values(branched.nodes).find(({ kind }) => kind === "end")!.id;
-    const branchEdge = branched.edges.find(
-      (edge) => edge.from === decisionId && edge.label !== "主线",
-    )!;
-    const renamed = setFlowEdgeLabel(branched, branchEdge.id, "  已通过  ");
-    const merged = connectFlowNodes(renamed, branchEdge.to, endId);
+    const branchEdges = branched.edges.filter((edge) => edge.from === decisionId);
+    const target = addFlowNodeAfter(branched, branchEdges[0].to, "step");
+    const branchEdge = branchEdges[1];
+    const renamed = setFlowEdgeLabel(target.space, branchEdge.id, "  已通过  ");
+    const merged = connectFlowNodes(renamed, branchEdge.to, target.nodeId);
 
     expect(renamed.edges.find(({ id }) => id === branchEdge.id)?.label).toBe("已通过");
-    expect(merged.edges.some((edge) => edge.from === branchEdge.to && edge.to === endId))
+    expect(merged.edges.some((edge) => edge.from === branchEdge.to && edge.to === target.nodeId))
       .toBe(true);
-    expect(canConnectFlowNodes(merged, branchEdge.to, endId)).toBe(false);
-    expect(canConnectFlowNodes(merged, endId, decisionId)).toBe(false);
-    expect(connectableFlowNodeIds(merged, branchEdge.to)).not.toContain(endId);
-    expect(connectableFlowNodeIds(merged, endId).size).toBe(0);
+    expect(canConnectFlowNodes(merged, branchEdge.to, target.nodeId)).toBe(false);
+    expect(canConnectFlowNodes(merged, target.nodeId, decisionId)).toBe(false);
+    expect(connectableFlowNodeIds(merged, branchEdge.to)).not.toContain(target.nodeId);
+  });
+
+  it("creates in a chosen direction and keeps connector ports as portable semantics", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const originId = created.selectedFlowNodeId;
+    const placed = addFlowNodeInDirection(
+      initial,
+      originId,
+      "decision",
+      "left",
+      { [originId]: { x: 140, y: 140 } },
+    );
+    const branched = addFlowBranch(placed.space, placed.nodeId).space;
+    const branchTargets = branched.edges
+      .filter((edge) => edge.from === placed.nodeId)
+      .map((edge) => edge.to);
+    const connected = connectFlowNodes(
+      branched,
+      branchTargets[0],
+      branchTargets[1],
+      { fromPort: "down", toPort: "up" },
+    );
+
+    expect(placed.space.positions?.[placed.nodeId].x).toBeLessThan(
+      placed.space.positions?.[originId].x ?? 0,
+    );
+    expect(connected.edges).toContainEqual(expect.objectContaining({
+      from: branchTargets[0],
+      to: branchTargets[1],
+      fromPort: "down",
+      toPort: "up",
+    }));
+    expect(placed.space.edges[0]).toEqual(expect.objectContaining({
+      from: originId,
+      fromPort: "left",
+      to: placed.nodeId,
+      toPort: "right",
+    }));
+  });
+
+  it("adds a free-standing palette shape and lets a terminal participate like any node", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const terminal = addFlowNodeAtPosition(
+      initial,
+      "start",
+      { x: 420, y: 240 },
+      { [created.selectedFlowNodeId]: { x: 140, y: 140 } },
+    );
+    const connected = connectFlowNodes(
+      terminal.space,
+      created.selectedFlowNodeId,
+      terminal.nodeId,
+      { fromPort: "right", toPort: "left" },
+    );
+    const next = addFlowNodeAtPosition(
+      connected,
+      "step",
+      { x: 420, y: 420 },
+      connected.positions ?? {},
+    );
+    const continued = connectFlowNodes(
+      next.space,
+      terminal.nodeId,
+      next.nodeId,
+      { fromPort: "down", toPort: "up" },
+    );
+
+    expect(terminal.space.positions?.[terminal.nodeId]).toEqual({ x: 420, y: 240 });
+    expect(connected.edges).toContainEqual(expect.objectContaining({
+      from: created.selectedFlowNodeId,
+      to: terminal.nodeId,
+    }));
+    expect(continued.edges).toContainEqual(expect.objectContaining({
+      from: terminal.nodeId,
+      fromPort: "down",
+      to: next.nodeId,
+      toPort: "up",
+    }));
+    expect(deleteFlowNode(continued, terminal.nodeId).space.nodes[terminal.nodeId])
+      .toBeUndefined();
+  });
+
+  it("reconnects either end of an existing edge to a chosen node side", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const middle = addFlowStepAfter(initial, created.selectedFlowNodeId);
+    const target = addFlowNodeAtPosition(
+      middle.space,
+      "step",
+      { x: 520, y: 320 },
+      middle.space.positions ?? {},
+    );
+    const edgeId = middle.space.edges[0].id;
+    const movedTarget = reconnectFlowEdge(
+      target.space,
+      edgeId,
+      "to",
+      target.nodeId,
+      "right",
+    );
+    const movedSourcePort = reconnectFlowEdge(
+      movedTarget,
+      edgeId,
+      "from",
+      created.selectedFlowNodeId,
+      "left",
+    );
+
+    expect(movedSourcePort.edges.find(({ id }) => id === edgeId)).toMatchObject({
+      from: created.selectedFlowNodeId,
+      fromPort: "left",
+      to: target.nodeId,
+      toPort: "right",
+    });
   });
 
   it("carries editor viewports across an undo restore", () => {
