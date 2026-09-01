@@ -66,6 +66,8 @@ codex plugin add laniakea@laniakea
 ## 开源与参与
 
 Laniakea 使用 [Apache License 2.0](LICENSE) 开源。开发、构建和验证方式见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，网页部署说明见 [`docs/deployment.md`](docs/deployment.md)。
+Flow 的端口、正交连线和交叉处理复用可独立打包的
+`@openadam/graph-projection`；Laniakea 仍独立拥有文档格式、布局意图、交互与渲染。
 
 - [报告问题](https://github.com/tetracoralla/laniakea/issues/new?template=bug_report.yml)
 - [提出建议](https://github.com/tetracoralla/laniakea/issues/new?template=feature_request.yml)

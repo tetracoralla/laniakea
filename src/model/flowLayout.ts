@@ -3,6 +3,16 @@ import type {
   FlowSpace,
 } from "../types/mindmap";
 import {
+  pointOnRoute as projectionPointOnRoute,
+  roundedOrthogonalPath as projectionRoundedOrthogonalPath,
+  routeCrossings as projectionRouteCrossings,
+  routeOrthogonal as projectionRouteOrthogonal,
+  type OrthogonalRoute,
+  type Point as ProjectionPoint,
+  type PortSide,
+  type RouteJump,
+} from "@openadam/graph-projection";
+import {
   estimateTextWidth,
   type NodeTextStyle,
   type TextWidthMeasurer,
@@ -272,10 +282,7 @@ export function computeFlowLayout(
   };
 }
 
-export interface FlowPoint {
-  x: number;
-  y: number;
-}
+export interface FlowPoint extends ProjectionPoint {}
 
 export interface FlowConnectorRoute {
   end: FlowPoint;
@@ -289,337 +296,40 @@ export interface FlowConnectorJump extends FlowPoint {
   segmentIndex: number;
 }
 
-function connectorPorts(
-  from: FlowLayoutNode,
-  to: FlowLayoutNode,
-  preferredFromPort?: FlowPlacementDirection,
-  preferredToPort?: FlowPlacementDirection,
-): {
-  fromPort: FlowPlacementDirection;
-  toPort: FlowPlacementDirection;
-} {
-  const fromCenter = {
-    x: from.x + from.width / 2,
-    y: from.y + from.height / 2,
-  };
-  const toCenter = {
-    x: to.x + to.width / 2,
-    y: to.y + to.height / 2,
-  };
-  const dx = toCenter.x - fromCenter.x;
-  const dy = toCenter.y - fromCenter.y;
-  const automaticFromPort: FlowPlacementDirection = Math.abs(dx) >= Math.abs(dy)
-    ? (dx >= 0 ? "right" : "left")
-    : (dy >= 0 ? "down" : "up");
-  const automaticToPort: FlowPlacementDirection = automaticFromPort === "right"
-    ? "left"
-    : automaticFromPort === "left"
-      ? "right"
-      : automaticFromPort === "down"
-        ? "up"
-        : "down";
-  const fromPort = preferredFromPort ?? automaticFromPort;
-  const toPort = preferredToPort ?? automaticToPort;
-  return { fromPort, toPort };
+function toProjectionPort(direction: FlowPlacementDirection): PortSide {
+  return direction === "up"
+    ? "top"
+    : direction === "down"
+      ? "bottom"
+      : direction;
 }
 
-function portPoint(
-  node: FlowLayoutNode,
-  port: FlowPlacementDirection,
-): FlowPoint {
-  return port === "left"
-    ? { x: node.x, y: node.y + node.height / 2 }
-    : port === "right"
-      ? { x: node.x + node.width, y: node.y + node.height / 2 }
-      : port === "up"
-        ? { x: node.x + node.width / 2, y: node.y }
-        : { x: node.x + node.width / 2, y: node.y + node.height };
+function fromProjectionPort(side: PortSide): FlowPlacementDirection {
+  return side === "top"
+    ? "up"
+    : side === "bottom"
+      ? "down"
+      : side;
 }
 
-function portVector(port: FlowPlacementDirection): FlowPoint {
-  return port === "left"
-    ? { x: -1, y: 0 }
-    : port === "right"
-      ? { x: 1, y: 0 }
-      : port === "up"
-        ? { x: 0, y: -1 }
-        : { x: 0, y: 1 };
-}
-
-function samePoint(left: FlowPoint, right: FlowPoint): boolean {
-  return Math.abs(left.x - right.x) < 0.01 && Math.abs(left.y - right.y) < 0.01;
-}
-
-function compactOrthogonalPoints(points: FlowPoint[]): FlowPoint[] {
-  const distinct = points.filter((point, index) =>
-    index === 0 || !samePoint(point, points[index - 1]),
-  );
-  return distinct.filter((point, index) => {
-    if (index === 0 || index === distinct.length - 1) return true;
-    const previous = distinct[index - 1];
-    const next = distinct[index + 1];
-    const vertical = previous.x === point.x && point.x === next.x;
-    const horizontal = previous.y === point.y && point.y === next.y;
-    return !vertical && !horizontal;
-  });
-}
-
-function pointOutside(
-  point: FlowPoint,
-  port: FlowPlacementDirection,
-  distance: number,
-): FlowPoint {
-  const vector = portVector(port);
+function toProjectionRoute(route: FlowConnectorRoute): OrthogonalRoute {
   return {
-    x: point.x + vector.x * distance,
-    y: point.y + vector.y * distance,
+    source: route.start,
+    target: route.end,
+    sourcePort: toProjectionPort(route.fromPort),
+    targetPort: toProjectionPort(route.toPort),
+    points: route.points,
   };
 }
 
-function routedPoints(
-  start: FlowPoint,
-  end: FlowPoint,
-  fromPort: FlowPlacementDirection,
-  toPort: FlowPlacementDirection,
-): FlowPoint[] {
-  const stub = 30;
-  const detour = 42;
-  const startStub = pointOutside(start, fromPort, stub);
-  const endStub = pointOutside(end, toPort, stub);
-  const fromHorizontal = fromPort === "left" || fromPort === "right";
-  const toHorizontal = toPort === "left" || toPort === "right";
-  const fromVector = portVector(fromPort);
-  const toVector = portVector(toPort);
-  const points: FlowPoint[] = [start, startStub];
-
-  if (fromHorizontal && toHorizontal) {
-    const facing = fromVector.x > 0
-      ? startStub.x <= endStub.x
-      : startStub.x >= endStub.x;
-    const targetFacing = toVector.x > 0
-      ? endStub.x <= startStub.x
-      : endStub.x >= startStub.x;
-    const middleX = facing && targetFacing
-      ? (startStub.x + endStub.x) / 2
-      : fromVector.x > 0
-        ? Math.max(startStub.x, endStub.x) + detour
-        : Math.min(startStub.x, endStub.x) - detour;
-    points.push(
-      { x: middleX, y: startStub.y },
-      { x: middleX, y: endStub.y },
-    );
-  } else if (!fromHorizontal && !toHorizontal) {
-    const facing = fromVector.y > 0
-      ? startStub.y <= endStub.y
-      : startStub.y >= endStub.y;
-    const targetFacing = toVector.y > 0
-      ? endStub.y <= startStub.y
-      : endStub.y >= startStub.y;
-    const middleY = facing && targetFacing
-      ? (startStub.y + endStub.y) / 2
-      : fromVector.y > 0
-        ? Math.max(startStub.y, endStub.y) + detour
-        : Math.min(startStub.y, endStub.y) - detour;
-    points.push(
-      { x: startStub.x, y: middleY },
-      { x: endStub.x, y: middleY },
-    );
-  } else if (fromHorizontal) {
-    const wouldReverse = fromVector.x > 0
-      ? endStub.x < startStub.x
-      : endStub.x > startStub.x;
-    if (wouldReverse) {
-      const detourX = startStub.x + fromVector.x * detour;
-      points.push(
-        { x: detourX, y: startStub.y },
-        { x: detourX, y: endStub.y },
-      );
-    } else {
-      points.push({ x: endStub.x, y: startStub.y });
-    }
-  } else {
-    const wouldReverse = fromVector.y > 0
-      ? endStub.y < startStub.y
-      : endStub.y > startStub.y;
-    if (wouldReverse) {
-      const detourY = startStub.y + fromVector.y * detour;
-      points.push(
-        { x: startStub.x, y: detourY },
-        { x: endStub.x, y: detourY },
-      );
-    } else {
-      points.push({ x: startStub.x, y: endStub.y });
-    }
-  }
-
-  points.push(endStub, end);
-  return compactOrthogonalPoints(points);
-}
-
-interface ExpandedObstacle {
-  bottom: number;
-  left: number;
-  right: number;
-  top: number;
-}
-
-function pointInsideObstacle(point: FlowPoint, obstacle: ExpandedObstacle): boolean {
-  const epsilon = 0.01;
-  return point.x > obstacle.left + epsilon &&
-    point.x < obstacle.right - epsilon &&
-    point.y > obstacle.top + epsilon &&
-    point.y < obstacle.bottom - epsilon;
-}
-
-function segmentClear(
-  from: FlowPoint,
-  to: FlowPoint,
-  obstacles: readonly ExpandedObstacle[],
-): boolean {
-  const epsilon = 0.01;
-  if (Math.abs(from.y - to.y) < epsilon) {
-    const left = Math.min(from.x, to.x);
-    const right = Math.max(from.x, to.x);
-    return obstacles.every((obstacle) =>
-      from.y <= obstacle.top + epsilon ||
-      from.y >= obstacle.bottom - epsilon ||
-      right <= obstacle.left + epsilon ||
-      left >= obstacle.right - epsilon
-    );
-  }
-  if (Math.abs(from.x - to.x) < epsilon) {
-    const top = Math.min(from.y, to.y);
-    const bottom = Math.max(from.y, to.y);
-    return obstacles.every((obstacle) =>
-      from.x <= obstacle.left + epsilon ||
-      from.x >= obstacle.right - epsilon ||
-      bottom <= obstacle.top + epsilon ||
-      top >= obstacle.bottom - epsilon
-    );
-  }
-  return false;
-}
-
-function obstacleAvoidingPoints(
-  start: FlowPoint,
-  end: FlowPoint,
-  fromPort: FlowPlacementDirection,
-  toPort: FlowPlacementDirection,
-  obstacleNodes: readonly FlowLayoutNode[],
-): FlowPoint[] | null {
-  if (obstacleNodes.length === 0 || obstacleNodes.length > 40) return null;
-  const stub = 30;
-  const clearance = 14;
-  const startStub = pointOutside(start, fromPort, stub);
-  const endStub = pointOutside(end, toPort, stub);
-  const obstacles = obstacleNodes.map((node) => ({
-    left: node.x - clearance,
-    right: node.x + node.width + clearance,
-    top: node.y - clearance,
-    bottom: node.y + node.height + clearance,
-  }));
-  if (
-    obstacles.some((obstacle) => pointInsideObstacle(startStub, obstacle)) ||
-    obstacles.some((obstacle) => pointInsideObstacle(endStub, obstacle))
-  ) return null;
-
-  const uniqueCoordinates = (values: number[]) => [...new Set(
-    values.map((value) => Number(value.toFixed(3))),
-  )].sort((left, right) => left - right);
-  const xs = uniqueCoordinates([
-    startStub.x,
-    endStub.x,
-    ...obstacles.flatMap((obstacle) => [obstacle.left, obstacle.right]),
-  ]);
-  const ys = uniqueCoordinates([
-    startStub.y,
-    endStub.y,
-    ...obstacles.flatMap((obstacle) => [obstacle.top, obstacle.bottom]),
-  ]);
-  const points: FlowPoint[] = [];
-  const pointIndex = new Map<string, number>();
-  const pointKey = (point: FlowPoint) => `${point.x.toFixed(3)}:${point.y.toFixed(3)}`;
-  xs.forEach((x) => ys.forEach((y) => {
-    const point = { x, y };
-    if (obstacles.some((obstacle) => pointInsideObstacle(point, obstacle))) return;
-    pointIndex.set(pointKey(point), points.length);
-    points.push(point);
-  }));
-  const startIndex = pointIndex.get(pointKey(startStub));
-  const endIndex = pointIndex.get(pointKey(endStub));
-  if (startIndex === undefined || endIndex === undefined) return null;
-
-  const adjacency = new Map<number, number[]>();
-  const connect = (left: number, right: number) => {
-    if (!segmentClear(points[left], points[right], obstacles)) return;
-    adjacency.set(left, [...(adjacency.get(left) ?? []), right]);
-    adjacency.set(right, [...(adjacency.get(right) ?? []), left]);
+function fromProjectionRoute(route: OrthogonalRoute): FlowConnectorRoute {
+  return {
+    start: route.source,
+    end: route.target,
+    fromPort: fromProjectionPort(route.sourcePort),
+    toPort: fromProjectionPort(route.targetPort),
+    points: route.points,
   };
-  xs.forEach((x) => {
-    const line = ys.flatMap((y) => {
-      const index = pointIndex.get(pointKey({ x, y }));
-      return index === undefined ? [] : [index];
-    });
-    line.slice(0, -1).forEach((index, offset) => connect(index, line[offset + 1]));
-  });
-  ys.forEach((y) => {
-    const line = xs.flatMap((x) => {
-      const index = pointIndex.get(pointKey({ x, y }));
-      return index === undefined ? [] : [index];
-    });
-    line.slice(0, -1).forEach((index, offset) => connect(index, line[offset + 1]));
-  });
-
-  type Direction = "horizontal" | "vertical" | "none";
-  interface SearchState {
-    cost: number;
-    direction: Direction;
-    point: number;
-    previous?: string;
-  }
-  const stateKey = (point: number, direction: Direction) => `${point}:${direction}`;
-  const best = new Map<string, SearchState>();
-  const pending: SearchState[] = [{ cost: 0, direction: "none", point: startIndex }];
-  best.set(stateKey(startIndex, "none"), pending[0]);
-  let resolved: SearchState | null = null;
-  while (pending.length > 0) {
-    pending.sort((left, right) => left.cost - right.cost);
-    const current = pending.shift()!;
-    if (best.get(stateKey(current.point, current.direction)) !== current) continue;
-    if (current.point === endIndex) {
-      resolved = current;
-      break;
-    }
-    for (const neighbor of adjacency.get(current.point) ?? []) {
-      const from = points[current.point];
-      const to = points[neighbor];
-      const direction: Direction = Math.abs(from.x - to.x) < 0.01
-        ? "vertical"
-        : "horizontal";
-      const distance = Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
-      const turnCost = current.direction !== "none" && current.direction !== direction ? 28 : 0;
-      const nextKey = stateKey(neighbor, direction);
-      const cost = current.cost + distance + turnCost;
-      if ((best.get(nextKey)?.cost ?? Number.POSITIVE_INFINITY) <= cost) continue;
-      const next = {
-        cost,
-        direction,
-        point: neighbor,
-        previous: stateKey(current.point, current.direction),
-      };
-      best.set(nextKey, next);
-      pending.push(next);
-    }
-  }
-  if (!resolved) return null;
-  const result: FlowPoint[] = [];
-  let current: SearchState | undefined = resolved;
-  while (current) {
-    result.push(points[current.point]);
-    current = current.previous ? best.get(current.previous) : undefined;
-  }
-  result.reverse();
-  return compactOrthogonalPoints([start, ...result, end]);
 }
 
 export function flowConnectorRoute(
@@ -629,62 +339,37 @@ export function flowConnectorRoute(
   preferredToPort?: FlowPlacementDirection,
   obstacles: readonly FlowLayoutNode[] = [],
 ): FlowConnectorRoute {
-  const { fromPort, toPort } = connectorPorts(
-    from,
-    to,
-    preferredFromPort,
-    preferredToPort,
-  );
-  const start = portPoint(from, fromPort);
-  const end = portPoint(to, toPort);
-  const obstacleNodes = obstacles.filter((node) => node.id !== from.id && node.id !== to.id);
-  return {
-    end,
-    fromPort,
-    points: obstacleAvoidingPoints(
-      start,
-      end,
-      fromPort,
-      toPort,
-      obstacleNodes,
-    ) ?? routedPoints(start, end, fromPort, toPort),
-    start,
-    toPort,
-  };
+  return fromProjectionRoute(projectionRouteOrthogonal(from, to, {
+    ...(preferredFromPort === undefined
+      ? {}
+      : { sourcePort: toProjectionPort(preferredFromPort) }),
+    ...(preferredToPort === undefined
+      ? {}
+      : { targetPort: toProjectionPort(preferredToPort) }),
+    obstacles,
+  }));
 }
 
 export function flowConnectorPathFromRoute(
   route: FlowConnectorRoute,
   jumps: readonly FlowConnectorJump[] = [],
 ): string {
-  return roundedOrthogonalPath(route.points, jumps);
+  return projectionRoundedOrthogonalPath(
+    route.points,
+    jumps.map((jump): RouteJump => ({ ...jump })),
+    10,
+  );
 }
 
 export function flowConnectorPointOnRoute(
   route: FlowConnectorRoute,
   progress = 0.34,
 ): FlowPoint {
-  const segments = route.points.slice(0, -1).map((start, index) => {
-    const end = route.points[index + 1];
-    return { end, length: Math.hypot(end.x - start.x, end.y - start.y), start };
-  });
-  const total = segments.reduce((sum, segment) => sum + segment.length, 0);
-  let remaining = total * Math.max(0, Math.min(1, progress));
-  for (const segment of segments) {
-    if (remaining <= segment.length) {
-      const ratio = segment.length === 0 ? 0 : remaining / segment.length;
-      return {
-        x: segment.start.x + (segment.end.x - segment.start.x) * ratio,
-        y: segment.start.y + (segment.end.y - segment.start.y) * ratio,
-      };
-    }
-    remaining -= segment.length;
-  }
-  return route.points[route.points.length - 1];
+  return projectionPointOnRoute(toProjectionRoute(route), progress);
 }
 
-// 删除按钮的锚点：路线中点沿所在线段的法线下沉，避开箭头与端点柄；
-// 两侧落点都被节点占据时退回中点本身。
+// The delete control remains a Laniakea interaction concern. Geometry of the
+// route itself is shared with Graph Projection.
 export function flowConnectorDeleteAnchor(
   route: FlowConnectorRoute,
   obstacles: readonly FlowLayoutNode[],
@@ -692,7 +377,7 @@ export function flowConnectorDeleteAnchor(
 ): FlowPoint {
   const point = flowConnectorPointOnRoute(route, 0.5);
   const segments = route.points.slice(0, -1).map((start, index) => {
-    const end = route.points[index + 1];
+    const end = route.points[index + 1]!;
     return {
       dx: end.x - start.x,
       dy: end.y - start.y,
@@ -701,7 +386,7 @@ export function flowConnectorDeleteAnchor(
   });
   const total = segments.reduce((sum, segment) => sum + segment.length, 0);
   let remaining = total * 0.5;
-  let normal: { x: number; y: number } | null = null;
+  let normal: FlowPoint | undefined;
   for (const segment of segments) {
     if (segment.length === 0) continue;
     if (remaining <= segment.length) {
@@ -723,101 +408,19 @@ export function flowConnectorDeleteAnchor(
   return candidates.find((candidate) => !occupied(candidate.x, candidate.y)) ?? point;
 }
 
-function offsetToward(from: FlowPoint, to: FlowPoint, distance: number): FlowPoint {
-  const length = Math.hypot(to.x - from.x, to.y - from.y);
-  if (length === 0) return from;
-  const ratio = Math.min(1, distance / length);
-  return {
-    x: from.x + (to.x - from.x) * ratio,
-    y: from.y + (to.y - from.y) * ratio,
-  };
-}
-
-function lineWithJumps(
-  from: FlowPoint,
-  to: FlowPoint,
-  jumps: readonly FlowConnectorJump[],
-  segmentIndex: number,
-): string {
-  if (Math.abs(from.y - to.y) > 0.01) return ` L ${to.x} ${to.y}`;
-  const direction = to.x >= from.x ? 1 : -1;
-  const radius = 6;
-  const candidates = jumps
-    .filter((jump) => jump.segmentIndex === segmentIndex)
-    .filter((jump) =>
-      direction > 0
-        ? jump.x > from.x + radius && jump.x < to.x - radius
-        : jump.x < from.x - radius && jump.x > to.x + radius,
-    )
-    .sort((left, right) => direction * (left.x - right.x));
-  let path = "";
-  candidates.forEach((jump) => {
-    path += ` L ${jump.x - direction * radius} ${from.y}`;
-    path += ` Q ${jump.x} ${from.y - radius} ${jump.x + direction * radius} ${from.y}`;
-  });
-  return `${path} L ${to.x} ${to.y}`;
-}
-
-function roundedOrthogonalPath(
-  points: readonly FlowPoint[],
-  jumps: readonly FlowConnectorJump[] = [],
-): string {
-  if (points.length === 0) return "";
-  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-  const cornerRadius = 10;
-  const radii = points.map((point, index) => {
-    if (index === 0 || index === points.length - 1) return 0;
-    const incoming = Math.hypot(
-      point.x - points[index - 1].x,
-      point.y - points[index - 1].y,
-    );
-    const outgoing = Math.hypot(
-      points[index + 1].x - point.x,
-      points[index + 1].y - point.y,
-    );
-    return Math.min(cornerRadius, incoming / 2, outgoing / 2);
-  });
-  let path = `M ${points[0].x} ${points[0].y}`;
-  for (let segmentIndex = 0; segmentIndex < points.length - 1; segmentIndex += 1) {
-    const segmentStart = segmentIndex === 0
-      ? points[0]
-      : offsetToward(
-          points[segmentIndex],
-          points[segmentIndex + 1],
-          radii[segmentIndex],
-        );
-    const segmentEnd = segmentIndex === points.length - 2
-      ? points[segmentIndex + 1]
-      : offsetToward(
-          points[segmentIndex + 1],
-          points[segmentIndex],
-          radii[segmentIndex + 1],
-        );
-    if (segmentIndex > 0) {
-      const corner = points[segmentIndex];
-      path += ` Q ${corner.x} ${corner.y} ${segmentStart.x} ${segmentStart.y}`;
-    }
-    path += lineWithJumps(segmentStart, segmentEnd, jumps, segmentIndex);
-  }
-  return path;
-}
-
 export function flowPreviewConnectorPath(
   start: FlowPoint,
   end: FlowPoint,
   fromPort: FlowPlacementDirection,
   toPort?: FlowPlacementDirection,
 ): string {
-  const resolvedToPort = toPort ?? (fromPort === "right"
-    ? "left"
-    : fromPort === "left"
-      ? "right"
-      : fromPort === "down"
-        ? "up"
-        : "down");
-  return roundedOrthogonalPath(
-    routedPoints(start, end, fromPort, resolvedToPort),
-  );
+  const source = { id: "preview-source", x: start.x, y: start.y, width: 0, height: 0 };
+  const target = { id: "preview-target", x: end.x, y: end.y, width: 0, height: 0 };
+  const route = projectionRouteOrthogonal(source, target, {
+    sourcePort: toProjectionPort(fromPort),
+    ...(toPort === undefined ? {} : { targetPort: toProjectionPort(toPort) }),
+  });
+  return projectionRoundedOrthogonalPath(route.points, [], 10);
 }
 
 export function flowConnectorPath(
@@ -834,44 +437,17 @@ export function flowConnectorPath(
   );
 }
 
-/**
- * Return a point on the same orthogonal polyline used by flowConnectorPath.
- * Labels sit near the source instead of at the midpoint so a long edge does
- * not cover an intermediate node.
- */
 export function flowConnectorPoint(
   from: FlowLayoutNode,
   to: FlowLayoutNode,
   progress = 0.34,
   fromPort?: FlowPlacementDirection,
   toPort?: FlowPlacementDirection,
-): { x: number; y: number } {
+): FlowPoint {
   return flowConnectorPointOnRoute(
     flowConnectorRoute(from, to, fromPort, toPort),
     progress,
   );
-}
-
-function interiorCrossing(
-  horizontalStart: FlowPoint,
-  horizontalEnd: FlowPoint,
-  verticalStart: FlowPoint,
-  verticalEnd: FlowPoint,
-): FlowPoint | null {
-  const inset = 12;
-  const minX = Math.min(horizontalStart.x, horizontalEnd.x) + inset;
-  const maxX = Math.max(horizontalStart.x, horizontalEnd.x) - inset;
-  const minY = Math.min(verticalStart.y, verticalEnd.y) + inset;
-  const maxY = Math.max(verticalStart.y, verticalEnd.y) - inset;
-  if (
-    verticalStart.x <= minX ||
-    verticalStart.x >= maxX ||
-    horizontalStart.y <= minY ||
-    horizontalStart.y >= maxY
-  ) {
-    return null;
-  }
-  return { x: verticalStart.x, y: horizontalStart.y };
 }
 
 export function flowConnectorCrossings(
@@ -882,46 +458,16 @@ export function flowConnectorCrossings(
     toId: string;
   }[],
 ): Record<string, FlowConnectorJump[]> {
-  const result: Record<string, FlowConnectorJump[]> = {};
-  const addJump = (edgeId: string, jump: FlowConnectorJump) => {
-    const current = result[edgeId] ?? [];
-    if (!current.some((candidate) =>
-      candidate.segmentIndex === jump.segmentIndex &&
-      Math.abs(candidate.x - jump.x) < 0.1 &&
-      Math.abs(candidate.y - jump.y) < 0.1,
-    )) {
-      current.push(jump);
-      result[edgeId] = current;
-    }
-  };
-  routes.forEach((left, leftIndex) => {
-    routes.slice(leftIndex + 1).forEach((right) => {
-      if (
-        left.fromId === right.fromId ||
-        left.fromId === right.toId ||
-        left.toId === right.fromId ||
-        left.toId === right.toId
-      ) return;
-      left.route.points.slice(0, -1).forEach((leftStart, leftSegmentIndex) => {
-        const leftEnd = left.route.points[leftSegmentIndex + 1];
-        right.route.points.slice(0, -1).forEach((rightStart, rightSegmentIndex) => {
-          const rightEnd = right.route.points[rightSegmentIndex + 1];
-          const leftHorizontal = Math.abs(leftStart.y - leftEnd.y) < 0.01;
-          const rightHorizontal = Math.abs(rightStart.y - rightEnd.y) < 0.01;
-          if (leftHorizontal === rightHorizontal) return;
-          const crossing = leftHorizontal
-            ? interiorCrossing(leftStart, leftEnd, rightStart, rightEnd)
-            : interiorCrossing(rightStart, rightEnd, leftStart, leftEnd);
-          if (!crossing) return;
-          addJump(leftHorizontal ? left.edgeId : right.edgeId, {
-            ...crossing,
-            segmentIndex: leftHorizontal ? leftSegmentIndex : rightSegmentIndex,
-          });
-        });
-      });
-    });
-  });
-  return result;
+  const projected = projectionRouteCrossings(routes.map((edge) => ({
+    id: edge.edgeId,
+    sourceId: edge.fromId,
+    targetId: edge.toId,
+    route: toProjectionRoute(edge.route),
+  })));
+  return Object.fromEntries(routes.map((edge) => [
+    edge.edgeId,
+    (projected[edge.edgeId] ?? []).map((jump) => ({ ...jump })),
+  ]));
 }
 
 export function flowNavigationTarget(

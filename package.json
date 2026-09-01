@@ -22,14 +22,16 @@
     "desktop:build": "tauri build",
     "test": "vitest run --maxWorkers=2",
     "test:watch": "vitest",
-    "check:regression": "npm test && npm run build:web && npm run check:mcp && npm run check:release-hygiene && cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:regression": "npm run check:graph-projection && npm test && npm run build:web && npm run check:mcp && npm run check:release-hygiene && cargo test --manifest-path src-tauri/Cargo.toml",
     "check:release-hygiene": "node scripts/checkReleaseHygiene.mjs",
+    "check:graph-projection": "node scripts/checkGraphProjection.mjs",
     "measure:overview-drag": "npm run build:web && node scripts/measureOverviewDrag.mjs",
     "check:desktop-runtime": "./script/build_and_run.sh --verify",
     "preview": "vite preview"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@openadam/graph-projection": "file:vendor/openadam-graph-projection-0.1.0.tgz",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "mdast-util-to-string": "^4.0.0",
