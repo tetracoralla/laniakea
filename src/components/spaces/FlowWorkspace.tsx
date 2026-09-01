@@ -17,6 +17,7 @@ import {
   addFlowNodeInDirection,
   addFlowStepAfter,
   connectFlowNodes,
+  deleteFlowEdge,
   deleteFlowNode,
   reconnectFlowEdge,
   setFlowEdgeLabel,
@@ -273,16 +274,24 @@ export const FlowWorkspace = forwardRef<
 
   const remove = useCallback((nodeId: string) => {
     const removed = deleteFlowNode(appliedSpaceRef.current, nodeId);
-    if (removed.space === appliedSpaceRef.current) {
-      notify({ message: "流程至少保留一个节点" });
-      return;
-    }
+    if (removed.space === appliedSpaceRef.current) return;
     applySpace(removed.space);
     setSelectedId(removed.nextSelectedId);
     setEditingId(null);
     editingIdRef.current = null;
     notify({
       message: "已删除流程步骤",
+      actionLabel: "撤销",
+      onAction: onUndo,
+    });
+  }, [applySpace, notify, onUndo]);
+
+  const removeEdge = useCallback((edgeId: string) => {
+    const next = deleteFlowEdge(appliedSpaceRef.current, edgeId);
+    if (next === appliedSpaceRef.current) return;
+    applySpace(next);
+    notify({
+      message: "已删除连线",
       actionLabel: "撤销",
       onAction: onUndo,
     });
@@ -316,6 +325,7 @@ export const FlowWorkspace = forwardRef<
       onCommitEdit={commitEdit}
       onConnect={connect}
       onDelete={remove}
+      onDeleteEdge={removeEdge}
       onDraftChange={setDraft}
       onSelect={setSelectedId}
       onPositionsChange={onPositionsChange}

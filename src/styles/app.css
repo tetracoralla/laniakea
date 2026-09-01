@@ -868,14 +868,12 @@
 
 .flow-portal-preview {
   position: absolute;
-  top: -14px;
-  left: 30px;
+  right: 0;
+  bottom: 34px;
   z-index: 4;
   display: flex;
-  width: max-content;
-  min-width: 260px;
-  max-width: 380px;
-  height: 52px;
+  width: 282px;
+  height: 60px;
   align-items: center;
   gap: 10px;
   padding: 0 12px;
@@ -888,7 +886,7 @@
   cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  transform: translateX(-3px);
+  transform: translateY(3px);
   transition:
     opacity var(--motion-fast) ease,
     transform var(--motion-fast) ease,
@@ -902,7 +900,7 @@
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
-  transform: translateX(0);
+  transform: translateY(0);
   transition-delay: 0s;
 }
 
@@ -913,51 +911,54 @@
   box-shadow: var(--shadow-raised);
 }
 
-.flow-portal-preview__sequence,
-.flow-portal-preview__item,
-.flow-portal-preview__meta {
-  display: flex;
-  align-items: center;
+.flow-portal-preview__topology {
+  flex: none;
+  overflow: visible;
 }
 
-.flow-portal-preview__sequence {
+.flow-portal-preview__edge {
+  fill: none;
+  stroke: color-mix(in srgb, var(--violet) 38%, var(--muted-soft));
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.2;
+}
+
+.flow-portal-preview__node {
+  fill: color-mix(in srgb, var(--surface) 72%, var(--violet-soft));
+  stroke: color-mix(in srgb, var(--violet) 56%, var(--muted-soft));
+  stroke-width: 1;
+}
+
+.flow-portal-preview__node.is-decision {
+  fill: color-mix(in srgb, var(--surface) 58%, var(--violet-soft));
+}
+
+.flow-portal-preview__summary {
+  display: grid;
   min-width: 0;
   flex: 1;
-  gap: 7px;
+  gap: 3px;
+  text-align: left;
 }
 
-.flow-portal-preview__item {
-  min-width: 0;
-  gap: 7px;
-}
-
-.flow-portal-preview__shape {
-  display: block;
-  max-width: 96px;
+.flow-portal-preview__summary strong,
+.flow-portal-preview__summary span {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-portal-preview__summary strong {
   color: var(--ink);
   font-size: var(--fs-12);
-  font-weight: var(--fw-ui-medium);
-  text-overflow: ellipsis;
-}
-
-.flow-portal-preview__shape--decision {
-  color: color-mix(in srgb, var(--violet) 70%, var(--ink));
-}
-
-.flow-portal-preview__arrow {
-  color: var(--muted-soft);
-  font-size: var(--fs-12);
-}
-
-.flow-portal-preview__meta {
-  flex: none;
-  gap: 2px;
-  padding-left: 10px;
-  color: var(--muted);
-  border-left: 1px solid var(--line);
-  font-size: var(--fs-11);
   font-weight: var(--fw-ui-strong);
+}
+
+.flow-portal-preview__summary span {
+  color: var(--muted);
+  font-size: var(--fs-10);
+  font-weight: var(--fw-ui-medium);
 }
 
 .flow-canvas {
@@ -978,7 +979,7 @@
 .flow-shape-palette {
   position: absolute;
   top: 50%;
-  left: 22px;
+  left: 27px;
   z-index: 14;
   display: flex;
   padding: 5px;
@@ -1041,8 +1042,8 @@
 .flow-shape-drag-ghost {
   position: fixed;
   z-index: 100;
-  width: 132px;
-  height: 42px;
+  width: 196px;
+  height: 54px;
   background: color-mix(in srgb, var(--surface) 88%, var(--violet-soft));
   border: 1.5px solid color-mix(in srgb, var(--violet) 72%, white);
   border-radius: var(--radius-10);
@@ -1052,14 +1053,21 @@
   transform: translate(-50%, -50%);
 }
 
+/* 判断的拖拽幽灵与真实菱形同尺寸同形状，而不是旋转方块 */
 .flow-shape-drag-ghost--decision {
-  width: 86px;
-  height: 86px;
-  border-radius: var(--radius-5);
-  transform: translate(-50%, -50%) rotate(45deg) scale(0.72);
+  width: 172px;
+  height: 76px;
+  border: 1.5px solid color-mix(in srgb, var(--violet) 72%, white);
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  box-shadow: none;
+  filter: drop-shadow(0 10px 26px rgba(62, 48, 126, 0.2));
+  transform: translate(-50%, -50%);
 }
 
 .flow-shape-drag-ghost--start {
+  width: 152px;
+  height: 46px;
   border-radius: 999px;
 }
 
@@ -1144,6 +1152,47 @@
   cursor: grabbing;
 }
 
+.flow-edge-delete {
+  position: absolute;
+  z-index: 9;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--violet) 28%, var(--line));
+  border-radius: 999px;
+  box-shadow: var(--shadow-hairline);
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+}
+
+.flow-edge-delete span,
+.flow-edge-delete span::after {
+  position: absolute;
+  top: 12px;
+  left: 7px;
+  width: 12px;
+  height: 1.5px;
+  background: currentColor;
+  border-radius: 999px;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.flow-edge-delete span::after {
+  top: 0;
+  left: 0;
+  transform: rotate(90deg);
+}
+
+.flow-edge-delete:hover,
+.flow-edge-delete:focus-visible {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+  outline: none;
+}
+
 .flow-edge-label {
   position: absolute;
   z-index: 3;
@@ -1213,7 +1262,9 @@
 }
 
 .flow-node__content {
+  display: grid;
   cursor: grab;
+  place-items: center;
   white-space: pre-line;
 }
 

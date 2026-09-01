@@ -3,6 +3,7 @@ import type { FlowNode, FlowSpace } from "../types/mindmap";
 import {
   computeFlowLayout,
   flowConnectorCrossings,
+  flowConnectorDeleteAnchor,
   flowConnectorPath,
   flowConnectorPoint,
   flowConnectorRoute,
@@ -204,6 +205,55 @@ describe("computeFlowLayout node sizing", () => {
     expect(
       flowConnectorPath(left, right, "right", "left", crossings.horizontal),
     ).toContain("Q 300 121");
+  });
+
+  it("routes around an unrelated node instead of drawing a hidden connection through it", () => {
+    const from = { id: "from", x: 0, y: 100, width: 196, height: 54, level: 0 };
+    const obstacle = { id: "obstacle", x: 270, y: 70, width: 196, height: 114, level: 0 };
+    const to = { id: "to", x: 620, y: 100, width: 196, height: 54, level: 0 };
+    const route = flowConnectorRoute(
+      from,
+      to,
+      "right",
+      "left",
+      [from, obstacle, to],
+    );
+
+    expect(route.points.some((point) => point.y <= obstacle.y - 14 ||
+      point.y >= obstacle.y + obstacle.height + 14)).toBe(true);
+    expect(route.points.slice(0, -1).every((point, index) => {
+      const next = route.points[index + 1];
+      return Math.abs(point.x - next.x) < 0.01 ||
+        Math.abs(point.y - next.y) < 0.01;
+    })).toBe(true);
+  });
+
+  it("anchors the edge delete control beside the line, clear of nodes and endpoints", () => {
+    const from = { id: "from", x: 0, y: 100, width: 196, height: 54, level: 0 };
+    const to = { id: "to", x: 400, y: 100, width: 196, height: 54, level: 0 };
+    const route = flowConnectorRoute(from, to, "right", "left");
+    const anchor = flowConnectorDeleteAnchor(route, [from, to]);
+
+    // 中点在 y=127 的水平线上：法线偏移后应落在直线下方，且不压任何节点
+    expect(anchor.y).toBeGreaterThan(127);
+    const coversNode = (x: number, y: number) =>
+      [from, to].some((node) =>
+        x > node.x - 2 && x < node.x + node.width + 2 &&
+        y > node.y - 2 && y < node.y + node.height + 2,
+      );
+    expect(coversNode(anchor.x, anchor.y)).toBe(false);
+  });
+
+  it("keeps manually placed negative coordinates stable while exposing fit bounds", () => {
+    const flow = {
+      ...spaceWith([node("step", "step", "自由节点")], []),
+      positions: { step: { x: -320, y: -180 } },
+    };
+    const layout = computeFlowLayout(flow);
+
+    expect(layout.nodes.step).toMatchObject({ x: -320, y: -180 });
+    expect(layout.minX).toBeLessThan(-320);
+    expect(layout.minY).toBeLessThan(-180);
   });
 
   it("resolves the longest level in a dense merge graph without a visit budget", () => {

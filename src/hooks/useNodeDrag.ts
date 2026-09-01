@@ -495,11 +495,12 @@ export function useNodeDrag({
         .filter((root): root is DragRoot => Boolean(root));
       if (roots.length === 0) return;
 
-      const nextSelection = createSelection(
-        requestedSelection,
-        currentLayout.visibleIds,
-        id,
-      );
+      // A pointer can only originate from a visible node. Avoid scanning the
+      // entire 10k-node display order for the overwhelmingly common single
+      // selection drag; multi-selection still preserves canonical map order.
+      const nextSelection = requestedSelection.length === 1
+        ? { primaryId: id, selectedIds: [id] }
+        : createSelection(requestedSelection, currentLayout.visibleIds, id);
       const point = clientPointToCanvas(
         event.clientX,
         event.clientY,

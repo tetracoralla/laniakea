@@ -114,10 +114,25 @@ export function useFlowConnectionDrag({
     fromPort: FlowPlacementDirection;
   } | null>(null);
   const spaceIdRef = useRef(space.id);
+  const frameRef = useRef(0);
 
-  const replaceState = useCallback((next: FlowConnectionDragState | null) => {
+  const replaceState = useCallback((
+    next: FlowConnectionDragState | null,
+    immediate = false,
+  ) => {
     stateRef.current = next;
-    setState(next);
+    if (immediate || next === null) {
+      if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = 0;
+      setState(next);
+      return;
+    }
+    if (!frameRef.current) {
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = 0;
+        setState(stateRef.current);
+      });
+    }
   }, []);
 
   const releaseCapture = useCallback((pointerId: number) => {
@@ -203,7 +218,7 @@ export function useFlowConnectionDrag({
       targets,
       canvasLeft: canvasBounds.left,
       canvasTop: canvasBounds.top,
-    });
+    }, true);
   }, [containerRef, onSelect, replaceState, space]);
 
   const update = useCallback((
@@ -224,7 +239,10 @@ export function useFlowConnectionDrag({
       targetId: target?.id ?? null,
       targetPort,
     };
-    replaceState(next);
+    replaceState(
+      next,
+      current.targetId !== next.targetId || current.targetPort !== next.targetPort,
+    );
     return next;
   }, [replaceState]);
 
@@ -306,6 +324,7 @@ export function useFlowConnectionDrag({
   }, [active, cancel]);
 
   useEffect(() => () => {
+    if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
     const current = stateRef.current;
     if (current) releaseCapture(current.pointerId);
   }, [releaseCapture]);
@@ -336,6 +355,38 @@ export function useFlowConnectionDrag({
     pointerUp,
     state,
     targetLabel,
+    shiftViewport: (x: number, y: number) => {
+      const current = stateRef.current;
+      if (!current) return;
+      const shiftPoint = (point: { x: number; y: number }) => ({
+        x: point.x + x,
+        y: point.y + y,
+      });
+      const targets = current.targets.map((target) => ({
+        ...target,
+        bottom: target.bottom + y,
+        left: target.left + x,
+        right: target.right + x,
+        top: target.top + y,
+        endpoints: Object.fromEntries(
+          Object.entries(target.endpoints).map(([port, point]) => [
+            port,
+            shiftPoint(point),
+          ]),
+        ) as FlowConnectionTargetSnapshot["endpoints"],
+      }));
+      const target = current.targetId
+        ? targets.find(({ id }) => id === current.targetId)
+        : null;
+      replaceState({
+        ...current,
+        start: shiftPoint(current.start),
+        current: target && current.targetPort
+          ? target.endpoints[current.targetPort]
+          : current.current,
+        targets,
+      });
+    },
     consumeHandledPortClick: (
       fromId: string,
       fromPort: FlowPlacementDirection,

@@ -27,6 +27,10 @@ interface ActiveFlowNodeDrag {
   moved: boolean;
   nodeId: string;
   pointerId: number;
+  panX: number;
+  panY: number;
+  lastClientX: number;
+  lastClientY: number;
   startClientX: number;
   startClientY: number;
 }
@@ -85,6 +89,10 @@ export function useFlowNodeDrag({
       moved: false,
       nodeId,
       pointerId: event.pointerId,
+      panX: 0,
+      panY: 0,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
       startClientX: event.clientX,
       startClientY: event.clientY,
     };
@@ -94,8 +102,10 @@ export function useFlowNodeDrag({
   const update = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const active = activeRef.current;
     if (!active || active.pointerId !== event.pointerId) return false;
-    const deltaX = (event.clientX - active.startClientX) / space.viewport.zoom;
-    const deltaY = (event.clientY - active.startClientY) / space.viewport.zoom;
+    active.lastClientX = event.clientX;
+    active.lastClientY = event.clientY;
+    const deltaX = (event.clientX - active.startClientX - active.panX) / space.viewport.zoom;
+    const deltaY = (event.clientY - active.startClientY - active.panY) / space.viewport.zoom;
     const distance = Math.hypot(deltaX, deltaY);
     if (distance >= 4) {
       active.moved = true;
@@ -108,8 +118,8 @@ export function useFlowNodeDrag({
   const pointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const active = activeRef.current;
     if (!active || active.pointerId !== event.pointerId) return false;
-    const deltaX = (event.clientX - active.startClientX) / space.viewport.zoom;
-    const deltaY = (event.clientY - active.startClientY) / space.viewport.zoom;
+    const deltaX = (event.clientX - active.startClientX - active.panX) / space.viewport.zoom;
+    const deltaY = (event.clientY - active.startClientY - active.panY) / space.viewport.zoom;
     const shouldCommit = active.moved || Math.hypot(deltaX, deltaY) >= 4;
     const position = {
       x: active.base.x + deltaX,
@@ -167,5 +177,18 @@ export function useFlowNodeDrag({
     pointerCancel,
     pointerMove: update,
     pointerUp,
+    shiftViewport: (x: number, y: number) => {
+      const active = activeRef.current;
+      if (!active) return;
+      active.panX += x;
+      active.panY += y;
+      const deltaX = (active.lastClientX - active.startClientX - active.panX) /
+        space.viewport.zoom;
+      const deltaY = (active.lastClientY - active.startClientY - active.panY) /
+        space.viewport.zoom;
+      active.moved = true;
+      active.element.classList.add("is-dragging");
+      active.element.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
+    },
   };
 }

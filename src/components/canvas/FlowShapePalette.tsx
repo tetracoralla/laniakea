@@ -23,6 +23,12 @@ interface ShapeDrag {
   startY: number;
 }
 
+interface PointerPoint {
+  clientX: number;
+  clientY: number;
+  pointerId: number;
+}
+
 const shapes: Array<{ kind: PaletteKind; label: string }> = [
   { kind: "step", label: "步骤" },
   { kind: "decision", label: "判断" },
@@ -42,7 +48,6 @@ export function FlowShapePalette({ onDrop, onInsert }: FlowShapePaletteProps) {
   const begin = (kind: PaletteKind, event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
     event.stopPropagation();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
     replaceDrag({
       currentX: event.clientX,
       currentY: event.clientY,
@@ -54,7 +59,7 @@ export function FlowShapePalette({ onDrop, onInsert }: FlowShapePaletteProps) {
     });
   };
 
-  const move = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const move = (event: PointerPoint) => {
     const current = dragRef.current;
     if (!current || current.pointerId !== event.pointerId) return;
     const moved = current.moved || Math.hypot(
@@ -69,16 +74,16 @@ export function FlowShapePalette({ onDrop, onInsert }: FlowShapePaletteProps) {
     });
   };
 
-  const finish = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const finish = (event: PointerPoint) => {
     const current = dragRef.current;
     if (!current || current.pointerId !== event.pointerId) return;
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
     replaceDrag(null);
     if (current.moved) {
       suppressClickRef.current = true;
       onDrop(current.kind, { x: event.clientX, y: event.clientY });
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
     }
   };
 
@@ -88,10 +93,18 @@ export function FlowShapePalette({ onDrop, onInsert }: FlowShapePaletteProps) {
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") cancel();
     };
+    const handlePointerMove = (event: PointerEvent) => move(event);
+    const handlePointerUp = (event: PointerEvent) => finish(event);
     window.addEventListener("keydown", handleKey, { capture: true });
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", cancel);
     window.addEventListener("blur", cancel);
     return () => {
       window.removeEventListener("keydown", handleKey, { capture: true });
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("blur", cancel);
     };
   }, [drag]);
@@ -116,8 +129,6 @@ export function FlowShapePalette({ onDrop, onInsert }: FlowShapePaletteProps) {
               }
               onInsert(kind);
             }}
-            onLostPointerCapture={cancel}
-            onPointerCancel={cancel}
             onPointerDown={(event) => begin(kind, event)}
             onPointerMove={move}
             onPointerUp={finish}

@@ -788,6 +788,56 @@ describe("FlowCanvas", () => {
     );
   });
 
+  it("deletes a selected edge from the contextual control or Delete key", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
+    const onDeleteEdge = vi.fn();
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDeleteEdge={onDeleteEdge}
+          onDraftChange={() => undefined}
+          onSelect={() => undefined}
+          onViewportChange={() => undefined}
+          selectedId={null}
+          space={added.space}
+        />,
+      );
+    });
+    const selectEdge = () => act(async () => {
+      container.querySelector<SVGPathElement>(".flow-connector__hit")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await selectEdge();
+    expect(container.querySelector(".flow-edge-delete")).not.toBeNull();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".flow-edge-delete")!.click();
+    });
+    expect(onDeleteEdge).toHaveBeenCalledWith(added.space.edges[0].id);
+
+    onDeleteEdge.mockClear();
+    await selectEdge();
+    await act(async () => {
+      container.querySelector<HTMLElement>(".flow-canvas")!.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Delete" }),
+      );
+    });
+    expect(onDeleteEdge).toHaveBeenCalledWith(added.space.edges[0].id);
+  });
+
   it("flushes the latest wheel viewport when the flow surface unmounts", async () => {
     vi.useFakeTimers();
     const created = createFlowSpace(createSeedDocument(), "path");

@@ -19,6 +19,8 @@ export interface FlowLayoutNode {
 
 export interface FlowLayoutResult {
   nodes: Record<string, FlowLayoutNode>;
+  minX: number;
+  minY: number;
   width: number;
   height: number;
 }
@@ -32,8 +34,8 @@ const decisionNodeWidth = 172;
 const decisionNodeHeight = 76;
 const decisionContentWidth = 116;
 const decisionVerticalInset = 24;
-const terminalNodeWidth = 132;
-const terminalNodeHeight = 42;
+const terminalNodeWidth = 152;
+const terminalNodeHeight = 46;
 const columnGap = 72;
 const rowGap = 92;
 const canvasPadding = 140;
@@ -117,6 +119,15 @@ export function computeFlowLayout(
   measureTextWidth?: TextWidthMeasurer,
 ): FlowLayoutResult {
   const ids = Object.keys(space.nodes);
+  if (ids.length === 0) {
+    return {
+      nodes: {},
+      minX: 0,
+      minY: 0,
+      width: canvasPadding * 2,
+      height: canvasPadding * 2,
+    };
+  }
   const incoming = new Map(ids.map((id) => [id, 0]));
   const outgoing = new Map(ids.map((id) => [id, [] as string[]]));
   space.edges.forEach((edge) => {
@@ -133,12 +144,14 @@ export function computeFlowLayout(
     );
   const levels = new Map<string, number>();
   const remainingIncoming = new Map(incoming);
-  const queue = roots.length > 0 ? [...roots] : ids.slice(0, 1);
+  const queue = [...roots];
   queue.forEach((id) => levels.set(id, 0));
+  const processed = new Set<string>();
   let cursor = 0;
   while (cursor < queue.length) {
     const currentId = queue[cursor];
     cursor += 1;
+    processed.add(currentId);
     const nextLevel = (levels.get(currentId) ?? 0) + 1;
     outgoing.get(currentId)?.forEach((target) => {
       levels.set(target, Math.max(levels.get(target) ?? 0, nextLevel));
@@ -152,10 +165,26 @@ export function computeFlowLayout(
     fallbackLevel = Math.max(fallbackLevel, level + 1);
   });
   ids.forEach((id) => {
-    if (!levels.has(id)) {
-      levels.set(id, fallbackLevel);
-      fallbackLevel += 1;
+    if (processed.has(id)) return;
+    const componentQueue = [id];
+    const componentSeen = new Set([id]);
+    levels.set(id, Math.max(levels.get(id) ?? 0, fallbackLevel));
+    let componentCursor = 0;
+    while (componentCursor < componentQueue.length) {
+      const current = componentQueue[componentCursor++];
+      processed.add(current);
+      const nextLevel = (levels.get(current) ?? fallbackLevel) + 1;
+      outgoing.get(current)?.forEach((target) => {
+        if (processed.has(target) || componentSeen.has(target)) return;
+        componentSeen.add(target);
+        levels.set(target, nextLevel);
+        componentQueue.push(target);
+      });
     }
+    fallbackLevel = Math.max(
+      fallbackLevel + 1,
+      ...componentQueue.map((nodeId) => (levels.get(nodeId) ?? 0) + 1),
+    );
   });
 
   const grouped = new Map<number, string[]>();
@@ -224,32 +253,22 @@ export function computeFlowLayout(
       )
     : nodes;
   const positionedNodes = Object.values(positioned);
-  const minimumX = Math.min(...positionedNodes.map((node) => node.x));
-  const minimumY = Math.min(...positionedNodes.map((node) => node.y));
-  const shiftX = Math.max(0, canvasPadding - minimumX);
-  const shiftY = Math.max(0, canvasPadding - minimumY);
-  const normalized = shiftX === 0 && shiftY === 0
-    ? positioned
-    : Object.fromEntries(
-        Object.entries(positioned).map(([id, node]) => [
-          id,
-          { ...node, x: node.x + shiftX, y: node.y + shiftY },
-        ]),
-      );
+  const minX = Math.min(0, ...positionedNodes.map((node) => node.x - canvasPadding));
+  const minY = Math.min(0, ...positionedNodes.map((node) => node.y - canvasPadding));
+  const maxX = Math.max(
+    maximumRowWidth + canvasPadding * 2,
+    ...positionedNodes.map((node) => node.x + node.width + canvasPadding),
+  );
+  const maxY = Math.max(
+    y - rowGap + canvasPadding,
+    ...positionedNodes.map((node) => node.y + node.height + canvasPadding),
+  );
   return {
-    nodes: normalized,
-    width: Math.max(
-      maximumRowWidth + canvasPadding * 2,
-      ...Object.values(normalized).map((node) =>
-        node.x + node.width + canvasPadding,
-      ),
-    ),
-    height: Math.max(
-      y - rowGap + canvasPadding,
-      ...Object.values(normalized).map((node) =>
-        node.y + node.height + canvasPadding,
-      ),
-    ),
+    nodes: positioned,
+    minX,
+    minY,
+    width: maxX - minX,
+    height: maxY - minY,
   };
 }
 
@@ -437,11 +456,178 @@ function routedPoints(
   return compactOrthogonalPoints(points);
 }
 
+interface ExpandedObstacle {
+  bottom: number;
+  left: number;
+  right: number;
+  top: number;
+}
+
+function pointInsideObstacle(point: FlowPoint, obstacle: ExpandedObstacle): boolean {
+  const epsilon = 0.01;
+  return point.x > obstacle.left + epsilon &&
+    point.x < obstacle.right - epsilon &&
+    point.y > obstacle.top + epsilon &&
+    point.y < obstacle.bottom - epsilon;
+}
+
+function segmentClear(
+  from: FlowPoint,
+  to: FlowPoint,
+  obstacles: readonly ExpandedObstacle[],
+): boolean {
+  const epsilon = 0.01;
+  if (Math.abs(from.y - to.y) < epsilon) {
+    const left = Math.min(from.x, to.x);
+    const right = Math.max(from.x, to.x);
+    return obstacles.every((obstacle) =>
+      from.y <= obstacle.top + epsilon ||
+      from.y >= obstacle.bottom - epsilon ||
+      right <= obstacle.left + epsilon ||
+      left >= obstacle.right - epsilon
+    );
+  }
+  if (Math.abs(from.x - to.x) < epsilon) {
+    const top = Math.min(from.y, to.y);
+    const bottom = Math.max(from.y, to.y);
+    return obstacles.every((obstacle) =>
+      from.x <= obstacle.left + epsilon ||
+      from.x >= obstacle.right - epsilon ||
+      bottom <= obstacle.top + epsilon ||
+      top >= obstacle.bottom - epsilon
+    );
+  }
+  return false;
+}
+
+function obstacleAvoidingPoints(
+  start: FlowPoint,
+  end: FlowPoint,
+  fromPort: FlowPlacementDirection,
+  toPort: FlowPlacementDirection,
+  obstacleNodes: readonly FlowLayoutNode[],
+): FlowPoint[] | null {
+  if (obstacleNodes.length === 0 || obstacleNodes.length > 40) return null;
+  const stub = 30;
+  const clearance = 14;
+  const startStub = pointOutside(start, fromPort, stub);
+  const endStub = pointOutside(end, toPort, stub);
+  const obstacles = obstacleNodes.map((node) => ({
+    left: node.x - clearance,
+    right: node.x + node.width + clearance,
+    top: node.y - clearance,
+    bottom: node.y + node.height + clearance,
+  }));
+  if (
+    obstacles.some((obstacle) => pointInsideObstacle(startStub, obstacle)) ||
+    obstacles.some((obstacle) => pointInsideObstacle(endStub, obstacle))
+  ) return null;
+
+  const uniqueCoordinates = (values: number[]) => [...new Set(
+    values.map((value) => Number(value.toFixed(3))),
+  )].sort((left, right) => left - right);
+  const xs = uniqueCoordinates([
+    startStub.x,
+    endStub.x,
+    ...obstacles.flatMap((obstacle) => [obstacle.left, obstacle.right]),
+  ]);
+  const ys = uniqueCoordinates([
+    startStub.y,
+    endStub.y,
+    ...obstacles.flatMap((obstacle) => [obstacle.top, obstacle.bottom]),
+  ]);
+  const points: FlowPoint[] = [];
+  const pointIndex = new Map<string, number>();
+  const pointKey = (point: FlowPoint) => `${point.x.toFixed(3)}:${point.y.toFixed(3)}`;
+  xs.forEach((x) => ys.forEach((y) => {
+    const point = { x, y };
+    if (obstacles.some((obstacle) => pointInsideObstacle(point, obstacle))) return;
+    pointIndex.set(pointKey(point), points.length);
+    points.push(point);
+  }));
+  const startIndex = pointIndex.get(pointKey(startStub));
+  const endIndex = pointIndex.get(pointKey(endStub));
+  if (startIndex === undefined || endIndex === undefined) return null;
+
+  const adjacency = new Map<number, number[]>();
+  const connect = (left: number, right: number) => {
+    if (!segmentClear(points[left], points[right], obstacles)) return;
+    adjacency.set(left, [...(adjacency.get(left) ?? []), right]);
+    adjacency.set(right, [...(adjacency.get(right) ?? []), left]);
+  };
+  xs.forEach((x) => {
+    const line = ys.flatMap((y) => {
+      const index = pointIndex.get(pointKey({ x, y }));
+      return index === undefined ? [] : [index];
+    });
+    line.slice(0, -1).forEach((index, offset) => connect(index, line[offset + 1]));
+  });
+  ys.forEach((y) => {
+    const line = xs.flatMap((x) => {
+      const index = pointIndex.get(pointKey({ x, y }));
+      return index === undefined ? [] : [index];
+    });
+    line.slice(0, -1).forEach((index, offset) => connect(index, line[offset + 1]));
+  });
+
+  type Direction = "horizontal" | "vertical" | "none";
+  interface SearchState {
+    cost: number;
+    direction: Direction;
+    point: number;
+    previous?: string;
+  }
+  const stateKey = (point: number, direction: Direction) => `${point}:${direction}`;
+  const best = new Map<string, SearchState>();
+  const pending: SearchState[] = [{ cost: 0, direction: "none", point: startIndex }];
+  best.set(stateKey(startIndex, "none"), pending[0]);
+  let resolved: SearchState | null = null;
+  while (pending.length > 0) {
+    pending.sort((left, right) => left.cost - right.cost);
+    const current = pending.shift()!;
+    if (best.get(stateKey(current.point, current.direction)) !== current) continue;
+    if (current.point === endIndex) {
+      resolved = current;
+      break;
+    }
+    for (const neighbor of adjacency.get(current.point) ?? []) {
+      const from = points[current.point];
+      const to = points[neighbor];
+      const direction: Direction = Math.abs(from.x - to.x) < 0.01
+        ? "vertical"
+        : "horizontal";
+      const distance = Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
+      const turnCost = current.direction !== "none" && current.direction !== direction ? 28 : 0;
+      const nextKey = stateKey(neighbor, direction);
+      const cost = current.cost + distance + turnCost;
+      if ((best.get(nextKey)?.cost ?? Number.POSITIVE_INFINITY) <= cost) continue;
+      const next = {
+        cost,
+        direction,
+        point: neighbor,
+        previous: stateKey(current.point, current.direction),
+      };
+      best.set(nextKey, next);
+      pending.push(next);
+    }
+  }
+  if (!resolved) return null;
+  const result: FlowPoint[] = [];
+  let current: SearchState | undefined = resolved;
+  while (current) {
+    result.push(points[current.point]);
+    current = current.previous ? best.get(current.previous) : undefined;
+  }
+  result.reverse();
+  return compactOrthogonalPoints([start, ...result, end]);
+}
+
 export function flowConnectorRoute(
   from: FlowLayoutNode,
   to: FlowLayoutNode,
   preferredFromPort?: FlowPlacementDirection,
   preferredToPort?: FlowPlacementDirection,
+  obstacles: readonly FlowLayoutNode[] = [],
 ): FlowConnectorRoute {
   const { fromPort, toPort } = connectorPorts(
     from,
@@ -451,13 +637,90 @@ export function flowConnectorRoute(
   );
   const start = portPoint(from, fromPort);
   const end = portPoint(to, toPort);
+  const obstacleNodes = obstacles.filter((node) => node.id !== from.id && node.id !== to.id);
   return {
     end,
     fromPort,
-    points: routedPoints(start, end, fromPort, toPort),
+    points: obstacleAvoidingPoints(
+      start,
+      end,
+      fromPort,
+      toPort,
+      obstacleNodes,
+    ) ?? routedPoints(start, end, fromPort, toPort),
     start,
     toPort,
   };
+}
+
+export function flowConnectorPathFromRoute(
+  route: FlowConnectorRoute,
+  jumps: readonly FlowConnectorJump[] = [],
+): string {
+  return roundedOrthogonalPath(route.points, jumps);
+}
+
+export function flowConnectorPointOnRoute(
+  route: FlowConnectorRoute,
+  progress = 0.34,
+): FlowPoint {
+  const segments = route.points.slice(0, -1).map((start, index) => {
+    const end = route.points[index + 1];
+    return { end, length: Math.hypot(end.x - start.x, end.y - start.y), start };
+  });
+  const total = segments.reduce((sum, segment) => sum + segment.length, 0);
+  let remaining = total * Math.max(0, Math.min(1, progress));
+  for (const segment of segments) {
+    if (remaining <= segment.length) {
+      const ratio = segment.length === 0 ? 0 : remaining / segment.length;
+      return {
+        x: segment.start.x + (segment.end.x - segment.start.x) * ratio,
+        y: segment.start.y + (segment.end.y - segment.start.y) * ratio,
+      };
+    }
+    remaining -= segment.length;
+  }
+  return route.points[route.points.length - 1];
+}
+
+// 删除按钮的锚点：路线中点沿所在线段的法线下沉，避开箭头与端点柄；
+// 两侧落点都被节点占据时退回中点本身。
+export function flowConnectorDeleteAnchor(
+  route: FlowConnectorRoute,
+  obstacles: readonly FlowLayoutNode[],
+  offset = 24,
+): FlowPoint {
+  const point = flowConnectorPointOnRoute(route, 0.5);
+  const segments = route.points.slice(0, -1).map((start, index) => {
+    const end = route.points[index + 1];
+    return {
+      dx: end.x - start.x,
+      dy: end.y - start.y,
+      length: Math.hypot(end.x - start.x, end.y - start.y),
+    };
+  });
+  const total = segments.reduce((sum, segment) => sum + segment.length, 0);
+  let remaining = total * 0.5;
+  let normal: { x: number; y: number } | null = null;
+  for (const segment of segments) {
+    if (segment.length === 0) continue;
+    if (remaining <= segment.length) {
+      normal = { x: -segment.dy / segment.length, y: segment.dx / segment.length };
+      break;
+    }
+    remaining -= segment.length;
+  }
+  if (!normal) return point;
+  const occupied = (x: number, y: number) =>
+    obstacles.some((node) =>
+      x > node.x - 2 && x < node.x + node.width + 2 &&
+      y > node.y - 2 && y < node.y + node.height + 2,
+    );
+  const candidates = [
+    { x: point.x + normal.x * offset, y: point.y + normal.y * offset },
+    { x: point.x - normal.x * offset, y: point.y - normal.y * offset },
+  ];
+  return candidates.find((candidate) => !occupied(candidate.x, candidate.y)) ?? point;
 }
 
 function offsetToward(from: FlowPoint, to: FlowPoint, distance: number): FlowPoint {
@@ -563,9 +826,10 @@ export function flowConnectorPath(
   fromPort?: FlowPlacementDirection,
   toPort?: FlowPlacementDirection,
   jumps: readonly FlowConnectorJump[] = [],
+  obstacles: readonly FlowLayoutNode[] = [],
 ): string {
-  return roundedOrthogonalPath(
-    flowConnectorRoute(from, to, fromPort, toPort).points,
+  return flowConnectorPathFromRoute(
+    flowConnectorRoute(from, to, fromPort, toPort, obstacles),
     jumps,
   );
 }
@@ -582,24 +846,10 @@ export function flowConnectorPoint(
   fromPort?: FlowPlacementDirection,
   toPort?: FlowPlacementDirection,
 ): { x: number; y: number } {
-  const points = flowConnectorRoute(from, to, fromPort, toPort).points;
-  const segments = points.slice(0, -1).map((start, index) => {
-    const end = points[index + 1];
-    return { end, length: Math.hypot(end.x - start.x, end.y - start.y), start };
-  });
-  const total = segments.reduce((sum, segment) => sum + segment.length, 0);
-  let remaining = total * Math.max(0, Math.min(1, progress));
-  for (const segment of segments) {
-    if (remaining <= segment.length) {
-      const ratio = segment.length === 0 ? 0 : remaining / segment.length;
-      return {
-        x: segment.start.x + (segment.end.x - segment.start.x) * ratio,
-        y: segment.start.y + (segment.end.y - segment.start.y) * ratio,
-      };
-    }
-    remaining -= segment.length;
-  }
-  return points[points.length - 1];
+  return flowConnectorPointOnRoute(
+    flowConnectorRoute(from, to, fromPort, toPort),
+    progress,
+  );
 }
 
 function interiorCrossing(

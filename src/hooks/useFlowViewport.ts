@@ -33,6 +33,7 @@ interface FlowViewportController {
   contentRef: RefObject<HTMLDivElement | null>;
   fit: () => void;
   flushViewport: () => void;
+  panBy: (x: number, y: number) => void;
 }
 
 export function useFlowViewport({
@@ -100,13 +101,13 @@ export function useFlowViewport({
     );
     const next = {
       zoom,
-      x: (bounds.width - layout.width * zoom) / 2,
-      y: (bounds.height - layout.height * zoom) / 2,
+      x: (bounds.width - layout.width * zoom) / 2 - layout.minX * zoom,
+      y: (bounds.height - layout.height * zoom) / 2 - layout.minY * zoom,
     };
     renderViewport(next);
     viewportDirtyRef.current = false;
     viewportChangeRef.current(next);
-  }, [layout.height, layout.width, renderViewport]);
+  }, [layout.height, layout.minX, layout.minY, layout.width, renderViewport]);
 
   useEffect(() => {
     renderViewport(viewport);
@@ -202,11 +203,18 @@ export function useFlowViewport({
 
   useEffect(() => () => flushViewport(), [flushViewport]);
 
+  const panBy = useCallback((x: number, y: number) => {
+    if (x === 0 && y === 0) return;
+    const current = liveViewport.current;
+    scheduleViewport({ ...current, x: current.x + x, y: current.y + y });
+  }, [scheduleViewport]);
+
   return {
     containerRef,
     contentRef,
     fit,
     flushViewport,
+    panBy,
     bindings: {
       onPointerCancel: (event) => {
         if (panRef.current?.pointerId !== event.pointerId) return;

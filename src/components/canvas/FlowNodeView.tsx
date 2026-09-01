@@ -178,6 +178,7 @@ export const FlowNodeView = memo(function FlowNodeView({
               aria-label={`从${port === "up" ? "上方" : port === "right" ? "右侧" : port === "down" ? "下方" : "左侧"}创建或拖线`}
               className={`flow-node__port flow-node__port--${port}`}
               key={port}
+              tabIndex={selected ? 0 : -1}
               onClick={(event) => {
                 event.stopPropagation();
                 onPortClick(node.id, port);

@@ -97,6 +97,12 @@ export function useFlowKeyboardCommands({
       ) {
         return;
       }
+      if (
+        (event.key === "Escape" || event.key === "Backspace" || event.key === "Delete") &&
+        document.querySelector(".flow-canvas[data-flow-edge-selected='true']")
+      ) {
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -104,7 +110,7 @@ export function useFlowKeyboardCommands({
         return;
       }
       // 适应内容按钮保留原生激活键（Enter/Space 触发点击）。
-      if (target?.closest?.(".flow-fit-button")) return;
+      if (target?.closest?.("button, input, textarea, select, .flow-fit-button")) return;
 
       const { selectedId: currentId } = handlers;
       if (!currentId) return;

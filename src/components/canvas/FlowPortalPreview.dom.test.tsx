@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../../data/seed";
 import {
+  addFlowBranch,
   addFlowNodeAfter,
   createFlowSpace,
   flowSpaceForNode,
@@ -50,10 +51,10 @@ describe("FlowPortalPreview", () => {
       ".flow-portal-preview",
     )!;
     expect(preview.textContent).toContain("确认目标");
-    expect(preview.textContent).toContain("…");
-    expect(preview.textContent).toContain("复盘结果");
     expect(preview.textContent).toContain("4 步");
     expect(preview.textContent).not.toContain("准备资料");
+    expect(container.querySelectorAll(".flow-portal-preview__node")).toHaveLength(4);
+    expect(container.querySelectorAll(".flow-portal-preview__edge")).toHaveLength(3);
     await act(async () => preview.click());
     expect(onOpen).toHaveBeenCalledOnce();
   });
@@ -84,7 +85,21 @@ describe("FlowPortalPreview", () => {
       ".flow-portal-preview",
     )!;
     expect(preview.textContent).toContain("独立甲");
-    expect(preview.textContent).toContain("·");
-    expect(preview.textContent).not.toContain("→");
+    expect(container.querySelectorAll(".flow-portal-preview__node")).toHaveLength(3);
+    expect(container.querySelectorAll(".flow-portal-preview__edge")).toHaveLength(0);
+  });
+
+  it("shows the real fork topology instead of reducing it to one arbitrary chain", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const branched = addFlowBranch(initial, created.selectedFlowNodeId).space;
+
+    await act(async () => {
+      root.render(<FlowPortalPreview onOpen={vi.fn()} space={branched} />);
+    });
+
+    expect(container.querySelectorAll(".flow-portal-preview__node")).toHaveLength(3);
+    expect(container.querySelectorAll(".flow-portal-preview__edge")).toHaveLength(2);
+    expect(container.textContent).toContain("1 分支");
   });
 });

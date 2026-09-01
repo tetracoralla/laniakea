@@ -12,11 +12,13 @@ import {
   createMapSpace,
   createFlowSpace,
   deleteSubspaceForNode,
+  deleteFlowEdge,
   deleteFlowNode,
   flowSpaceForNode,
   mapSpaceDocument,
   mapSpaceForNode,
   mergeMapSpaceDocument,
+  positionFlowNode,
   preserveDocumentViewports,
   reconnectFlowEdge,
   setFlowNodeText,
@@ -122,7 +124,7 @@ describe("typed Laniakea spaces", () => {
     )).toBe(false);
   });
 
-  it("rewires a deleted step and preserves an editable selection target", () => {
+  it("removes a deleted step and every attached edge without inventing a bridge", () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowStepAfter(initial, created.selectedFlowNodeId);
@@ -134,7 +136,7 @@ describe("typed Laniakea spaces", () => {
     expect(removed.space.edges).toHaveLength(0);
   });
 
-  it("does not duplicate an existing connection while bridging a deleted step", () => {
+  it("keeps only explicit connections when deleting an intermediate step", () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const startId = created.selectedFlowNodeId;
@@ -153,13 +155,16 @@ describe("typed Laniakea spaces", () => {
         (edge) => edge.from === startId && edge.to === endId,
       ),
     ).toHaveLength(1);
+    expect(removed.space.edges.some(
+      (edge) => edge.from === middle.nodeId || edge.to === middle.nodeId,
+    )).toBe(false);
     expect(isMindMapDocument({
       ...created.document,
       spaces: { [created.spaceId]: removed.space },
     })).toBe(true);
   });
 
-  it("edits branch language and merges branches without creating cycles", () => {
+  it("edits branch language, merges branches, and permits an explicit loop", () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const decisionId = created.selectedFlowNodeId;
@@ -174,8 +179,16 @@ describe("typed Laniakea spaces", () => {
     expect(merged.edges.some((edge) => edge.from === branchEdge.to && edge.to === target.nodeId))
       .toBe(true);
     expect(canConnectFlowNodes(merged, branchEdge.to, target.nodeId)).toBe(false);
-    expect(canConnectFlowNodes(merged, target.nodeId, decisionId)).toBe(false);
+    expect(canConnectFlowNodes(merged, target.nodeId, decisionId)).toBe(true);
     expect(connectableFlowNodeIds(merged, branchEdge.to)).not.toContain(target.nodeId);
+    const looped = connectFlowNodes(merged, target.nodeId, decisionId, {
+      fromPort: "left",
+      toPort: "left",
+    });
+    expect(looped.edges).toContainEqual(expect.objectContaining({
+      from: target.nodeId,
+      to: decisionId,
+    }));
   });
 
   it("creates in a chosen direction and keeps connector ports as portable semantics", () => {
@@ -292,6 +305,48 @@ describe("typed Laniakea spaces", () => {
       to: target.nodeId,
       toPort: "right",
     });
+  });
+
+  it("deletes an edge directly and leaves both endpoint nodes intact", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowStepAfter(initial, created.selectedFlowNodeId);
+    const edgeId = added.space.edges[0].id;
+    const disconnected = deleteFlowEdge(added.space, edgeId);
+
+    expect(disconnected.edges).toHaveLength(0);
+    expect(disconnected.nodes[created.selectedFlowNodeId]).toBeDefined();
+    expect(disconnected.nodes[added.nodeId]).toBeDefined();
+  });
+
+  it("keeps existing coordinates stable and allows a truly empty free canvas", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const originId = created.selectedFlowNodeId;
+    const positioned = positionFlowNode(
+      initial,
+      originId,
+      { x: -240, y: -160 },
+      { [originId]: { x: 140, y: 140 } },
+    );
+    const added = addFlowNodeAtPosition(
+      positioned,
+      "step",
+      { x: -520, y: 40 },
+      positioned.positions ?? {},
+    );
+    const emptiedOnce = deleteFlowNode(added.space, added.nodeId);
+    const emptied = deleteFlowNode(emptiedOnce.space, originId);
+
+    expect(added.space.positions?.[originId]).toEqual({ x: -240, y: -160 });
+    expect(added.space.positions?.[added.nodeId]).toEqual({ x: -520, y: 40 });
+    expect(emptied.space.nodes).toEqual({});
+    expect(emptied.space.edges).toEqual([]);
+    expect(emptied.nextSelectedId).toBeNull();
+    expect(isMindMapDocument({
+      ...created.document,
+      spaces: { [created.spaceId]: emptied.space },
+    })).toBe(true);
   });
 
   it("carries editor viewports across an undo restore", () => {

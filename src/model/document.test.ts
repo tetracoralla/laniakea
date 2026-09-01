@@ -22,7 +22,7 @@ describe("persisted document validation", () => {
     expect(isMindMapDocument(dangling)).toBe(false);
   });
 
-  it("rejects flow self-loops, duplicate endpoint pairs, and directed cycles", () => {
+  it("rejects self-loops and duplicate endpoint pairs but accepts directed loops", () => {
     const base = createFlowSpace(createSeedDocument(), "path");
     const firstSpace = flowSpaceForNode(base.document, "path")!;
     const secondNode = addFlowStepAfter(firstSpace, base.selectedFlowNodeId);
@@ -60,7 +60,7 @@ describe("persisted document validation", () => {
       to: first.from,
       label: "",
     });
-    expect(isMindMapDocument(cycle)).toBe(false);
+    expect(isMindMapDocument(cycle)).toBe(true);
   });
 
   it("rejects broken parent references and unreachable nodes", () => {

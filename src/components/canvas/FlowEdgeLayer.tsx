@@ -8,8 +8,9 @@ import {
 } from "react";
 import {
   flowConnectorCrossings,
-  flowConnectorPath,
-  flowConnectorPoint,
+  flowConnectorDeleteAnchor,
+  flowConnectorPathFromRoute,
+  flowConnectorPointOnRoute,
   flowConnectorRoute,
   type FlowLayoutResult,
 } from "../../model/flowLayout";
@@ -19,6 +20,7 @@ interface FlowEdgeLayerProps {
   edges: readonly FlowEdge[];
   layout: FlowLayoutResult;
   onChangeLabel: (edgeId: string, label: string) => void;
+  onDeleteEdge: (edgeId: string) => void;
   onEndpointPointerDown: (
     edge: FlowEdge,
     endpoint: "from" | "to",
@@ -35,6 +37,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   edges,
   layout,
   onChangeLabel,
+  onDeleteEdge,
   onEndpointPointerDown,
   onSelectEdge,
   selectedEdgeId,
@@ -45,6 +48,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   const editFinishedByKeyRef = useRef(false);
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const obstacleNodes = useMemo(() => Object.values(layout.nodes), [layout.nodes]);
   const routes = useMemo(() => edges.flatMap((edge) => {
     const from = layout.nodes[edge.from];
     const to = layout.nodes[edge.to];
@@ -53,10 +57,16 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
       edge,
       edgeId: edge.id,
       fromId: edge.from,
-      route: flowConnectorRoute(from, to, edge.fromPort, edge.toPort),
+      route: flowConnectorRoute(
+        from,
+        to,
+        edge.fromPort,
+        edge.toPort,
+        obstacleNodes,
+      ),
       toId: edge.to,
     }];
-  }), [edges, layout.nodes]);
+  }), [edges, layout.nodes, obstacleNodes]);
   const crossings = useMemo(
     () => flowConnectorCrossings(routes),
     [routes],
@@ -97,7 +107,8 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
         aria-label="流程连线"
         className="flow-connectors"
         height={layout.height}
-        viewBox={`0 0 ${layout.width} ${layout.height}`}
+        style={{ left: layout.minX, top: layout.minY }}
+        viewBox={`${layout.minX} ${layout.minY} ${layout.width} ${layout.height}`}
         width={layout.width}
       >
         <defs>
@@ -116,11 +127,10 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
           const from = layout.nodes[edge.from];
           const to = layout.nodes[edge.to];
           if (!from || !to) return null;
-          const path = flowConnectorPath(
-            from,
-            to,
-            edge.fromPort,
-            edge.toPort,
+          const route = routeByEdgeId.get(edge.id);
+          if (!route) return null;
+          const path = flowConnectorPathFromRoute(
+            route,
             crossings[edge.id],
           );
           return (
@@ -128,15 +138,16 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
               <path
                 className={`flow-connector${selectedEdgeId === edge.id ? " is-selected" : ""}`}
                 d={path}
-                markerEnd={`url(#flow-arrow-${spaceId})`}
+                markerEnd={
+                  selectedEdgeId === edge.id
+                    ? undefined
+                    : `url(#flow-arrow-${spaceId})`
+                }
               />
               <path
                 className="flow-connector__hit"
-                d={flowConnectorPath(
-                  from,
-                  to,
-                  edge.fromPort,
-                  edge.toPort,
+                d={flowConnectorPathFromRoute(
+                  route,
                   crossings[edge.id],
                 )}
                 onClick={(event) => {
@@ -163,7 +174,8 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
               aria-label="连线端点"
               className="flow-edge-handle-layer"
               height={layout.height}
-              viewBox={`0 0 ${layout.width} ${layout.height}`}
+              style={{ left: layout.minX, top: layout.minY }}
+              viewBox={`${layout.minX} ${layout.minY} ${layout.width} ${layout.height}`}
               width={layout.width}
             >
               <g className="flow-edge-handles">
@@ -222,19 +234,36 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
           );
         })()}
 
+      {selectedEdgeId && (() => {
+        const route = routeByEdgeId.get(selectedEdgeId);
+        if (!route) return null;
+        const point = flowConnectorDeleteAnchor(route, obstacleNodes);
+        return (
+          <button
+            aria-label="删除连线"
+            className="flow-edge-delete"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDeleteEdge(selectedEdgeId);
+            }}
+            style={{ left: point.x, top: point.y }}
+            title="删除连线（Delete）"
+            type="button"
+          >
+            <span aria-hidden="true" />
+          </button>
+        );
+      })()}
+
       {edges.map((edge) => {
         const from = layout.nodes[edge.from];
         const to = layout.nodes[edge.to];
         if (!from || !to || (!edge.label && editingEdgeId !== edge.id)) {
           return null;
         }
-        const point = flowConnectorPoint(
-          from,
-          to,
-          0.34,
-          edge.fromPort,
-          edge.toPort,
-        );
+        const route = routeByEdgeId.get(edge.id);
+        if (!route) return null;
+        const point = flowConnectorPointOnRoute(route, 0.34);
         return editingEdgeId === edge.id ? (
           <input
             aria-label="编辑分支名称"

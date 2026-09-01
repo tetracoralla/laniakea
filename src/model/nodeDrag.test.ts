@@ -156,6 +156,15 @@ describe("node drag geometry", () => {
     );
   });
 
+  it("skips ambiguous magnetic attachment in a dense whole-map overview", () => {
+    const index = buildNodeDropSpatialIndex(layout);
+    expect(nodeDropCandidateIds(
+      index,
+      { x: 700, y: 180, width: 180, height: 48 },
+      8,
+    )).toEqual([]);
+  });
+
   it("does not attach when the dragged node is behind or covering a candidate", () => {
     expect(
       nodeDropParentHitTest(

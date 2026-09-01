@@ -87,6 +87,31 @@ function longFrameWindows(frameTimes, thresholdMilliseconds = 50) {
   });
 }
 
+async function terminateProcess(process) {
+  if (!process || process.exitCode !== null) return;
+  const exited = new Promise((resolveExit) => process.once("exit", resolveExit));
+  process.kill("SIGTERM");
+  await Promise.race([exited, sleep(2_000)]);
+  if (process.exitCode === null) {
+    process.kill("SIGKILL");
+    await Promise.race([exited, sleep(1_000)]);
+  }
+}
+
+async function removeTemporaryRoot(path) {
+  let lastError;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(150 * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
 function overviewFixture() {
   const lines = ["# 10k overview drag", ""];
   let depthTwoIndex = 0;
@@ -332,8 +357,7 @@ try {
   }));
 } finally {
   socket?.close();
-  chromeProcess?.kill("SIGTERM");
-  previewProcess?.kill("SIGTERM");
-  await sleep(250);
-  await rm(temporaryRoot, { recursive: true, force: true });
+  await terminateProcess(chromeProcess);
+  await terminateProcess(previewProcess);
+  await removeTemporaryRoot(temporaryRoot);
 }

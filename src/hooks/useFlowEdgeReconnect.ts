@@ -55,10 +55,25 @@ export function useFlowEdgeReconnect({
   const [state, setState] = useState<FlowEdgeReconnectState | null>(null);
   const stateRef = useRef<FlowEdgeReconnectState | null>(null);
   const spaceIdRef = useRef(space.id);
+  const frameRef = useRef(0);
 
-  const replaceState = useCallback((next: FlowEdgeReconnectState | null) => {
+  const replaceState = useCallback((
+    next: FlowEdgeReconnectState | null,
+    immediate = false,
+  ) => {
     stateRef.current = next;
-    setState(next);
+    if (immediate || next === null) {
+      if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = 0;
+      setState(next);
+      return;
+    }
+    if (!frameRef.current) {
+      frameRef.current = window.requestAnimationFrame(() => {
+        frameRef.current = 0;
+        setState(stateRef.current);
+      });
+    }
   }, []);
 
   const release = useCallback((pointerId: number) => {
@@ -163,7 +178,7 @@ export function useFlowEdgeReconnect({
       targetId: null,
       targetPort: null,
       targets,
-    });
+    }, true);
   }, [containerRef, onSelectEdge, replaceState, space]);
 
   const update = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -185,7 +200,10 @@ export function useFlowEdgeReconnect({
       targetId: target?.id ?? null,
       targetPort,
     };
-    replaceState(next);
+    replaceState(
+      next,
+      current.targetId !== next.targetId || current.targetPort !== next.targetPort,
+    );
     return next;
   }, [replaceState]);
 
@@ -246,6 +264,10 @@ export function useFlowEdgeReconnect({
     cancel();
   }, [cancel, space.id]);
 
+  useEffect(() => () => {
+    if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
+  }, []);
+
   const connectableIds = useMemo(
     () => new Set(state?.targets.map((target) => target.id) ?? []),
     [state],
@@ -279,5 +301,37 @@ export function useFlowEdgeReconnect({
     preview,
     state,
     targetLabel,
+    shiftViewport: (x: number, y: number) => {
+      const current = stateRef.current;
+      if (!current) return;
+      const shiftPoint = (point: { x: number; y: number }) => ({
+        x: point.x + x,
+        y: point.y + y,
+      });
+      const targets = current.targets.map((target) => ({
+        ...target,
+        bottom: target.bottom + y,
+        left: target.left + x,
+        right: target.right + x,
+        top: target.top + y,
+        endpoints: Object.fromEntries(
+          Object.entries(target.endpoints).map(([port, point]) => [
+            port,
+            shiftPoint(point),
+          ]),
+        ) as FlowConnectionTargetSnapshot["endpoints"],
+      }));
+      const target = current.targetId
+        ? targets.find(({ id }) => id === current.targetId)
+        : null;
+      replaceState({
+        ...current,
+        current: target && current.targetPort
+          ? target.endpoints[current.targetPort]
+          : current.current,
+        fixed: shiftPoint(current.fixed),
+        targets,
+      });
+    },
   };
 }

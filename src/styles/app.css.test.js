@@ -85,7 +85,14 @@ describe("node editor styles", () => {
   it("draws the decision outline separately from its text surface", () => {
     expect(appStyles).toContain(".flow-node__decision-shape polygon {");
     expect(appStyles).toContain("  stroke-width: 1.4;");
-    expect(appStyles).not.toContain("clip-path: polygon(50% 0");
+    // 禁令针对判断节点的文字表面：轮廓必须由 SVG polygon 绘制。
+    // 拖拽幽灵是独立元素，允许用 clip-path 复刻菱形。
+    const contentRuleStart = appStyles.indexOf(
+      ".flow-node--decision .flow-node__content,",
+    );
+    const contentRuleEnd = appStyles.indexOf("\n}", contentRuleStart);
+    const contentRule = appStyles.slice(contentRuleStart, contentRuleEnd);
+    expect(contentRule).not.toContain("clip-path");
   });
 
   it("keeps in-place flow labels transparent and free of input chrome", () => {

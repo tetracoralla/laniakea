@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { computeFlowLayout } from "../../model/flowLayout";
 import type { FlowNode, FlowSpace } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
 
@@ -7,88 +8,81 @@ interface FlowPortalPreviewProps {
   space: FlowSpace;
 }
 
-function orderedContentNodes(space: FlowSpace): FlowNode[] {
-  const contentIds = Object.keys(space.nodes).filter((id) =>
-    space.nodes[id].kind !== "start" && space.nodes[id].kind !== "end",
-  );
-  const contentSet = new Set(contentIds);
-  const incoming = new Map(contentIds.map((id) => [id, 0]));
-  const outgoing = new Map(contentIds.map((id) => [id, [] as string[]]));
-  space.edges.forEach((edge) => {
-    if (!contentSet.has(edge.from) || !contentSet.has(edge.to)) return;
-    incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
-    outgoing.get(edge.from)?.push(edge.to);
-  });
-  const pending = contentIds
-    .filter((id) => incoming.get(id) === 0)
-    .sort((left, right) => left.localeCompare(right));
-  const ordered: string[] = [];
-  while (pending.length > 0) {
-    const current = pending.shift()!;
-    ordered.push(current);
-    (outgoing.get(current) ?? []).forEach((target) => {
-      const next = (incoming.get(target) ?? 0) - 1;
-      incoming.set(target, next);
-      if (next === 0) pending.push(target);
-    });
-  }
-  contentIds.forEach((id) => {
-    if (!ordered.includes(id)) ordered.push(id);
-  });
-  return ordered.map((id) => space.nodes[id]);
-}
-
-function compactLabel(text: string): string {
-  const normalized = text.trim() || "输入步骤";
-  return Array.from(normalized).length > 6
-    ? `${Array.from(normalized).slice(0, 6).join("")}…`
-    : normalized;
-}
-
 function isContentNode(node: FlowNode): boolean {
   return node.kind !== "start" && node.kind !== "end";
 }
 
-// 只沿真实出边走一条链：预览里的箭头必须对应画布上真实存在的连线，
-// 互不相连的节点不允许被顺序符号串起来。
-function contentChain(space: FlowSpace, ordered: FlowNode[]): FlowNode[] {
-  if (ordered.length === 0) return [];
-  const firstOutgoing = new Map<string, string>();
-  space.edges.forEach((edge) => {
-    if (
-      !firstOutgoing.has(edge.from) &&
-      space.nodes[edge.from] &&
-      space.nodes[edge.to] &&
-      isContentNode(space.nodes[edge.from]) &&
-      isContentNode(space.nodes[edge.to])
-    ) {
-      firstOutgoing.set(edge.from, edge.to);
-    }
+function compactLabel(text: string): string {
+  const normalized = text.trim() || "输入步骤";
+  return Array.from(normalized).length > 9
+    ? `${Array.from(normalized).slice(0, 9).join("")}…`
+    : normalized;
+}
+
+interface MiniNode {
+  height: number;
+  id: string;
+  kind: FlowNode["kind"];
+  width: number;
+  x: number;
+  y: number;
+}
+
+function miniTopology(space: FlowSpace): {
+  edges: Array<{ from: MiniNode; id: string; to: MiniNode }>;
+  nodes: MiniNode[];
+} {
+  const content = Object.values(space.nodes).filter(isContentNode);
+  if (content.length === 0) return { edges: [], nodes: [] };
+  const layout = computeFlowLayout(space);
+  const laidOut = content.flatMap((node) => {
+    const position = layout.nodes[node.id];
+    return position ? [{ node, position }] : [];
   });
-  const chain: FlowNode[] = [];
-  const visited = new Set<string>();
-  let current = ordered[0].id;
-  while (space.nodes[current] && !visited.has(current)) {
-    visited.add(current);
-    chain.push(space.nodes[current]);
-    const next = firstOutgoing.get(current);
-    if (!next) break;
-    current = next;
-  }
-  return chain;
+  const minX = Math.min(...laidOut.map(({ position }) => position.x));
+  const minY = Math.min(...laidOut.map(({ position }) => position.y));
+  const maxX = Math.max(...laidOut.map(({ position }) => position.x + position.width));
+  const maxY = Math.max(...laidOut.map(({ position }) => position.y + position.height));
+  const scale = Math.min(
+    84 / Math.max(1, maxX - minX),
+    38 / Math.max(1, maxY - minY),
+  );
+  const nodes = laidOut.map(({ node, position }) => ({
+    id: node.id,
+    kind: node.kind,
+    x: 3 + (position.x - minX) * scale,
+    y: 3 + (position.y - minY) * scale,
+    width: Math.max(5, Math.min(15, position.width * scale)),
+    height: Math.max(4, Math.min(10, position.height * scale)),
+  }));
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const edges = space.edges.flatMap((edge) => {
+    const from = byId.get(edge.from);
+    const to = byId.get(edge.to);
+    return from && to ? [{ from, id: edge.id, to }] : [];
+  });
+  return { edges, nodes };
 }
 
 export function FlowPortalPreview({ onOpen, space }: FlowPortalPreviewProps) {
-  const nodes = useMemo(() => orderedContentNodes(space), [space.edges, space.nodes]);
-  const chain = useMemo(() => contentChain(space, nodes), [space.edges, space.nodes]);
-  const connected = chain.length >= 2;
-  const displayItems = connected ? chain : nodes;
-  const separator = connected ? "→" : "·";
-  const visible = displayItems.length <= 3
-    ? displayItems
-    : [displayItems[0], displayItems[displayItems.length - 1]];
-  const decisionCount = nodes.filter(({ kind }) => kind === "decision").length;
-  const fullSummary = nodes.map(({ text }) => text.trim() || "输入步骤").join("，");
+  const content = useMemo(
+    () => Object.values(space.nodes).filter(isContentNode),
+    [space.nodes],
+  );
+  const topology = useMemo(
+    () => miniTopology(space),
+    [space.edges, space.nodes, space.positions],
+  );
+  const decisionCount = content.filter(({ kind }) => kind === "decision").length;
+  const outgoingCount = new Map<string, number>();
+  space.edges.forEach((edge) => {
+    if (!space.nodes[edge.from] || !space.nodes[edge.to]) return;
+    if (!isContentNode(space.nodes[edge.from]) || !isContentNode(space.nodes[edge.to])) return;
+    outgoingCount.set(edge.from, (outgoingCount.get(edge.from) ?? 0) + 1);
+  });
+  const branchCount = [...outgoingCount.values()].filter((count) => count > 1).length;
+  const first = content[0];
+  const fullSummary = content.map(({ text }) => text.trim() || "输入步骤").join("，");
 
   return (
     <button
@@ -99,29 +93,57 @@ export function FlowPortalPreview({ onOpen, space }: FlowPortalPreviewProps) {
         onOpen();
       }}
       onPointerDown={(event) => event.stopPropagation()}
-      title={`进入流程 · ${nodes.length} 步${decisionCount ? ` · ${decisionCount} 判断` : ""}`}
+      title={`进入流程 · ${content.length} 步${decisionCount ? ` · ${decisionCount} 判断` : ""}`}
       type="button"
     >
-      <span aria-hidden="true" className="flow-portal-preview__sequence">
-        {visible.map((node, index) => (
-          <span className="flow-portal-preview__item" key={node.id}>
-            {index > 0 && (
-              <span className="flow-portal-preview__arrow">
-                {displayItems.length > 3 && index === 1 ? "…" : separator}
-              </span>
-            )}
-            <span
-              className={`flow-portal-preview__shape flow-portal-preview__shape--${node.kind}`}
-            >
-              {compactLabel(node.text)}
-            </span>
-          </span>
+      <svg
+        aria-hidden="true"
+        className="flow-portal-preview__topology"
+        height="44"
+        viewBox="0 0 90 44"
+        width="90"
+      >
+        {topology.edges.map(({ from, id, to }) => {
+          const fromX = from.x + from.width / 2;
+          const fromY = from.y + from.height / 2;
+          const toX = to.x + to.width / 2;
+          const toY = to.y + to.height / 2;
+          const middleX = (fromX + toX) / 2;
+          return (
+            <path
+              className="flow-portal-preview__edge"
+              d={`M ${fromX} ${fromY} H ${middleX} V ${toY} H ${toX}`}
+              key={id}
+            />
+          );
+        })}
+        {topology.nodes.map((node) => node.kind === "decision" ? (
+          <polygon
+            className="flow-portal-preview__node is-decision"
+            key={node.id}
+            points={`${node.x + node.width / 2},${node.y} ${node.x + node.width},${node.y + node.height / 2} ${node.x + node.width / 2},${node.y + node.height} ${node.x},${node.y + node.height / 2}`}
+          />
+        ) : (
+          <rect
+            className="flow-portal-preview__node"
+            height={node.height}
+            key={node.id}
+            rx={Math.min(2.5, node.height / 3)}
+            width={node.width}
+            x={node.x}
+            y={node.y}
+          />
         ))}
+      </svg>
+      <span className="flow-portal-preview__summary">
+        <strong>{first ? compactLabel(first.text) : "空流程"}</strong>
+        <span>
+          {content.length > 0
+            ? `${content.length} 步${decisionCount ? ` · ${decisionCount} 判断` : ""}${branchCount ? ` · ${branchCount} 分支` : ""}`
+            : "拖入图形开始"}
+        </span>
       </span>
-      <span className="flow-portal-preview__meta">
-        {nodes.length} 步
-        <Icon name="chevron" size={11} />
-      </span>
+      <Icon name="chevron" size={13} />
     </button>
   );
 }
