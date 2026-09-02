@@ -11,8 +11,8 @@ import {
   type Point as ProjectionPoint,
   type PortSide,
   type RouteJump,
-} from "@openadam/graph-projection";
-import { compileGraphView } from "@openadam/graph-projection/compiler";
+} from "@openadam/graph-view-compiler";
+import { compileGraphView } from "@openadam/graph-view-compiler/compiler";
 import {
   estimateTextWidth,
   type NodeTextStyle,
@@ -432,7 +432,7 @@ export function flowConnectorPointOnRoute(
 }
 
 // The delete control remains a Laniakea interaction concern. Geometry of the
-// route itself is shared with Graph Projection.
+// route itself is shared with Graph View Compiler.
 export function flowConnectorDeleteAnchor(
   route: FlowConnectorRoute,
   obstacles: readonly FlowLayoutNode[],

@@ -4,7 +4,7 @@ import {
   type PortSide,
   type SemanticGraphV1,
   type SemanticPort,
-} from "@openadam/graph-projection";
+} from "@openadam/graph-view-compiler";
 import type { FlowPlacementDirection, FlowSpace } from "../types/mindmap";
 
 function portSide(direction: FlowPlacementDirection): PortSide {

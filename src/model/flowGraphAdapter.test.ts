@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FlowSpace } from "../types/mindmap";
 import { flowSpaceToSemanticGraph } from "./flowGraphAdapter";
 
-describe("Laniakea Graph Projection adapter", () => {
+describe("Laniakea Graph View Compiler adapter", () => {
   it("maps Flow semantics and declared sides without leaking viewport or positions", () => {
     const now = "2026-09-02T00:00:00.000Z";
     const space: FlowSpace = {
