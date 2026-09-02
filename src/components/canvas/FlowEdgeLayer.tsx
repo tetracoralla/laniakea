@@ -18,8 +18,10 @@ import type { TextWidthMeasurer } from "../../model/layout";
 import type { FlowEdge, FlowPlacementDirection, FlowSpace } from "../../types/mindmap";
 
 interface FlowEdgeLayerProps {
+  edges: FlowSpace["edges"];
   layout: FlowLayoutResult;
   measureTextWidth?: TextWidthMeasurer;
+  nodes: FlowSpace["nodes"];
   onChangeLabel: (edgeId: string, label: string) => void;
   onDeleteEdge: (edgeId: string) => void;
   onEndpointPointerDown: (
@@ -31,22 +33,21 @@ interface FlowEdgeLayerProps {
   ) => void;
   onSelectEdge: (edgeId: string) => void;
   selectedEdgeId: string | null;
-  space: FlowSpace;
   spaceId: string;
 }
 
 export const FlowEdgeLayer = memo(function FlowEdgeLayer({
+  edges,
   layout,
   measureTextWidth,
+  nodes,
   onChangeLabel,
   onDeleteEdge,
   onEndpointPointerDown,
   onSelectEdge,
   selectedEdgeId,
-  space,
   spaceId,
 }: FlowEdgeLayerProps) {
-  const edges = space.edges;
   const editorRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
   const editFinishedByKeyRef = useRef(false);
@@ -55,11 +56,11 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   const obstacleNodes = useMemo(() => Object.values(layout.nodes), [layout.nodes]);
   const routes = useMemo(() => {
     const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
-    return compileFlowConnectors(space, layout, measureTextWidth).flatMap((route) => {
+    return compileFlowConnectors({ edges, nodes }, layout, measureTextWidth).flatMap((route) => {
       const edge = edgeById.get(route.edgeId);
       return edge ? [{ edge, ...route }] : [];
     });
-  }, [edges, layout, measureTextWidth, space]);
+  }, [edges, layout, measureTextWidth, nodes]);
   const crossings = useMemo(
     () => flowConnectorCrossings(routes),
     [routes],

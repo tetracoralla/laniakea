@@ -349,7 +349,7 @@ export interface CompiledFlowConnector {
 }
 
 export function compileFlowConnectors(
-  space: FlowSpace,
+  space: Pick<FlowSpace, "nodes" | "edges">,
   layout: FlowLayoutResult,
   measureTextWidth?: TextWidthMeasurer,
 ): CompiledFlowConnector[] {

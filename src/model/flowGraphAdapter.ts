@@ -18,7 +18,9 @@ function semanticPorts(): SemanticPort[] {
   }));
 }
 
-export function flowSpaceToSemanticGraph(space: FlowSpace): SemanticGraphV1 {
+export function flowSpaceToSemanticGraph(
+  space: Pick<FlowSpace, "nodes" | "edges">,
+): SemanticGraphV1 {
   const graph: SemanticGraphV1 = {
     version: SEMANTIC_GRAPH_VERSION,
     nodes: Object.values(space.nodes).map((node) => ({
