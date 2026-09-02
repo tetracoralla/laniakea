@@ -10,6 +10,10 @@ import {
   nodePlaceholder,
 } from "../../model/canvasRender";
 import type { FlowSpace, LayoutNode, MindNode } from "../../types/mindmap";
+import {
+  isInputMethodKey,
+  markInputMethodComposition,
+} from "../../model/inputMethod";
 import { Icon } from "../icons/Icon";
 import { FlowPortalPreview } from "./FlowPortalPreview";
 
@@ -60,6 +64,7 @@ export const MindMapNode = memo(function MindMapNode({
 }: MindMapNodeProps) {
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const inputMethodComposingRef = useRef(false);
+  const commitAfterCompositionRef = useRef(false);
   const placeholder = nodePlaceholder(layout);
   const empty = node.text.length === 0;
   const markdownDivider = isMarkdownThematicBreak(node.text);
@@ -88,7 +93,7 @@ export const MindMapNode = memo(function MindMapNode({
   };
 
   const revealCompositionContext = (editor: HTMLTextAreaElement) => {
-    editor.dataset.composing = "true";
+    markInputMethodComposition(editor, true);
     editor.style.width = "100%";
     const visibleWidth = Math.max(editor.clientWidth, editor.scrollWidth);
     if (visibleWidth > 0) {
@@ -98,7 +103,7 @@ export const MindMapNode = memo(function MindMapNode({
   };
 
   const finishCompositionContext = (editor: HTMLTextAreaElement) => {
-    delete editor.dataset.composing;
+    markInputMethodComposition(editor, false);
     editor.style.removeProperty("width");
     editor.scrollLeft = 0;
   };
@@ -172,6 +177,10 @@ export const MindMapNode = memo(function MindMapNode({
             ref={editorRef}
             rows={1}
             onBlur={(event) => {
+              if (inputMethodComposingRef.current) {
+                commitAfterCompositionRef.current = true;
+                return;
+              }
               inputMethodComposingRef.current = false;
               finishCompositionContext(event.currentTarget);
               onCommitEdit(node.id, event.currentTarget.value);
@@ -204,9 +213,14 @@ export const MindMapNode = memo(function MindMapNode({
               finishCompositionContext(event.currentTarget);
               fitEditorToText(event.currentTarget);
               onDraftChange(event.currentTarget.value);
+              if (commitAfterCompositionRef.current) {
+                commitAfterCompositionRef.current = false;
+                onCommitEdit(node.id, event.currentTarget.value);
+              }
             }}
             onCompositionStart={(event) => {
               inputMethodComposingRef.current = true;
+              commitAfterCompositionRef.current = false;
               revealCompositionContext(event.currentTarget);
             }}
             onPaste={(event) => {
@@ -218,9 +232,10 @@ export const MindMapNode = memo(function MindMapNode({
             onKeyDown={(event) => {
               event.stopPropagation();
               if (
-                inputMethodComposingRef.current ||
-                event.nativeEvent.isComposing ||
-                event.nativeEvent.keyCode === 229
+                isInputMethodKey(
+                  event.nativeEvent,
+                  inputMethodComposingRef.current,
+                )
               ) {
                 return;
               }

@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createMindMapFile,
   readMindMapFile,
+  markdownRevision,
   removeStaleLockIfUnchanged,
   updateMindMapFile,
 } from "./mindMapFileStore";
@@ -189,6 +190,28 @@ describe("Laniakea Agent Markdown file store", () => {
     await symlink(target, link);
 
     await expect(readMindMapFile(link)).rejects.toMatchObject({
+      code: "invalid_path",
+    });
+  });
+
+  it("hashes the exact source bytes and rejects invalid UTF-8", async () => {
+    const plainPath = join(workspace, "plain.md");
+    const bomPath = join(workspace, "bom.md");
+    const invalidPath = join(workspace, "invalid.md");
+    const plain = Buffer.from("# Map\n\n- Root\n", "utf8");
+    const withBom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), plain]);
+    await writeFile(plainPath, plain);
+    await writeFile(bomPath, withBom);
+    await writeFile(invalidPath, Buffer.from([0x23, 0x20, 0xc3, 0x28]));
+
+    const loadedPlain = await readMindMapFile(plainPath);
+    const loadedBom = await readMindMapFile(bomPath);
+
+    expect(loadedPlain.revision).toBe(markdownRevision(plain));
+    expect(loadedBom.revision).toBe(markdownRevision(withBom));
+    expect(loadedBom.revision).not.toBe(loadedPlain.revision);
+    expect(loadedBom.markdown.charCodeAt(0)).toBe(0xfeff);
+    await expect(readMindMapFile(invalidPath)).rejects.toMatchObject({
       code: "invalid_path",
     });
   });

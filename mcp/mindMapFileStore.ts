@@ -72,8 +72,25 @@ function titleFromPath(filePath: string): string {
   return basename(filePath).replace(/\.(md|markdown)$/i, "");
 }
 
-export function markdownRevision(markdown: string): string {
+export function markdownRevision(markdown: string | Uint8Array): string {
   return `sha256:${createHash("sha256").update(markdown).digest("hex")}`;
+}
+
+function decodeMarkdown(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", {
+      fatal: true,
+      // Preserve a leading BOM in the decoded source. The revision is still
+      // computed from the exact bytes, so two byte-distinct files can never
+      // share a lease merely because decoding normalized them.
+      ignoreBOM: true,
+    }).decode(bytes);
+  } catch {
+    throw new MindMapFileError(
+      "invalid_path",
+      "The Markdown file must contain valid UTF-8 text.",
+    );
+  }
 }
 
 async function requireRegularFile(filePath: string) {
@@ -104,12 +121,21 @@ async function requireRegularFile(filePath: string) {
 export async function readMindMapFile(filePath: string): Promise<LoadedMindMapFile> {
   const resolved = requireMarkdownPath(filePath);
   await requireRegularFile(resolved);
-  const markdown = await readFile(resolved, "utf8");
+  const bytes = await readFile(resolved);
+  // The file can grow after lstat and before readFile. Enforce the public
+  // bound against the bytes actually placed in memory as well.
+  if (bytes.byteLength > MAX_MARKDOWN_BYTES) {
+    throw new MindMapFileError(
+      "file_too_large",
+      `Mind map files may not exceed ${MAX_MARKDOWN_BYTES} bytes.`,
+    );
+  }
+  const markdown = decodeMarkdown(bytes);
   return {
     filePath: resolved,
     markdown,
     parsed: parseAgentMindMap(markdown, titleFromPath(resolved)),
-    revision: markdownRevision(markdown),
+    revision: markdownRevision(bytes),
   };
 }
 

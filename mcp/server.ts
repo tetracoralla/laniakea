@@ -52,7 +52,12 @@ const operationSchema = z.discriminatedUnion("type", [
     type: z.literal("add_child"),
     parentRef: z.string().min(2),
     node: treeInputSchema,
-    position: z.number().int().min(0).optional(),
+    position: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe("Zero-based position in the destination child list."),
   }),
   z.object({
     type: z.literal("add_sibling"),
@@ -68,7 +73,14 @@ const operationSchema = z.discriminatedUnion("type", [
       .min(2)
       .nullable()
       .describe("Destination node reference, or null to promote the branch to a top-level floating root."),
-    position: z.number().int().min(0).optional(),
+    position: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Zero-based position in the destination list after the moved subtree has been removed; omit to append.",
+      ),
   }),
   z.object({
     type: z.literal("delete_subtree"),

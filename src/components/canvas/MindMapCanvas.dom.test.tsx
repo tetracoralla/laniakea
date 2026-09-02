@@ -278,6 +278,46 @@ describe("rendered interaction regressions", () => {
     expect(onNavigateBack).toHaveBeenCalledOnce();
   });
 
+  it("does not submit the document title when Enter confirms an IME candidate", async () => {
+    const onTitleChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <TopBar
+          currentDocumentPath={null}
+          onCopyMarkdown={() => undefined}
+          onImport={() => undefined}
+          onMoveRecent={() => undefined}
+          onNew={() => undefined}
+          onCopyRecentPath={() => undefined}
+          onForgetRecent={() => undefined}
+          onOpenRecent={() => undefined}
+          onRevealRecent={() => undefined}
+          onSave={() => undefined}
+          onSaveAs={() => undefined}
+          onSearch={() => undefined}
+          onShortcutSettings={() => undefined}
+          onTitleChange={onTitleChange}
+          recentDocuments={[]}
+          title="旧标题"
+        />,
+      );
+    });
+    const input = container.querySelector<HTMLInputElement>(".document-title input")!;
+    input.focus();
+    await act(async () => {
+      input.value = "xin biao ti";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        isComposing: true,
+        key: "Enter",
+      }));
+    });
+
+    expect(onTitleChange).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(input);
+  });
+
   it("switches among five recent documents without duplicating Open in More", async () => {
     const onOpenRecent = vi.fn();
     await act(async () => {
@@ -442,6 +482,38 @@ describe("rendered interaction regressions", () => {
       container.querySelector(".mind-node")?.classList.contains("is-selected"),
     ).toBe(true);
     Reflect.deleteProperty(document, "visibilityState");
+  });
+
+  it("does not commit an unfinished IME preedit when the window loses focus", async () => {
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+    });
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      ".mind-node__editor",
+    )!;
+    await act(async () => {
+      editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      editor.value = "pin yin yu bian ji";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      window.dispatchEvent(new Event("blur"));
+    });
+
+    expect(container.querySelector(".mind-node__editor")).toBe(editor);
+    expect(container.querySelector(".mind-node__content")).toBeNull();
+
+    await act(async () => {
+      editor.value = "拼音与编辑";
+      editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+    expect(container.querySelector(".mind-node__editor")).toBeNull();
+    expect(container.querySelector(".mind-node__content")?.textContent).toBe(
+      "拼音与编辑",
+    );
   });
 
   it("mounts only the visible window of a 5,000-node document", async () => {
@@ -642,6 +714,72 @@ describe("rendered interaction regressions", () => {
         container.querySelector<HTMLElement>(".mindmap-canvas__content")
           ?.style.transform,
       ).toBe("translate3d(-900px, -500px, 0) scale(1)");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending pan when keyboard selection reveals a new node", async () => {
+    vi.useFakeTimers();
+    try {
+      const initial = largeDocument(40);
+      const committedViewports: Viewport[] = [];
+
+      function Harness() {
+        const [document, setDocument] = useState(initial);
+        const [selection, setSelection] = useState(singleSelection("root"));
+        return (
+          <>
+            <button data-testid="select-last" onClick={() => setSelection(singleSelection("node-39"))}>
+              选择末尾节点
+            </button>
+            <MindMapCanvas
+              document={document}
+              draft=""
+              editingId={null}
+              onAttachNode={() => undefined}
+              onBeginEdit={() => undefined}
+              onCancelEdit={() => undefined}
+              onCommitEdit={() => undefined}
+              onDetachNode={() => undefined}
+              onDraftChange={() => undefined}
+              onPasteStructured={() => false}
+              onSelectionChange={setSelection}
+              onSpaceTap={() => undefined}
+              onToggle={() => undefined}
+              onViewportChange={(viewport) => {
+                committedViewports.push(viewport);
+                setDocument((current) => ({ ...current, viewport }));
+              }}
+              selection={selection}
+            />
+          </>
+        );
+      }
+
+      await act(async () => root.render(<Harness />));
+      const canvas = container.querySelector<HTMLElement>(
+        "[aria-label='思维导图画布']",
+      )!;
+      await act(async () => {
+        canvas.dispatchEvent(new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          deltaY: 300,
+        }));
+        animationFrames.splice(0).forEach((callback) => callback(16));
+        container.querySelector<HTMLButtonElement>("[data-testid='select-last']")!.click();
+      });
+
+      expect(committedViewports).toHaveLength(1);
+      expect(committedViewports[0].y).not.toBe(-300);
+
+      await act(async () => {
+        vi.advanceTimersByTime(120);
+        animationFrames.splice(0).forEach((callback) => callback(32));
+      });
+      expect(committedViewports).toHaveLength(1);
+      expect(initial.viewport).not.toEqual(committedViewports[0]);
     } finally {
       vi.useRealTimers();
     }

@@ -319,7 +319,7 @@ export async function saveBrowserDocument(
 export async function saveBrowserDocumentViewState(
   document: MindMapDocument,
   path: string,
-): Promise<string | null> {
+): Promise<boolean> {
   const id = browserDocumentId(path);
   if (!id) throw new Error("无法识别这张浏览器思维导图");
   return withDatabase(async (database) => {
@@ -332,7 +332,7 @@ export async function saveBrowserDocumentViewState(
       await transactionDone(transaction);
       // The record is gone (cleared site data or removed elsewhere); view
       // state has no owner and content protection belongs to the full save.
-      return null;
+      return false;
     }
     // Only viewports travel: content, revision and updatedAt stay exactly as
     // the record has them, so a pan can neither overwrite another tab's
@@ -367,7 +367,7 @@ export async function saveBrowserDocumentViewState(
       document: cloneDocument(viewState),
     });
     await transactionDone(transaction);
-    return revisionToken(current.id, current.revision);
+    return true;
   });
 }
 

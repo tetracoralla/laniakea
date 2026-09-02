@@ -465,6 +465,34 @@ describe("tree mutations", () => {
     expect(attached.selection).toEqual(selection);
   });
 
+  it("keeps top-level order when an existing floating branch is repositioned", () => {
+    const document = createSeedDocument();
+    const first = detachSubtrees(
+      document,
+      [
+        { id: "experience", x: 760, y: 220 },
+        { id: "path", x: 760, y: 410 },
+      ],
+      singleSelection("experience"),
+    ).document;
+
+    const moved = detachSubtrees(
+      first,
+      [{ id: "experience", x: 900, y: 300 }],
+      singleSelection("experience"),
+    ).document;
+
+    expect(moved.floatingRoots.map(({ id }) => id)).toEqual([
+      "experience",
+      "path",
+    ]);
+    expect(moved.floatingRoots[0]).toEqual({
+      id: "experience",
+      x: 900,
+      y: 300,
+    });
+  });
+
   it("reveals every collapsed ancestor before selecting a search result", () => {
     const document = createSeedDocument();
     document.nodes.experience.collapsed = true;

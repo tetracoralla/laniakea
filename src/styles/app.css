@@ -1702,7 +1702,7 @@
   position: absolute;
   bottom: 26px;
   left: 27px;
-  z-index: 30;
+  z-index: 19;
   box-sizing: border-box;
   min-height: 38px;
   max-width: min(420px, calc(100vw - 220px));

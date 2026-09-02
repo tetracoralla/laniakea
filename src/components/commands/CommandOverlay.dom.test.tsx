@@ -2,7 +2,7 @@
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../../data/seed";
 import { CommandOverlay, overlayItemLimit } from "./CommandOverlay";
 
@@ -93,5 +93,98 @@ describe("CommandOverlay result limits", () => {
       option !== nested,
     );
     expect(branch?.textContent).toContain("3 个子节点");
+  });
+
+  it("closes the current palette before executing a command that may replace it", async () => {
+    const events: string[] = [];
+    await act(async () => {
+      root.render(
+        <CommandOverlay
+          document={createSeedDocument()}
+          mode="commands"
+          onClose={() => events.push("close")}
+          onExecute={(id) => events.push(`execute:${id}`)}
+          onSelectNode={() => undefined}
+        />,
+      );
+    });
+    const input = container.querySelector("input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(input, "搜索节点");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const searchCommand = [
+      ...container.querySelectorAll<HTMLButtonElement>("[role='option']"),
+    ].find((item) => item.textContent?.includes("搜索节点"))!;
+
+    await act(async () => searchCommand.click());
+
+    expect(events).toEqual(["close", "execute:map.search"]);
+  });
+
+  it("starts a replacement overlay with an empty query", async () => {
+    const document = createSeedDocument();
+    const render = (mode: "commands" | "search") => (
+      <CommandOverlay
+        document={document}
+        mode={mode}
+        onClose={() => undefined}
+        onExecute={() => undefined}
+        onSelectNode={() => undefined}
+      />
+    );
+    await act(async () => root.render(render("commands")));
+    const input = container.querySelector("input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(input, "搜索节点");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(input.value).toBe("搜索节点");
+
+    await act(async () => root.render(render("search")));
+
+    expect(container.querySelector<HTMLInputElement>("input")?.value).toBe("");
+  });
+
+  it("closes with Escape from a focused result but ignores IME confirmation Enter", async () => {
+    const onClose = vi.fn();
+    const onExecute = vi.fn();
+    await act(async () => {
+      root.render(
+        <CommandOverlay
+          document={createSeedDocument()}
+          mode="commands"
+          onClose={onClose}
+          onExecute={onExecute}
+          onSelectNode={() => undefined}
+        />,
+      );
+    });
+    const input = container.querySelector("input")!;
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        isComposing: true,
+        key: "Enter",
+      }));
+    });
+    expect(onExecute).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    const option = container.querySelector<HTMLButtonElement>("[role='option']")!;
+    option.focus();
+    await act(async () => {
+      option.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        key: "Escape",
+      }));
+    });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });

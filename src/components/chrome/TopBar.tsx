@@ -6,6 +6,7 @@ import {
 } from "react";
 import type { RecentDocument } from "../../persistence/recentDocuments";
 import { Icon } from "../icons/Icon";
+import { isInputMethodKey } from "../../model/inputMethod";
 import { DocumentSwitcher } from "./DocumentSwitcher";
 
 interface TopBarProps {
@@ -175,6 +176,7 @@ export function TopBar({
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commitTitle}
             onKeyDown={(event) => {
+              if (isInputMethodKey(event.nativeEvent)) return;
               if (event.key === "Enter") event.currentTarget.blur();
               if (event.key === "Escape") {
                 setDraft(title);

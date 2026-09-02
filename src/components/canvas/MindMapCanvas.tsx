@@ -319,8 +319,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         persistTimer.current = null;
       }
       pendingViewportCommitRef.current = null;
+      renderViewport(next);
       onViewportChange(next);
-    }, [onViewportChange]);
+    }, [onViewportChange, renderViewport]);
 
     const handleWheel = useCallback((event: WheelEvent) => {
       const editor =
@@ -328,7 +329,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         event.target.classList.contains("mind-node__editor")
           ? event.target
           : null;
-      if (editor && editor.scrollHeight > editor.clientHeight) {
+      if (
+        editor &&
+        editor.scrollHeight > editor.clientHeight &&
+        !event.metaKey &&
+        !event.ctrlKey
+      ) {
         return;
       }
       event.preventDefault();
@@ -636,9 +642,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       if (bottom > bounds.height - inset) y -= bottom - (bounds.height - inset);
 
       if (x !== current.x || y !== current.y) {
-        onViewportChange({ ...current, x, y });
+        commitViewportImmediately({ ...current, x, y });
       }
-    }, [layout, onViewportChange, selecting, selection]);
+    }, [commitViewportImmediately, layout, selecting, selection]);
 
     return (
       <div

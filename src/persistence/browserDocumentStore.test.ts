@@ -119,13 +119,12 @@ describe("browser document library", () => {
       viewport: { x: 40, y: 80, zoom: 1.25 },
     };
 
-    const token = await saveBrowserDocumentViewState(
+    const savedViewState = await saveBrowserDocumentViewState(
       pannedDocument,
       created.documentPath,
     );
 
-    // The revision token stays valid for the panning tab's next content save.
-    expect(token).toBe(firstTab.sourceHash);
+    expect(savedViewState).toBe(true);
     const secondTab = await openBrowserDocument(created.documentPath);
     expect(secondTab.sourceHash).toBe(firstTab.sourceHash);
     expect(secondTab.document.viewport).toEqual({ x: 40, y: 80, zoom: 1.25 });
@@ -149,26 +148,35 @@ describe("browser document library", () => {
     expect(after.document.title).toBe("标签页 B 的较新内容");
     expect(after.sourceHash).not.toBe(firstTab.sourceHash);
 
-    // Panning after that still only lifts the viewport.
-    await saveBrowserDocumentViewState(
+    // Panning from the stale tab still only lifts the viewport and cannot
+    // acquire the newer tab's content revision.
+    expect(await saveBrowserDocumentViewState(
       { ...pannedDocument, viewport: { x: 7, y: 9, zoom: 0.5 } },
       created.documentPath,
-    );
+    )).toBe(true);
     const final = await openBrowserDocument(created.documentPath);
     expect(final.document.title).toBe("标签页 B 的较新内容");
     expect(final.document.viewport).toEqual({ x: 7, y: 9, zoom: 0.5 });
+
+    await expect(saveBrowserDocument(
+      { ...pannedDocument, title: "标签页 A 的过期内容" },
+      created.documentPath,
+      firstTab.sourceHash,
+    )).rejects.toThrow("另一个标签页");
+    expect((await openBrowserDocument(created.documentPath)).document.title)
+      .toBe("标签页 B 的较新内容");
   });
 
   it("skips view state for a record that no longer exists", async () => {
     const created = await createBrowserDocument(createSeedDocument());
     await discardBrowserDocument(created.documentPath);
 
-    const token = await saveBrowserDocumentViewState(
+    const savedViewState = await saveBrowserDocumentViewState(
       createSeedDocument(),
       created.documentPath,
     );
 
-    expect(token).toBeNull();
+    expect(savedViewState).toBe(false);
     expect(await listBrowserDocuments()).toHaveLength(0);
   });
 });

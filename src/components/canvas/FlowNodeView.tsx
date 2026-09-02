@@ -10,6 +10,10 @@ import type {
   FlowNodeKind,
   FlowPlacementDirection,
 } from "../../types/mindmap";
+import {
+  isInputMethodKey,
+  markInputMethodComposition,
+} from "../../model/inputMethod";
 import { Icon } from "../icons/Icon";
 
 interface FlowNodeViewProps {
@@ -74,6 +78,7 @@ export const FlowNodeView = memo(function FlowNodeView({
 }: FlowNodeViewProps) {
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
+  const commitAfterCompositionRef = useRef(false);
   const editFinishedByKeyRef = useRef(false);
 
   useEffect(() => {
@@ -131,7 +136,11 @@ export const FlowNodeView = memo(function FlowNodeView({
           ref={editorRef}
           rows={1}
           onBlur={(event) => {
-            if (!composingRef.current && !editFinishedByKeyRef.current) {
+            if (composingRef.current) {
+              commitAfterCompositionRef.current = true;
+              return;
+            }
+            if (!editFinishedByKeyRef.current) {
               onCommitEdit(node.id, event.currentTarget.value);
             }
           }}
@@ -140,14 +149,21 @@ export const FlowNodeView = memo(function FlowNodeView({
           }}
           onCompositionEnd={(event) => {
             composingRef.current = false;
+            markInputMethodComposition(event.currentTarget, false);
             onDraftChange(event.currentTarget.value);
+            if (commitAfterCompositionRef.current) {
+              commitAfterCompositionRef.current = false;
+              onCommitEdit(node.id, event.currentTarget.value);
+            }
           }}
-          onCompositionStart={() => {
+          onCompositionStart={(event) => {
             composingRef.current = true;
+            commitAfterCompositionRef.current = false;
+            markInputMethodComposition(event.currentTarget, true);
           }}
           onKeyDown={(event) => {
             event.stopPropagation();
-            if (composingRef.current || event.nativeEvent.isComposing) return;
+            if (isInputMethodKey(event.nativeEvent, composingRef.current)) return;
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               editFinishedByKeyRef.current = true;

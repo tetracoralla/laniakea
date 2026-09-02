@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -78,6 +79,22 @@ export function DocumentSwitcher({
     showFileActions ? 5 : null,
   );
 
+  const positionActionsMenu = useCallback(() => {
+    const anchor = actionsTriggerRef.current;
+    const popover = popoverRef.current;
+    const menu = actionsMenuRef.current;
+    if (!anchor || !popover || !menu) return;
+    const anchorBounds = anchor.getBoundingClientRect();
+    const popoverBounds = popover.getBoundingClientRect();
+    const menuHeight = menu.getBoundingClientRect().height;
+    const desiredTop = anchorBounds.top - 6;
+    const boundedTop = Math.max(
+      12,
+      Math.min(desiredTop, window.innerHeight - menuHeight - 12),
+    );
+    setActionsMenuTop(boundedTop - popoverBounds.top);
+  }, []);
+
   useEffect(() => {
     if (!open) {
       if (actionsOpenTimerRef.current !== null) {
@@ -118,20 +135,18 @@ export function DocumentSwitcher({
       setActionsMenuTop(null);
       return;
     }
-    const anchor = actionsTriggerRef.current;
-    const popover = popoverRef.current;
-    const menu = actionsMenuRef.current;
-    if (!anchor || !popover || !menu) return;
-    const anchorBounds = anchor.getBoundingClientRect();
-    const popoverBounds = popover.getBoundingClientRect();
-    const menuHeight = menu.getBoundingClientRect().height;
-    const desiredTop = anchorBounds.top - 6;
-    const boundedTop = Math.max(
-      12,
-      Math.min(desiredTop, window.innerHeight - menuHeight - 12),
-    );
-    setActionsMenuTop(boundedTop - popoverBounds.top);
-  }, [actionsPath]);
+    positionActionsMenu();
+    window.addEventListener("resize", positionActionsMenu);
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(positionActionsMenu);
+    if (actionsMenuRef.current) observer?.observe(actionsMenuRef.current);
+    if (popoverRef.current) observer?.observe(popoverRef.current);
+    return () => {
+      window.removeEventListener("resize", positionActionsMenu);
+      observer?.disconnect();
+    };
+  }, [actionsPath, positionActionsMenu]);
 
   useEffect(
     () => () => {

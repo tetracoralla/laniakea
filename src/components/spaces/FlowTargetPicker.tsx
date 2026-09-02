@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FlowNode } from "../../types/mindmap";
+import { isInputMethodKey } from "../../model/inputMethod";
 import { trapDialogTab } from "../overlays/focus";
 
 interface FlowTargetPickerProps {
@@ -72,6 +73,7 @@ export function FlowTargetPicker({
         aria-modal="true"
         className="flow-target-picker"
         onKeyDown={(event) => {
+          if (isInputMethodKey(event.nativeEvent)) return;
           if (event.key === "Escape") {
             event.preventDefault();
             onClose();
@@ -98,6 +100,7 @@ export function FlowTargetPicker({
           aria-label="搜索已有步骤"
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
+            if (isInputMethodKey(event.nativeEvent)) return;
             if (event.key === "ArrowDown") {
               event.preventDefault();
               setActiveIndex((index) =>

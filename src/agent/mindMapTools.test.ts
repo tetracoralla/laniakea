@@ -225,6 +225,27 @@ describe("Laniakea Agent mind-map tools", () => {
     );
   });
 
+  it("uses move positions in the destination list after removal", () => {
+    const parsed = parseAgentMindMap(
+      "# Map\n\n- Root\n  - First\n  - Second\n  - Third\n",
+      "ignored",
+    );
+    const result = applyMindMapOperations(parsed, [
+      {
+        type: "move_subtree",
+        ref: "/0/0",
+        newParentRef: "/0",
+        position: 2,
+      },
+    ]);
+
+    expect(
+      result.document.nodes[result.document.rootId].children.map(
+        (id) => result.document.nodes[id].text,
+      ),
+    ).toEqual(["Second", "Third", "First"]);
+  });
+
   it("rejects cycles and protects the main root", () => {
     const parsed = parseAgentMindMap(
       "# Map\n\n- Root\n  - Parent\n    - Child\n",

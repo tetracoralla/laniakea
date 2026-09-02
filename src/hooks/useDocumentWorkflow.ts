@@ -168,6 +168,8 @@ export function useDocumentWorkflow({
   const announcedSaveWarning = useRef<string | null>(null);
   const documentSwitchRequest = useRef(0);
   const activationQueue = useRef<Promise<void>>(Promise.resolve());
+  const documentRef = useRef(document);
+  documentRef.current = document;
   const browserSourceHandles = useRef(new Map<string, BrowserFileHandle>());
   const importPickedFile = useRef<(
     file: File,
@@ -463,7 +465,6 @@ export function useDocumentWorkflow({
       const filename = `${safeFilename(document.title)}${
         protectsImportedSource ? " - Laniakea" : ""
       }.md`;
-      const content = documentToMarkdown(document);
       const browserWindow = window as FilePickerWindow;
       if (browserWindow.showSaveFilePicker) {
         try {
@@ -538,7 +539,7 @@ export function useDocumentWorkflow({
           }
           if (!isDocumentSessionCurrent(operationSessionId)) return false;
           const writable = await handle.createWritable();
-          await writable.write(content);
+          await writable.write(documentToMarkdown(documentRef.current));
           await writable.close();
           notify({ message: "Markdown 已保存到所选文件" });
           return true;
@@ -554,7 +555,11 @@ export function useDocumentWorkflow({
           return false;
         }
       }
-      downloadText(filename, content, "text/markdown;charset=utf-8");
+      downloadText(
+        filename,
+        documentToMarkdown(documentRef.current),
+        "text/markdown;charset=utf-8",
+      );
       notify({ message: "Markdown 已下载" });
       return true;
     }
@@ -773,13 +778,22 @@ export function useDocumentWorkflow({
   }, [notify, saveWarning]);
 
   const saveCurrentDocument = useCallback(async (): Promise<boolean> => {
-    if (isDesktopRuntime() && !documentPath) {
+    if (
+      (isDesktopRuntime() && !documentPath) ||
+      (!isDesktopRuntime() && protectedBrowserSourceName !== null)
+    ) {
       return saveAsMarkdownDocument();
     }
     const saved = await retrySave();
     if (saved) notify({ message: "已保存" });
     return saved;
-  }, [documentPath, notify, retrySave, saveAsMarkdownDocument]);
+  }, [
+    documentPath,
+    notify,
+    protectedBrowserSourceName,
+    retrySave,
+    saveAsMarkdownDocument,
+  ]);
 
   const revealRecentDocument = useCallback((path: string) => {
     void (async () => {

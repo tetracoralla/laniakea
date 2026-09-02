@@ -145,6 +145,57 @@ describe("node editor input method handling", () => {
     ).toBe("中文 English 后续");
   });
 
+  it("waits for compositionend after blur and commits only the final text", async () => {
+    const mindMapDocument = createBlankDocument();
+    const node = mindMapDocument.nodes[mindMapDocument.rootId];
+    const layout = computeLayout(mindMapDocument).nodes[mindMapDocument.rootId];
+    const onCommitEdit = vi.fn();
+
+    function Harness() {
+      const [draft, setDraft] = useState(node.text);
+      const [editing, setEditing] = useState(true);
+      return editing ? (
+        <MindMapNode
+          draft={draft}
+          editing
+          layout={layout}
+          node={node}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={(id, value) => {
+            onCommitEdit(id, value);
+            setEditing(false);
+          }}
+          onDraftChange={setDraft}
+          onDragPointerDown={() => undefined}
+          onPasteStructured={() => false}
+          onSelect={() => undefined}
+          onToggle={() => undefined}
+          primary
+          selected
+        />
+      ) : <output>{draft}</output>;
+    }
+
+    await act(async () => root.render(<Harness />));
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => {
+      editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      editor.value = "zhong wen";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.blur();
+    });
+    expect(onCommitEdit).not.toHaveBeenCalled();
+    expect(container.querySelector("textarea")).toBe(editor);
+
+    await act(async () => {
+      editor.value = "中文";
+      editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    });
+    expect(onCommitEdit).toHaveBeenCalledOnce();
+    expect(onCommitEdit).toHaveBeenCalledWith(node.id, "中文");
+  });
+
   it("keeps the native draft and caret stable while canvas sizing catches up", async () => {
     const mindMapDocument = createBlankDocument();
     const node = mindMapDocument.nodes[mindMapDocument.rootId];

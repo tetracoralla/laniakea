@@ -97,6 +97,8 @@ export function useMindMap({
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
+  const [lifecycleSaveBlockedRequest, setLifecycleSaveBlockedRequest] =
+    useState(0);
   const [documentPath, setDocumentPath] = useState<string | null>(null);
   const [sourceDocumentPath, setSourceDocumentPath] =
     useState<string | null>(null);
@@ -157,6 +159,7 @@ export function useMindMap({
   ) => {
     const { newBinding = false, silent = false } = options;
     const target = document ?? latestDocument.current;
+    const targetSession = documentSessionRef.current;
     const targetPath =
       pathOverride === undefined
         ? documentPathRef.current
@@ -194,10 +197,19 @@ export function useMindMap({
     const queued = saveQueue.current
       .catch(() => undefined)
       .then(async () => {
+        if (
+          !newBinding &&
+          targetSession !== documentSessionRef.current
+        ) {
+          return { result: null, stale: true } as const;
+        }
         const savingCurrentBinding =
           !newBinding &&
+          targetSession === documentSessionRef.current &&
           targetPath !== null &&
           targetPath === documentPathRef.current;
+        // Resolve the lease only when this queued write starts. A preceding
+        // save from the same document may have advanced it legitimately.
         const expectedSourceHash = savingCurrentBinding
           ? sourceHashRef.current
           : null;
@@ -223,24 +235,40 @@ export function useMindMap({
               expectedSourceHash,
               protectedSourceForSave,
             );
+        if (targetSession !== documentSessionRef.current) {
+          if (isDesktopRuntime()) {
+            const currentPath = documentPathRef.current;
+            if (currentPath) await activateLocalDocument(currentPath);
+            else await clearActiveDocument();
+          }
+          return { result, stale: true } as const;
+        }
         lastPersistedContentDocument.current = target;
         if (savingCurrentBinding) {
           sourceHashRef.current = result.sourceHash;
         }
-        return result;
+        return { result, stale: false } as const;
       });
     saveQueue.current = queued;
 
     try {
-      const result = await queued;
-      if (request === saveRequest.current) {
+      const outcome = await queued;
+      if (outcome.stale || !outcome.result) return null;
+      const result = outcome.result;
+      if (
+        targetSession === documentSessionRef.current &&
+        request === saveRequest.current
+      ) {
         setSaveState("saved");
         setSaveError(null);
         setSaveWarning(result.auxiliaryWarning ?? null);
       }
       return result;
     } catch (error) {
-      if (request === saveRequest.current) {
+      if (
+        targetSession === documentSessionRef.current &&
+        request === saveRequest.current
+      ) {
         setSaveState("error");
         setSaveWarning(null);
         setSaveError(
@@ -486,7 +514,17 @@ export function useMindMap({
     );
   }, []);
 
+  const getSaveVersion = useCallback(
+    () => latestDocument.current,
+    [],
+  );
+  const reportLifecycleSaveBlocked = useCallback(() => {
+    setLifecycleSaveBlockedRequest((current) => current + 1);
+  }, []);
+
   useApplicationSaveLifecycle({
+    getSaveVersion,
+    onSaveBlocked: reportLifecycleSaveBlocked,
     prepareForSave: prepareForLifecycleSave,
     saveBrowserNow,
     saveNow,
@@ -986,6 +1024,7 @@ export function useMindMap({
     saveState,
     saveError,
     saveWarning,
+    lifecycleSaveBlockedRequest,
     startupNotice,
     startupMode,
     recentDocuments,

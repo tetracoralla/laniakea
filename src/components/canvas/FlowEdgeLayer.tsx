@@ -16,6 +16,10 @@ import {
 } from "../../model/flowLayout";
 import type { TextWidthMeasurer } from "../../model/layout";
 import type { FlowEdge, FlowPlacementDirection, FlowSpace } from "../../types/mindmap";
+import {
+  isInputMethodKey,
+  markInputMethodComposition,
+} from "../../model/inputMethod";
 
 interface FlowEdgeLayerProps {
   edges: FlowSpace["edges"];
@@ -50,6 +54,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
 }: FlowEdgeLayerProps) {
   const editorRef = useRef<HTMLInputElement>(null);
   const composingRef = useRef(false);
+  const commitAfterCompositionRef = useRef(false);
   const editFinishedByKeyRef = useRef(false);
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -264,24 +269,35 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
             className="flow-edge-label flow-edge-label__editor"
             key={edge.id}
             onBlur={(event) => {
-              if (!composingRef.current && !editFinishedByKeyRef.current) {
-                onChangeLabel(edge.id, event.currentTarget.value);
-                finishEdit();
+              if (composingRef.current) {
+                commitAfterCompositionRef.current = true;
+                return;
               }
+              if (editFinishedByKeyRef.current) return;
+              onChangeLabel(edge.id, event.currentTarget.value);
+              finishEdit();
             }}
             onChange={(event) => {
               if (!composingRef.current) setDraft(event.target.value);
             }}
             onCompositionEnd={(event) => {
               composingRef.current = false;
+              markInputMethodComposition(event.currentTarget, false);
               setDraft(event.currentTarget.value);
+              if (commitAfterCompositionRef.current) {
+                commitAfterCompositionRef.current = false;
+                onChangeLabel(edge.id, event.currentTarget.value);
+                finishEdit();
+              }
             }}
-            onCompositionStart={() => {
+            onCompositionStart={(event) => {
               composingRef.current = true;
+              commitAfterCompositionRef.current = false;
+              markInputMethodComposition(event.currentTarget, true);
             }}
             onKeyDown={(event) => {
               event.stopPropagation();
-              if (composingRef.current || event.nativeEvent.isComposing) return;
+              if (isInputMethodKey(event.nativeEvent, composingRef.current)) return;
               if (event.key === "Enter") {
                 event.preventDefault();
                 editFinishedByKeyRef.current = true;

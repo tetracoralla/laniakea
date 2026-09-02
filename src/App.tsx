@@ -30,6 +30,7 @@ import {
   type DesktopRuntimeStatus,
 } from "./desktop/runtime";
 import { displayGlobalShortcut } from "./desktop/shortcut";
+import { prepareEditableFieldsForLifecycleSave } from "./desktop/prepareForLifecycleSave";
 import { useAppNotice } from "./hooks/useAppNotice";
 import { useBrowserStorageNotice } from "./hooks/useBrowserStorageNotice";
 import { useDocumentWorkflow } from "./hooks/useDocumentWorkflow";
@@ -166,8 +167,7 @@ export function App() {
   const desktopRuntime = isDesktopRuntime();
   const prepareForLifecycleSave = useCallback(() => {
     flushSync(() => {
-      const activeElement = globalThis.document.activeElement;
-      if (activeElement instanceof HTMLElement) activeElement.blur();
+      prepareEditableFieldsForLifecycleSave();
     });
   }, []);
   const {
@@ -179,6 +179,7 @@ export function App() {
     saveState,
     saveError,
     saveWarning,
+    lifecycleSaveBlockedRequest,
     startupNotice,
     startupMode,
     recentDocuments,
@@ -249,6 +250,13 @@ export function App() {
     notify,
     saveState,
   });
+  useEffect(() => {
+    if (lifecycleSaveBlockedRequest === 0) return;
+    notify({
+      message: "未能保存，应用已保持打开",
+      tone: "error",
+    });
+  }, [lifecycleSaveBlockedRequest, notify]);
   const activeMap = useMemo(() => {
     if (surface.kind !== "map" || !surface.spaceId) return mindMap;
     return mapSpaceDocument(mindMap, surface.spaceId) ?? mindMap;
@@ -908,6 +916,7 @@ export function App() {
         >
           <LazyCommandOverlay
             document={mindMap}
+            key={overlay}
             mode={overlay}
             onClose={closeOverlay}
             onExecute={executeCommand}

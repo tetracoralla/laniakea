@@ -8,6 +8,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
 };
+#[cfg(target_os = "macos")]
+use tauri::menu::MenuItem;
 #[cfg(desktop)]
 use tauri::Manager;
 use tauri::{AppHandle, Emitter, State};
@@ -16,6 +18,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const DEFAULT_GLOBAL_SHORTCUT: &str = "CommandOrControl+Shift+M";
 const APPLICATION_EXIT_REQUESTED_EVENT: &str = "origin://application-exit-requested";
+#[cfg(target_os = "macos")]
+const APPLICATION_QUIT_MENU_ID: &str = "origin-quit-after-save";
 
 struct DesktopRuntimeState {
     global_shortcut_registered: AtomicBool,
@@ -118,6 +122,57 @@ fn resolve_application_exit(app: AppHandle, state: State<'_, DesktopRuntimeState
     if saved {
         app.exit(0);
     }
+}
+
+#[cfg(target_os = "macos")]
+fn request_frontend_application_exit(app: &AppHandle) {
+    let state = app.state::<DesktopRuntimeState>();
+    if state.application_exit_allowed.load(Ordering::SeqCst) {
+        app.exit(0);
+        return;
+    }
+    if !state.begin_application_exit_request() {
+        return;
+    }
+    if state.application_exit_listener_ready.load(Ordering::SeqCst)
+        && app.emit(APPLICATION_EXIT_REQUESTED_EVENT, ()).is_err()
+    {
+        state
+            .application_exit_request_pending
+            .store(false, Ordering::SeqCst);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn replace_macos_quit_menu(app: &AppHandle) -> tauri::Result<()> {
+    let Some(menu) = app.menu() else {
+        return Ok(());
+    };
+    let menu_items = menu.items()?;
+    let Some(app_menu) = menu_items.first().and_then(|item| item.as_submenu()) else {
+        return Ok(());
+    };
+    let app_menu_items = app_menu.items()?;
+    let Some(default_quit_index) = app_menu_items.len().checked_sub(1) else {
+        return Ok(());
+    };
+    if app_menu_items[default_quit_index]
+        .as_predefined_menuitem()
+        .is_none()
+    {
+        return Ok(());
+    }
+
+    app_menu.remove_at(default_quit_index)?;
+    let quit = MenuItem::with_id(
+        app,
+        APPLICATION_QUIT_MENU_ID,
+        format!("Quit {}", app.package_info().name),
+        true,
+        Some("Command+Q"),
+    )?;
+    app_menu.append(&quit)?;
+    Ok(())
 }
 
 fn validate_global_shortcut(shortcut: &str) -> Result<(), String> {
@@ -259,6 +314,15 @@ pub fn run() {
                     *shortcut = configured;
                 };
             }
+            #[cfg(target_os = "macos")]
+            {
+                replace_macos_quit_menu(app.handle())?;
+                app.on_menu_event(|app, event| {
+                    if event.id().as_ref() == APPLICATION_QUIT_MENU_ID {
+                        request_frontend_application_exit(app);
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -290,12 +354,7 @@ pub fn run() {
                     let state = app.state::<DesktopRuntimeState>();
                     if !state.application_exit_allowed.load(Ordering::SeqCst) {
                         api.prevent_exit();
-                        let first_request = state.begin_application_exit_request();
-                        if first_request
-                            && state.application_exit_listener_ready.load(Ordering::SeqCst)
-                        {
-                            let _ = app.emit(APPLICATION_EXIT_REQUESTED_EVENT, ());
-                        }
+                        request_frontend_application_exit(app);
                     }
                 }
                 _ => {}

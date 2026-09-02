@@ -77,4 +77,27 @@ describe("FlowTargetPicker", () => {
     });
     expect(onChoose).toHaveBeenCalledWith("node-24");
   });
+
+  it("does not choose a target when Enter only confirms an IME candidate", async () => {
+    const onChoose = vi.fn();
+    await act(async () => {
+      root.render(
+        <FlowTargetPicker
+          candidates={candidates(3)}
+          onChoose={onChoose}
+          onClose={() => undefined}
+          sourceLabel="当前步骤"
+        />,
+      );
+    });
+    const input = container.querySelector("input")!;
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        isComposing: true,
+        key: "Enter",
+      }));
+    });
+    expect(onChoose).not.toHaveBeenCalled();
+  });
 });

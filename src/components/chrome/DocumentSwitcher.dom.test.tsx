@@ -242,6 +242,69 @@ describe("recent document file actions", () => {
     vi.useRealTimers();
   });
 
+  it("repositions an open actions menu when the viewport changes", async () => {
+    const externalPath = "/Volumes/Workspace/Documents/验收想法.md";
+    const originalBounds = HTMLElement.prototype.getBoundingClientRect;
+    let menuHeight = 120;
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.classList.contains("document-switcher__popover")) {
+        return { top: 100 } as DOMRect;
+      }
+      if (this.classList.contains("document-switcher__recent-more")) {
+        return { top: 600 } as DOMRect;
+      }
+      if (this.classList.contains("document-switcher__actions-menu")) {
+        return { height: menuHeight } as DOMRect;
+      }
+      return originalBounds.call(this);
+    };
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 800,
+      writable: true,
+    });
+
+    try {
+      await act(async () => {
+        root.render(
+          <DocumentSwitcher
+            currentPath={null}
+            onCopyRecentPath={vi.fn()}
+            onForgetRecent={vi.fn()}
+            onMoveRecent={vi.fn()}
+            onOpenChange={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenRecent={vi.fn()}
+            onRevealRecent={vi.fn()}
+            open
+            recentDocuments={[{
+              path: externalPath,
+              title: "验收想法",
+              lastOpenedAt: "2026-07-30T10:00:00.000Z",
+            }]}
+          />,
+        );
+      });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>(
+          "button[aria-label='更多操作：验收想法']",
+        )!.click();
+      });
+      const menu = container.querySelector<HTMLElement>(
+        ".document-switcher__actions-menu",
+      )!;
+      expect(menu.style.top).toBe("494px");
+
+      menuHeight = 220;
+      await act(async () => {
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(menu.style.top).toBe("468px");
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalBounds;
+    }
+  });
+
   it("shows the complete browser library and exposes real deletion", async () => {
     const onOpenRecent = vi.fn();
     const onDeleteDocument = vi.fn();

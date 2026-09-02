@@ -344,12 +344,14 @@ fn validate_document(document_json: &str) -> Result<(), String> {
                         || edge.from == edge.to
                         || !flow.nodes.contains_key(&edge.from)
                         || !flow.nodes.contains_key(&edge.to)
-                        || edge.from_port.as_deref().is_some_and(|port| {
-                            !matches!(port, "up" | "right" | "down" | "left")
-                        })
-                        || edge.to_port.as_deref().is_some_and(|port| {
-                            !matches!(port, "up" | "right" | "down" | "left")
-                        })
+                        || edge
+                            .from_port
+                            .as_deref()
+                            .is_some_and(|port| !matches!(port, "up" | "right" | "down" | "left"))
+                        || edge
+                            .to_port
+                            .as_deref()
+                            .is_some_and(|port| !matches!(port, "up" | "right" | "down" | "left"))
                     {
                         return Err("流程空间包含无效连接".to_string());
                     }
@@ -881,11 +883,15 @@ fn prune_markdown_backups(app_data: &Path, target: &Path) -> Result<(), String> 
     Ok(())
 }
 
-fn save_to_target(app_data: &Path, target: &Path, document_json: &str) -> Result<(), String> {
+fn save_to_target(
+    app_data: &Path,
+    target: &Path,
+    document_json: &str,
+) -> Result<Option<String>, String> {
     ensure_native_path(target)?;
     validate_document(document_json)?;
     match fs::read_to_string(target) {
-        Ok(current_json) if current_json == document_json => return Ok(()),
+        Ok(current_json) if current_json == document_json => return Ok(None),
         Ok(current_json) => {
             if !same_document_content_ignoring_viewport(&current_json, document_json) {
                 backup_current(app_data, target)?;
@@ -895,7 +901,7 @@ fn save_to_target(app_data: &Path, target: &Path, document_json: &str) -> Result
         Err(error) => return Err(storage_error("无法读取待替换的思维导图文件", error)),
     }
     write_atomic(target, document_json)?;
-    prune_backups(app_data, target)
+    Ok(prune_backups(app_data, target).err())
 }
 
 fn save_markdown_document(
@@ -991,7 +997,7 @@ fn save_markdown_document_with_protected_source(
     }
 
     let source_hash = content_hash_string(content);
-    match fs::read_to_string(target) {
+    let observed_target = match fs::read_to_string(target) {
         Ok(current) if current == content => {
             let mut warnings = Vec::new();
             if let Err(error) = write_markdown_state(app_data, target, content, document_json) {
@@ -1013,14 +1019,27 @@ fn save_markdown_document_with_protected_source(
                 "{EXTERNAL_DOCUMENT_CONFLICT}: Markdown 文件已在其他应用中修改，原文件未被覆盖"
             ));
         }
-        Ok(current) => backup_markdown_current(app_data, target, &current)?,
+        Ok(current) => {
+            backup_markdown_current(app_data, target, &current)?;
+            Some(current)
+        }
         Err(error) if error.kind() == ErrorKind::NotFound && expected_source_hash.is_some() => {
             return Err(format!(
                 "{EXTERNAL_DOCUMENT_CONFLICT}: Markdown 文件已被移动或删除，未重新创建"
             ));
         }
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
         Err(error) => return Err(storage_error("无法读取待替换的 Markdown 文件", error)),
+    };
+    let changed_after_check = match (&observed_target, fs::read_to_string(target)) {
+        (Some(observed), Ok(latest)) => latest != *observed,
+        (None, Err(error)) if error.kind() == ErrorKind::NotFound => false,
+        _ => true,
+    };
+    if changed_after_check {
+        return Err(format!(
+            "{EXTERNAL_DOCUMENT_CONFLICT}: Markdown 文件在保存期间被其他应用修改，原文件未被覆盖"
+        ));
     }
     write_atomic(target, content)?;
     let mut warnings = Vec::new();
@@ -1472,11 +1491,17 @@ pub(crate) async fn save_local_document(
                 auxiliary_warning: combine_auxiliary_warnings(warnings),
             })
         } else {
-            save_to_target(&app_data, &target, &document_json)?;
-            set_active_document(&app_data, document_path.as_ref().map(|_| target.as_path()))?;
+            let mut warnings = save_to_target(&app_data, &target, &document_json)?
+                .into_iter()
+                .collect::<Vec<_>>();
+            if let Err(error) =
+                set_active_document(&app_data, document_path.as_ref().map(|_| target.as_path()))
+            {
+                warnings.push(error);
+            }
             Ok(SaveDocumentResult {
                 source_hash: None,
-                auxiliary_warning: None,
+                auxiliary_warning: combine_auxiliary_warnings(warnings),
             })
         }
     })

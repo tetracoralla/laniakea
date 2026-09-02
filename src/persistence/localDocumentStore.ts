@@ -476,14 +476,15 @@ export async function saveLocalDocument(
       throw new PersistenceError("当前思维导图还没有可用的浏览器文档位置。");
     }
     if (viewportOnly) {
-      // Browser view state must not touch the content revision: panning in
-      // one tab would otherwise make every other tab's next save conflict.
-      const sourceHash = await saveBrowserDocumentViewState(
+      // A view-only write must never renew this tab's content revision lease.
+      // Another tab may have committed newer content while this tab was only
+      // panning, so keep the caller's expected hash exactly as it was.
+      await saveBrowserDocumentViewState(
         document,
         documentPath,
       );
       return {
-        sourceHash: sourceHash ?? expectedSourceHash,
+        sourceHash: expectedSourceHash,
         auxiliaryWarning: null,
       };
     }

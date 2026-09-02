@@ -559,9 +559,19 @@ export function detachSubtrees(
     }
   });
 
+  const positionsById = new Map(
+    roots.map(({ id, x, y }) => [id, { id, x, y }]),
+  );
+  const existingFloatingIds = new Set(
+    document.floatingRoots.map(({ id }) => id),
+  );
   const floatingRoots = document.floatingRoots
-    .filter(({ id }) => !rootIdSet.has(id))
-    .concat(roots.map(({ id, x, y }) => ({ id, x, y })));
+    .map((root) => positionsById.get(root.id) ?? root)
+    .concat(
+      roots
+        .filter(({ id }) => !existingFloatingIds.has(id))
+        .map(({ id, x, y }) => ({ id, x, y })),
+    );
   const unchanged =
     nodes === document.nodes &&
     document.floatingRoots.length === floatingRoots.length &&

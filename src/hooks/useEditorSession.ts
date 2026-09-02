@@ -14,6 +14,7 @@ import {
 import { isBlankMindMapDocument } from "../model/document";
 import { parseMarkdownDocument } from "../model/markdown";
 import { isDesktopRuntime } from "../persistence/localDocumentStore";
+import { hasInputMethodComposition } from "../model/inputMethod";
 import { singleSelection } from "../model/selection";
 import {
   attachSubtrees,
@@ -157,11 +158,23 @@ export function useEditorSession({
       const id = editingIdRef.current;
       if (!id) return;
       const activeElement = globalThis.document.activeElement;
-      if (
+      const mountedEditor =
         activeElement instanceof HTMLTextAreaElement &&
         activeElement.classList.contains("mind-node__editor")
+          ? activeElement
+          : globalThis.document.querySelector<HTMLTextAreaElement>(
+              ".mind-node__editor",
+            );
+      if (
+        hasInputMethodComposition(mountedEditor ?? activeElement) ||
+        globalThis.document.querySelector(
+          ".mind-node__editor[data-composing='true']",
+        )
       ) {
-        commitEdit(id, activeElement.value);
+        return;
+      }
+      if (mountedEditor) {
+        commitEdit(id, mountedEditor.value);
         return;
       }
       commitEdit(id, draftRef.current);

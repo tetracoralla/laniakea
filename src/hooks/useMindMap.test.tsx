@@ -384,6 +384,64 @@ describe("mind map save presentation", () => {
     );
   });
 
+  it("restores the new active document after an older in-flight save finishes", async () => {
+    persistence.desktopRuntime = true;
+    const oldSave = deferred<{ sourceHash: string }>();
+    persistence.saveLocalDocument.mockReturnValueOnce(oldSave.promise);
+    const nextDocument = createSeedDocument();
+    nextDocument.title = "切换后的文档";
+
+    function Harness() {
+      const mindMap = useMindMap();
+      return (
+        <>
+          <button
+            data-testid="edit-old"
+            onClick={() => mindMap.applyMutation((current) =>
+              setNodeText(current.document, current.document.rootId, "旧文档编辑"))}
+          >
+            编辑旧文档
+          </button>
+          <button
+            data-testid="switch"
+            onClick={() => mindMap.openDocument(
+              nextDocument,
+              "/tmp/切换后.md",
+              "/tmp/切换后.md",
+              false,
+              false,
+              "hash-next",
+            )}
+          >
+            切换文档
+          </button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      container.querySelector<HTMLButtonElement>("[data-testid='edit-old']")!.click();
+      await vi.advanceTimersByTimeAsync(320);
+      await Promise.resolve();
+    });
+    expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid='switch']")!.click();
+      oldSave.resolve({ sourceHash: "hash-old-saved" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(persistence.activateLocalDocument).toHaveBeenCalledWith(
+      "/tmp/切换后.md",
+    );
+  });
+
   it("waits for the latest save before approving a native application exit", async () => {
     let completeSave!: (value: { sourceHash: string }) => void;
     const pendingSave = new Promise<{ sourceHash: string }>((resolve) => {
@@ -434,6 +492,77 @@ describe("mind map save presentation", () => {
 
     await act(async () => {
       completeSave({ sourceHash: "hash-exit" });
+      await exitHandling;
+    });
+
+    expect(lifecycle.resolveApplicationExit).toHaveBeenCalledWith(true);
+  });
+
+  it("saves again when the document changes while native exit is waiting", async () => {
+    persistence.desktopRuntime = true;
+    const firstSave = deferred<{ sourceHash: string }>();
+    const secondSave = deferred<{ sourceHash: string }>();
+    persistence.saveLocalDocument
+      .mockReturnValueOnce(firstSave.promise)
+      .mockReturnValueOnce(secondSave.promise);
+
+    function Harness() {
+      const mindMap = useMindMap();
+      return (
+        <>
+          <button
+            data-testid="first-edit"
+            onClick={() =>
+              mindMap.applyMutation((current) =>
+                setNodeText(current.document, current.document.rootId, "第一笔编辑"),
+              )
+            }
+          >
+            第一笔编辑
+          </button>
+          <button
+            data-testid="late-edit"
+            onClick={() =>
+              mindMap.applyMutation((current) =>
+                setNodeText(current.document, current.document.rootId, "保存期间的新编辑"),
+              )
+            }
+          >
+            保存期间继续编辑
+          </button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      container.querySelector<HTMLButtonElement>("[data-testid='first-edit']")!.click();
+    });
+
+    let exitHandling!: Promise<void>;
+    await act(async () => {
+      exitHandling = Promise.resolve(lifecycle.exitHandler?.());
+      await Promise.resolve();
+    });
+    expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid='late-edit']")!.click();
+      firstSave.resolve({ sourceHash: "hash-first" });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(2);
+    expect(lifecycle.resolveApplicationExit).not.toHaveBeenCalled();
+    const latestSaved = persistence.saveLocalDocument.mock.calls[1][0];
+    expect(latestSaved.nodes[latestSaved.rootId].text).toBe("保存期间的新编辑");
+
+    await act(async () => {
+      secondSave.resolve({ sourceHash: "hash-second" });
       await exitHandling;
     });
 
@@ -498,8 +627,12 @@ describe("mind map save presentation", () => {
     );
     const preventDefault = vi.fn();
     function Harness() {
-      useMindMap();
-      return null;
+      const mindMap = useMindMap();
+      return (
+        <output data-testid="lifecycle-blocked">
+          {mindMap.lifecycleSaveBlockedRequest}
+        </output>
+      );
     }
 
     await act(async () => root.render(<Harness />));
@@ -514,6 +647,10 @@ describe("mind map save presentation", () => {
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(lifecycle.hide).not.toHaveBeenCalled();
+    expect(
+      container.querySelector("[data-testid='lifecycle-blocked']")
+        ?.textContent,
+    ).toBe("1");
   });
 
   it("hides the window only after its close-triggered save completes", async () => {

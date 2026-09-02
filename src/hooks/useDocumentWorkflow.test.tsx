@@ -1176,6 +1176,134 @@ describe("document workflow", () => {
     });
   });
 
+  it("writes the latest browser document after the Save As picker resolves", async () => {
+    mocks.desktopRuntime = false;
+    const picker = deferred<{
+      createWritable: () => Promise<{
+        write: (data: string | ArrayBuffer) => Promise<void>;
+        close: () => Promise<void>;
+      }>;
+    }>();
+    const write = vi.fn(async () => undefined);
+    Object.defineProperty(window, "showSaveFilePicker", {
+      configurable: true,
+      value: vi.fn(() => picker.promise),
+    });
+
+    function Harness() {
+      const [document, setDocument] = useState(createSeedDocument());
+      const workflow = useDocumentWorkflow({
+        document,
+        documentPath: "browser://laniakea/current",
+        currentDocumentPath: "browser://laniakea/current",
+        recentDocuments: [],
+        saveState: "saved",
+        saveError: null,
+        notify: vi.fn(),
+        newDocument: async () => preparedNewDocument(),
+        openDocument: vi.fn(),
+        replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true),
+        retrySave: vi.fn(async () => true),
+        saveBeforeSwitch: vi.fn(async () => true),
+        beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true),
+        removeRecentDocument: vi.fn(),
+      });
+      return (
+        <>
+          <button data-testid="save" onClick={() => void workflow.saveAsMarkdownDocument()}>
+            另存为
+          </button>
+          <button data-testid="edit" onClick={() => setDocument((current) => ({
+            ...current,
+            nodes: {
+              ...current.nodes,
+              [current.rootId]: {
+                ...current.nodes[current.rootId],
+                text: "对话框打开后的新内容",
+              },
+            },
+          }))}>
+            继续编辑
+          </button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-testid='save']")!.click();
+      await Promise.resolve();
+      container.querySelector<HTMLButtonElement>("[data-testid='edit']")!.click();
+    });
+    await act(async () => {
+      picker.resolve({
+        createWritable: async () => ({
+          write,
+          close: async () => undefined,
+        }),
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(write).toHaveBeenCalledWith(
+      expect.stringContaining("对话框打开后的新内容"),
+    );
+  });
+
+  it("routes Save to Save As for a protected browser Markdown source", async () => {
+    mocks.desktopRuntime = false;
+    const showSaveFilePicker = vi.fn(async () => ({
+      createWritable: async () => ({
+        write: async () => undefined,
+        close: async () => undefined,
+      }),
+    }));
+    Object.defineProperty(window, "showSaveFilePicker", {
+      configurable: true,
+      value: showSaveFilePicker,
+    });
+    const retrySave = vi.fn(async () => true);
+
+    function Harness() {
+      const workflow = useDocumentWorkflow({
+        document: createSeedDocument(),
+        documentPath: "browser://laniakea/protected-copy",
+        currentDocumentPath: "browser://laniakea/protected-copy",
+        protectedBrowserSourceName: "复杂原文.md",
+        recentDocuments: [],
+        saveState: "saved",
+        saveError: null,
+        notify: vi.fn(),
+        newDocument: async () => preparedNewDocument(),
+        openDocument: vi.fn(),
+        replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true),
+        retrySave,
+        saveBeforeSwitch: vi.fn(async () => true),
+        beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true),
+        removeRecentDocument: vi.fn(),
+      });
+      return <button onClick={() => void workflow.saveCurrentDocument()}>保存</button>;
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelector("button")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(showSaveFilePicker).toHaveBeenCalledOnce();
+    expect(retrySave).not.toHaveBeenCalled();
+  });
+
   it("restores rich Markdown if the save picker clears the protected source before rejecting it", async () => {
     mocks.desktopRuntime = false;
     const originalSource =

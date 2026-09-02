@@ -56,6 +56,49 @@ describe("editor session lifecycle", () => {
     expect(session!.editingId).toBeNull();
   });
 
+  it("commits the mounted editor value after native focus already left it", async () => {
+    const mindMap = createBlankDocument();
+    const applyMutation = vi.fn();
+    let session: ReturnType<typeof useEditorSession> | null = null;
+
+    function Harness() {
+      session = useEditorSession({
+        document: mindMap,
+        selection: singleSelection(mindMap.rootId),
+        applyMutation,
+        selectNode: vi.fn(),
+        notify: vi.fn(),
+        undo: vi.fn(),
+      });
+      return session.editingId ? (
+        <textarea
+          className="mind-node__editor"
+          defaultValue={session.draft}
+        />
+      ) : null;
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => session!.beginEdit(mindMap.rootId));
+    const editor = container.querySelector("textarea")!;
+    editor.value = "输入事件落后于原生失焦的内容";
+    document.body.tabIndex = -1;
+    document.body.focus();
+
+    await act(async () => {
+      window.dispatchEvent(new Event("blur"));
+    });
+
+    expect(applyMutation).toHaveBeenCalledOnce();
+    const mutation = applyMutation.mock.calls[0][0]({
+      document: mindMap,
+      selection: singleSelection(mindMap.rootId),
+    });
+    expect(mutation.document.nodes[mindMap.rootId].text).toBe(
+      "输入事件落后于原生失焦的内容",
+    );
+  });
+
   it("turns a requested document fit into a monotonic render token", async () => {
     const mindMap = createBlankDocument();
     let session: ReturnType<typeof useEditorSession> | null = null;

@@ -12,6 +12,7 @@ import {
 } from "../../commands/registry";
 import type { MindMapDocument } from "../../types/mindmap";
 import { findMindNode } from "../../model/spaces";
+import { isInputMethodKey } from "../../model/inputMethod";
 import { Icon } from "../icons/Icon";
 import { trapDialogTab } from "../overlays/focus";
 
@@ -156,13 +157,20 @@ export function CommandOverlay({
     inputRef.current?.focus();
   }, []);
 
-  useEffect(() => setActiveIndex(0), [query, mode]);
+  useEffect(() => {
+    setQuery("");
+    setActiveIndex(0);
+  }, [mode]);
+
+  useEffect(() => setActiveIndex(0), [query]);
 
   const choose = (item: OverlayItem | undefined) => {
     if (!item) return;
+    // Close the current surface first so commands that open another overlay
+    // win the same React batch instead of being cleared immediately after.
+    onClose();
     if (item.command) onExecute(item.command.id);
     else if (item.nodeId) onSelectNode(item.nodeId, item.spaceId);
-    onClose();
   };
 
   return (
@@ -176,7 +184,15 @@ export function CommandOverlay({
         aria-label={mode === "commands" ? "命令面板" : "搜索内容"}
         aria-modal="true"
         className="command-overlay"
-        onKeyDown={(event) => trapDialogTab(event, dialogRef)}
+        onKeyDown={(event) => {
+          if (isInputMethodKey(event.nativeEvent)) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+            return;
+          }
+          trapDialogTab(event, dialogRef);
+        }}
         ref={dialogRef}
         role="dialog"
       >
@@ -194,10 +210,7 @@ export function CommandOverlay({
             aria-label={mode === "commands" ? "搜索命令" : "搜索内容"}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                onClose();
-              }
+              if (isInputMethodKey(event.nativeEvent)) return;
               if (event.key === "ArrowDown") {
                 event.preventDefault();
                 setActiveIndex((index) =>

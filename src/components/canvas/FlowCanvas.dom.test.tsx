@@ -237,6 +237,50 @@ describe("FlowCanvas", () => {
     );
   });
 
+  it("commits final IME text after composition-time blur", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const space = flowSpaceForNode(created.document, "path")!;
+    const onCommitEdit = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={created.selectedFlowNodeId}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onCommitEdit={onCommitEdit}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDraftChange={() => undefined}
+          onSelect={() => undefined}
+          onViewportChange={() => undefined}
+          selectedId={created.selectedFlowNodeId}
+          space={space}
+        />,
+      );
+    });
+    const editor = container.querySelector<HTMLTextAreaElement>(".flow-node__editor")!;
+    await act(async () => {
+      editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      editor.value = "liu cheng";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.blur();
+    });
+    expect(onCommitEdit).not.toHaveBeenCalled();
+
+    await act(async () => {
+      editor.value = "流程";
+      editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    });
+    expect(onCommitEdit).toHaveBeenCalledOnce();
+    expect(onCommitEdit).toHaveBeenCalledWith(created.selectedFlowNodeId, "流程");
+  });
+
   it("keeps Shift+Enter as a newline instead of committing", async () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
@@ -331,6 +375,57 @@ describe("FlowCanvas", () => {
       expect.any(String),
       "已通过",
     );
+  });
+
+  it("waits for final IME text when a branch label blurs during composition", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const branched = addFlowBranch(initial, created.selectedFlowNodeId).space;
+    const onChangeEdgeLabel = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={onChangeEdgeLabel}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDraftChange={() => undefined}
+          onSelect={() => undefined}
+          onViewportChange={() => undefined}
+          selectedId={created.selectedFlowNodeId}
+          space={branched}
+        />,
+      );
+    });
+    const label = Array.from(
+      container.querySelectorAll<HTMLButtonElement>(".flow-edge-label"),
+    ).find((button) => button.textContent === "否")!;
+    await act(async () => label.click());
+    const editor = container.querySelector<HTMLInputElement>(
+      ".flow-edge-label__editor",
+    )!;
+    await act(async () => {
+      editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      editor.value = "tong guo";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.blur();
+    });
+    expect(onChangeEdgeLabel).not.toHaveBeenCalled();
+
+    await act(async () => {
+      editor.value = "通过";
+      editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    });
+    expect(onChangeEdgeLabel).toHaveBeenCalledOnce();
+    expect(onChangeEdgeLabel).toHaveBeenCalledWith(expect.any(String), "通过");
   });
 
   it("connects two different sources to one existing target through direct drag", async () => {
