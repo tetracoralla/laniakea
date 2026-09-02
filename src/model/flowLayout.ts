@@ -17,6 +17,7 @@ import {
   type NodeTextStyle,
   type TextWidthMeasurer,
 } from "./layout";
+import { flowSpaceToSemanticGraph } from "./flowGraphAdapter";
 
 export interface FlowLayoutNode {
   id: string;
@@ -128,7 +129,8 @@ export function computeFlowLayout(
   space: FlowSpace,
   measureTextWidth?: TextWidthMeasurer,
 ): FlowLayoutResult {
-  const ids = Object.keys(space.nodes);
+  const semanticGraph = flowSpaceToSemanticGraph(space);
+  const ids = semanticGraph.nodes.map((node) => node.id);
   if (ids.length === 0) {
     return {
       nodes: {},
@@ -140,10 +142,10 @@ export function computeFlowLayout(
   }
   const incoming = new Map(ids.map((id) => [id, 0]));
   const outgoing = new Map(ids.map((id) => [id, [] as string[]]));
-  space.edges.forEach((edge) => {
-    if (!space.nodes[edge.from] || !space.nodes[edge.to]) return;
-    incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
-    outgoing.get(edge.from)?.push(edge.to);
+  semanticGraph.relations.forEach((relation) => {
+    if (!space.nodes[relation.source] || !space.nodes[relation.target]) return;
+    incoming.set(relation.target, (incoming.get(relation.target) ?? 0) + 1);
+    outgoing.get(relation.source)?.push(relation.target);
   });
 
   const roots = ids
