@@ -12,6 +12,7 @@ import {
   type PortSide,
   type RouteJump,
 } from "@openadam/graph-projection";
+import { compileGraphView } from "@openadam/graph-projection/compiler";
 import {
   estimateTextWidth,
   type NodeTextStyle,
@@ -56,6 +57,12 @@ const emptyStepPlaceholder = "输入步骤";
 
 const flowFontStyle: NodeTextStyle = {
   fontSize: 14,
+  fontWeight: 570,
+  letterSpacing: 0,
+};
+
+const flowEdgeLabelFontStyle: NodeTextStyle = {
+  fontSize: 10,
   fontWeight: 570,
   letterSpacing: 0,
 };
@@ -332,6 +339,60 @@ function fromProjectionRoute(route: OrthogonalRoute): FlowConnectorRoute {
     toPort: fromProjectionPort(route.targetPort),
     points: route.points,
   };
+}
+
+export interface CompiledFlowConnector {
+  edgeId: string;
+  fromId: string;
+  route: FlowConnectorRoute;
+  toId: string;
+}
+
+export function compileFlowConnectors(
+  space: FlowSpace,
+  layout: FlowLayoutResult,
+  measureTextWidth?: TextWidthMeasurer,
+): CompiledFlowConnector[] {
+  const semanticGraph = flowSpaceToSemanticGraph(space);
+  const plan = compileGraphView({
+    graph: semanticGraph,
+    nodeSizes: Object.fromEntries(
+      semanticGraph.nodes.map((node) => {
+        const positioned = layout.nodes[node.id];
+        return [node.id, {
+          width: positioned?.width ?? stepNodeWidth,
+          height: positioned?.height ?? stepNodeHeight,
+        }];
+      }),
+    ),
+    labelSizes: Object.fromEntries(
+      semanticGraph.relations.flatMap((relation) => relation.label === undefined
+        ? []
+        : [[relation.id, {
+            width: Math.max(32, Math.ceil(
+              (measureTextWidth
+                ? measureTextWidth(relation.label, flowEdgeLabelFontStyle)
+                : estimateTextWidth(relation.label, flowEdgeLabelFontStyle)) + 16,
+            )),
+            height: 24,
+          }] as const]),
+    ),
+    profile: {
+      type: "fixed",
+      positions: Object.fromEntries(
+        semanticGraph.nodes.map((node) => [node.id, {
+          x: layout.nodes[node.id]?.x ?? 0,
+          y: layout.nodes[node.id]?.y ?? 0,
+        }]),
+      ),
+    },
+  });
+  return plan.edges.map((edge) => ({
+    edgeId: edge.id,
+    fromId: edge.source,
+    route: fromProjectionRoute(edge.route),
+    toId: edge.target,
+  }));
 }
 
 export function flowConnectorRoute(

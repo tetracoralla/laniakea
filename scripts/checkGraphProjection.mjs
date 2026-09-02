@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-const dependency = "file:vendor/openadam-graph-projection-0.2.0.tgz";
-const filename = "openadam-graph-projection-0.2.0.tgz";
+const dependency = "file:vendor/openadam-graph-projection-0.3.0.tgz";
+const filename = "openadam-graph-projection-0.3.0.tgz";
 const manifest = JSON.parse(await readFile("package.json", "utf8"));
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const tarball = await readFile(`vendor/${filename}`);
@@ -19,15 +19,18 @@ assert.equal(checksum[1], filename);
 assert.match(checksum[0], /^[a-f0-9]{64}$/u);
 assert.equal(createHash("sha256").update(tarball).digest("hex"), checksum[0]);
 assert.equal(installed.name, "@openadam/graph-projection");
-assert.equal(installed.version, "0.2.0");
+assert.equal(installed.version, "0.3.0");
 
 const projection = await import("@openadam/graph-projection");
 const semantic = await import("@openadam/graph-projection/semantic");
+const compiler = await import("@openadam/graph-projection/compiler");
 assert.deepEqual(projection.endpointStylesForDirection("directed"), {
   source: "none",
   target: "arrow",
 });
 assert.equal(semantic.SEMANTIC_GRAPH_VERSION, 1);
 assert.equal(typeof semantic.sliceSemanticGraph, "function");
+assert.equal(compiler.GRAPH_VIEW_PLAN_VERSION, 1);
+assert.equal(typeof compiler.compileGraphView, "function");
 
 process.stdout.write("Graph Projection package checks passed.\n");

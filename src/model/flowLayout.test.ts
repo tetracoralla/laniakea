@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FlowNode, FlowSpace } from "../types/mindmap";
 import {
+  compileFlowConnectors,
   computeFlowLayout,
   flowConnectorCrossings,
   flowConnectorDeleteAnchor,
@@ -38,6 +39,40 @@ const measurePerGlyph =
     Array.from(text).length * glyphWidth;
 
 describe("computeFlowLayout node sizing", () => {
+  it("compiles the visible flow through one fixed graph view plan", () => {
+    const flow = spaceWith(
+      [
+        node("decision", "decision", "是否通过"),
+        node("left", "step", "返工"),
+        node("right", "step", "发布"),
+      ],
+      [
+        ["decision", "left"],
+        ["decision", "right"],
+      ],
+    );
+    flow.edges = flow.edges.map((edge, index) => ({
+      ...edge,
+      label: index === 0 ? "否" : "是",
+      fromPort: "down",
+      toPort: "up",
+    }));
+    const layout = computeFlowLayout(flow, measurePerGlyph(14));
+    const connectors = compileFlowConnectors(flow, layout, measurePerGlyph(6));
+
+    expect(connectors.map((connector) => connector.edgeId)).toEqual(["edge-0", "edge-1"]);
+    expect(connectors.every((connector) =>
+      connector.route.fromPort === "down" && connector.route.toPort === "up"
+    )).toBe(true);
+    expect(new Set(connectors.map((connector) => connector.route.start.x)).size).toBe(2);
+    expect(connectors.every((connector) =>
+      connector.route.points.slice(0, -1).every((point, pointIndex) => {
+        const next = connector.route.points[pointIndex + 1];
+        return Math.abs(point.x - next.x) < 0.01 || Math.abs(point.y - next.y) < 0.01;
+      })
+    )).toBe(true);
+  });
+
   it("keeps short single-line steps at the base pill size", () => {
     const space = spaceWith(
       [

@@ -15,7 +15,7 @@
 自身产物，普通用户不需要单独安装 Node 或图引擎。共享包正式发布到 npm 后，依赖只需
 从随附压缩包切换到同一精确版本号；Flow 数据格式与业务代码不变。
 切换前必须确认官方 registry 上的
-`npm view @openadam/graph-projection@0.2.0 version` 已能解析；当前检查为 `404`，因此继续
+`npm view @openadam/graph-projection@0.3.0 version` 已能解析；当前检查为 `404`，因此继续
 保留随仓压缩包是明确的阻塞决策，不以尚不存在的 semver 包冒充可安装依赖。
 
 ## 首次公开发布（已完成）

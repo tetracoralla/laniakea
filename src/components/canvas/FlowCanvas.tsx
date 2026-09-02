@@ -399,8 +399,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
           }}
         >
           <FlowEdgeLayer
-            edges={space.edges}
             layout={layout}
+            measureTextWidth={measureTextWidth}
             onChangeLabel={onChangeEdgeLabel}
             onDeleteEdge={(edgeId) => {
               onDeleteEdge(edgeId);
@@ -412,6 +412,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             onEndpointPointerDown={edgeReconnect.begin}
             onSelectEdge={selectEdge}
             selectedEdgeId={selectedEdgeId}
+            space={space}
             spaceId={space.id}
           />
 
