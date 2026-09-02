@@ -175,6 +175,50 @@ describe("node drag geometry", () => {
     ).toEqual({ blockedByDraggedSubtree: false, targetId: null });
   });
 
+  it("keeps same-parent reordering stable when dense parent zones overlap", () => {
+    const denseLayout: LayoutResult = {
+      ...layout,
+      nodes: {
+        currentParent: {
+          ...layout.nodes.target,
+          id: "currentParent",
+          x: 420,
+          y: 220,
+          depth: 3,
+        },
+        nearbyParent: {
+          ...layout.nodes.target,
+          id: "nearbyParent",
+          x: 450,
+          y: 184,
+          depth: 3,
+        },
+      },
+      visibleIds: ["currentParent", "nearbyParent"],
+    };
+    const firstSlotProbe = { x: 696, y: 190, width: 112, height: 36 };
+
+    expect(
+      nodeDropParentHitTest(
+        denseLayout,
+        firstSlotProbe,
+        new Set(),
+        1,
+        denseLayout.visibleIds,
+      ),
+    ).toEqual({ blockedByDraggedSubtree: false, targetId: "nearbyParent" });
+    expect(
+      nodeDropParentHitTest(
+        denseLayout,
+        firstSlotProbe,
+        new Set(),
+        1,
+        denseLayout.visibleIds,
+        "currentParent",
+      ),
+    ).toEqual({ blockedByDraggedSubtree: false, targetId: "currentParent" });
+  });
+
   it("keeps a blank-canvas drop inside the usable content area", () => {
     expect(
       floatingPositionFromPointer(

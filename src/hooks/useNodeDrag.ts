@@ -52,6 +52,7 @@ interface NodeDragGesture {
   startClient: CanvasPoint;
   grabOffset: CanvasPoint;
   minimumOffset: CanvasPoint;
+  originalParentId: string | null;
   excludedIds: Set<string>;
   startedFloating: boolean;
   moved: boolean;
@@ -198,7 +199,9 @@ function populatePreview(
   preview.style.width = `${bounds.maxX - bounds.minX}px`;
   roots.forEach((root) => {
     const item = preview.ownerDocument.createElement("div");
-    item.className = "node-drag-preview__item";
+    item.className = `node-drag-preview__item${
+      root.rootKind === "main" ? " node-drag-preview__item--root" : ""
+    }`;
     item.style.height = `${root.height}px`;
     item.style.left = `${root.x - bounds.minX}px`;
     item.style.top = `${root.y - bounds.minY}px`;
@@ -210,7 +213,9 @@ function populatePreview(
           ? 17
           : root.depth === 1
             ? 16
-            : 15
+            : root.depth === 2
+              ? 15
+              : 13
     }px`;
     item.style.fontWeight = String(
       root.rootKind === "main"
@@ -219,7 +224,9 @@ function populatePreview(
           ? 650
           : root.depth === 1
             ? 620
-            : 530,
+            : root.depth === 2
+              ? 530
+              : 500,
     );
     item.textContent = document.nodes[root.id]?.text ?? "";
     preview.append(item);
@@ -378,7 +385,6 @@ export function useNodeDrag({
     }
     const container = containerRef.current;
     if (container) {
-      delete container.dataset.nodeDragging;
       gesture?.roots.forEach(({ id }) => {
         const root = nodeElement(container, id);
         if (root) delete root.dataset.nodeDragging;
@@ -520,6 +526,12 @@ export function useNodeDrag({
         }),
         { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY },
       );
+      const parentIds = new Set(
+        roots.map(({ id: rootId }) => currentDocument.nodes[rootId]?.parentId),
+      );
+      const originalParentId = parentIds.size === 1
+        ? ([...parentIds][0] ?? null)
+        : null;
       gestureRef.current = {
         document: currentDocument,
         pointerId: event.pointerId,
@@ -532,6 +544,7 @@ export function useNodeDrag({
           y: point.y - source.y,
         },
         minimumOffset,
+        originalParentId,
         excludedIds,
         startedFloating: roots.every(
           ({ id: rootId }) => currentLayout.nodes[rootId]?.rootKind === "floating",
@@ -623,6 +636,7 @@ export function useNodeDrag({
         gesture.excludedIds,
         scale,
         candidateIds,
+        gesture.originalParentId,
       );
       const targetId = hit.targetId;
       const nextDropPosition = targetId
@@ -656,7 +670,6 @@ export function useNodeDrag({
         // Drag-only feedback is intentionally independent from React state.
         // Updating five parent states here reconciled every mounted overview
         // node even though only roots, one target, and one preview can change.
-        container.dataset.nodeDragging = "true";
         gesture.roots.forEach(({ id }) => {
           const root = nodeElement(container, id);
           if (root) root.dataset.nodeDragging = "true";

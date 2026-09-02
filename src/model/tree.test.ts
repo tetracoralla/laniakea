@@ -14,6 +14,7 @@ import {
   deleteSelectedSubtrees,
   deleteSubtree,
   indentNode,
+  insertParent,
   moveNode,
   outdentNode,
   pasteSubtrees,
@@ -121,6 +122,70 @@ describe("tree mutations", () => {
       "experience-2",
       "experience-3",
     ]);
+  });
+
+  it("inserts an editable parent without moving or flattening the selected branch", () => {
+    const document = createSeedDocument();
+    const originalChildren = document.nodes["experience-2"].children;
+    const result = insertParent(
+      document,
+      "experience-2",
+      "新增父节点",
+      "inserted-parent",
+    );
+
+    expect(result.document.nodes.experience.children).toEqual([
+      "experience-1",
+      "inserted-parent",
+      "experience-3",
+    ]);
+    expect(result.document.nodes["inserted-parent"]).toMatchObject({
+      parentId: "experience",
+      children: ["experience-2"],
+      text: "新增父节点",
+    });
+    expect(result.document.nodes["experience-2"]).toMatchObject({
+      parentId: "inserted-parent",
+      children: originalChildren,
+    });
+    expect(result.selection).toEqual(singleSelection("inserted-parent"));
+    expect(document.nodes.experience.children).toEqual([
+      "experience-1",
+      "experience-2",
+      "experience-3",
+    ]);
+  });
+
+  it("wraps main and floating roots in place when inserting a parent", () => {
+    const document = detachSubtree(
+      createSeedDocument(),
+      "boundary",
+      { x: 760, y: 280 },
+    ).document;
+    const wrappedRoot = insertParent(
+      document,
+      document.rootId,
+      "新中心",
+      "new-root",
+    );
+    const wrappedFloating = insertParent(
+      wrappedRoot.document,
+      "boundary",
+      "浮动父节点",
+      "floating-parent",
+    );
+
+    expect(wrappedRoot.document.rootId).toBe("new-root");
+    expect(wrappedRoot.document.nodes.root.parentId).toBe("new-root");
+    expect(wrappedFloating.document.floatingRoots).toContainEqual({
+      id: "floating-parent",
+      x: 760,
+      y: 280,
+    });
+    expect(wrappedFloating.document.nodes.boundary.parentId).toBe(
+      "floating-parent",
+    );
+    expect(isMindMapDocument(wrappedFloating.document)).toBe(true);
   });
 
   it("deletes a node while preserving and reparenting its children", () => {

@@ -11,6 +11,7 @@ import { canvasZoomToFit, minCanvasZoom } from "../../model/zoom";
 import type {
   MindMapDocument,
   MindNode,
+  Viewport,
 } from "../../types/mindmap";
 import { TopBar } from "../chrome/TopBar";
 import { MindMapCanvas } from "./MindMapCanvas";
@@ -582,6 +583,68 @@ describe("rendered interaction regressions", () => {
     expect(
       container.querySelector("[data-node-id='node-30']"),
     ).not.toBeNull();
+  });
+
+  it("does not reclaim the viewport after panning away from an edited selection", async () => {
+    vi.useFakeTimers();
+    try {
+      const initial = largeDocument(3);
+      const committedViewports: Viewport[] = [];
+
+      function Harness() {
+        const [document, setDocument] = useState(initial);
+        return (
+          <MindMapCanvas
+            document={document}
+            draft={document.nodes["node-1"].text}
+            editingId="node-1"
+            onAttachNode={() => undefined}
+            onBeginEdit={() => undefined}
+            onCancelEdit={() => undefined}
+            onCommitEdit={() => undefined}
+            onDetachNode={() => undefined}
+            onDraftChange={() => undefined}
+            onPasteStructured={() => false}
+            onSelectionChange={() => undefined}
+            onSpaceTap={() => undefined}
+            onToggle={() => undefined}
+            onViewportChange={(viewport) => {
+              committedViewports.push(viewport);
+              setDocument((current) => ({ ...current, viewport }));
+            }}
+            selection={singleSelection("node-1")}
+          />
+        );
+      }
+
+      await act(async () => root.render(<Harness />));
+      const canvas = container.querySelector<HTMLElement>(
+        "[aria-label='思维导图画布']",
+      )!;
+
+      await act(async () => {
+        canvas.dispatchEvent(
+          new WheelEvent("wheel", {
+            bubbles: true,
+            cancelable: true,
+            deltaX: 900,
+            deltaY: 500,
+          }),
+        );
+        animationFrames.splice(0).forEach((callback) => callback(16));
+        vi.advanceTimersByTime(120);
+      });
+
+      expect(committedViewports).toEqual([
+        { x: -900, y: -500, zoom: 1 },
+      ]);
+      expect(
+        container.querySelector<HTMLElement>(".mindmap-canvas__content")
+          ?.style.transform,
+      ).toBe("translate3d(-900px, -500px, 0) scale(1)");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("flushes a pending wheel pan to its own surface when the document switches", async () => {
@@ -1213,7 +1276,7 @@ describe("rendered interaction regressions", () => {
     );
   });
 
-  it("keeps the edited node selected when blank canvas exits editing", async () => {
+  it("commits the edit and clears selection when blank canvas is clicked", async () => {
     const document = largeDocument(3);
 
     function Harness() {
@@ -1253,8 +1316,8 @@ describe("rendered interaction regressions", () => {
     const rootNode = container.querySelector<HTMLElement>(
       "[data-node-id='root']",
     )!;
-    expect(rootNode.classList.contains("is-selected")).toBe(true);
-    expect(rootNode.classList.contains("is-primary")).toBe(true);
+    expect(rootNode.classList.contains("is-selected")).toBe(false);
+    expect(rootNode.classList.contains("is-primary")).toBe(false);
   });
 
   it("keeps every first-level branch anchored when a descendant is collapsed", async () => {
@@ -1684,7 +1747,7 @@ describe("rendered interaction regressions", () => {
         nearTarget.y,
       );
     });
-    expect(canvas.dataset.nodeDragging).toBe("true");
+    expect(canvas.dataset.nodeDragging).toBeUndefined();
     expect(target.dataset.nodeDropTarget).toBe("true");
 
     await act(async () => {

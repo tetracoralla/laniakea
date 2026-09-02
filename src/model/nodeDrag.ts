@@ -253,6 +253,7 @@ export function nodeDropParentHitTest(
   excludedIds: ReadonlySet<string> = new Set(),
   screenToCanvasScale = 1,
   candidateIds: readonly string[] = layout.visibleIds,
+  preferredTargetId: string | null = null,
 ): NodeDropHit {
   let closestId: string | null = null;
   let closestSquaredDistance = Number.POSITIVE_INFINITY;
@@ -298,9 +299,17 @@ export function nodeDropParentHitTest(
       Math.max(0, forwardGap) ** 2 + verticalGap ** 2;
     const squaredDistanceToCenter = squaredCenterDistance(probe, node);
     if (
-      squaredDistance > closestSquaredDistance ||
-      (squaredDistance === closestSquaredDistance &&
-        squaredDistanceToCenter >= closestSquaredCenterDistance)
+      preferredTargetId !== null &&
+      closestId === preferredTargetId &&
+      id !== preferredTargetId
+    ) {
+      continue;
+    }
+    if (
+      id !== preferredTargetId &&
+      (squaredDistance > closestSquaredDistance ||
+        (squaredDistance === closestSquaredDistance &&
+          squaredDistanceToCenter >= closestSquaredCenterDistance))
     ) {
       continue;
     }

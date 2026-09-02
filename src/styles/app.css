@@ -465,10 +465,6 @@
   cursor: crosshair;
 }
 
-.mindmap-canvas[data-node-dragging="true"] {
-  cursor: grabbing;
-}
-
 .mindmap-canvas__content {
   position: absolute;
   top: 0;
@@ -557,7 +553,7 @@
   font-size: var(--fs-15);
   font-weight: var(--fw-node);
   line-height: 1.35;
-  text-align: center;
+  text-align: left;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -567,7 +563,7 @@
 .mind-node__editor-shell {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   overflow: visible;
 }
 
@@ -595,9 +591,9 @@
 
 .mind-node--leaf .mind-node__content,
 .mind-node--leaf .mind-node__editor-shell {
-  --node-padding-block: 9px;
-  --node-padding-inline: 16px;
-  font-size: 14px;
+  --node-padding-block: 8px;
+  --node-padding-inline: 14px;
+  font-size: var(--fs-13);
   font-weight: var(--fw-quiet);
 }
 
@@ -656,6 +652,8 @@
   font-size: var(--fs-19);
   font-weight: var(--fw-node-root);
   letter-spacing: 0.01em;
+  justify-content: center;
+  text-align: center;
   white-space: pre;
   overflow-wrap: normal;
   word-break: normal;
@@ -677,7 +675,12 @@
 }
 
 .mind-node[data-node-dragging="true"] {
+  cursor: grabbing;
   opacity: 0.32;
+}
+
+.mind-node[data-node-dragging="true"] .mind-node__content {
+  cursor: grabbing;
 }
 
 .mind-node[data-node-drop-target="true"] .mind-node__content {
@@ -721,7 +724,7 @@
   position: absolute;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 10px 18px;
   color: var(--ink);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
@@ -731,8 +734,13 @@
   line-height: 1.35;
   overflow: hidden;
   overflow-wrap: anywhere;
-  text-align: center;
+  text-align: left;
   white-space: pre-wrap;
+}
+
+.node-drag-preview__item--root {
+  justify-content: center;
+  text-align: center;
 }
 
 .node-drag-preview[data-drop-intent="retain"] {
@@ -784,7 +792,7 @@
   font: inherit;
   letter-spacing: inherit;
   line-height: inherit;
-  text-align: center;
+  text-align: left;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -807,6 +815,7 @@
 .mind-node--root .mind-node__editor {
   color: white;
   caret-color: white;
+  text-align: center;
 }
 
 .mind-node__disclosure {
@@ -1922,6 +1931,14 @@
   border: 0;
   font-size: var(--fs-15);
   font-weight: var(--fw-ui);
+}
+
+.command-overlay__search input:focus-visible {
+  box-shadow: none;
+}
+
+.command-overlay__search:focus-within > svg {
+  color: var(--ink);
 }
 
 .command-overlay__search > kbd {

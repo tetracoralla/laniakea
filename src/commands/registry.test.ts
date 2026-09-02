@@ -36,6 +36,13 @@ describe("command registry context isolation", () => {
     );
   });
 
+  it("routes Command-Enter to inserting a parent topic", () => {
+    const event = keyboardEvent("Enter", { metaKey: true });
+    expect(findCommandForEvent(event, "selection")?.id).toBe(
+      "node.insert-parent",
+    );
+  });
+
   it("normalizes macOS command shortcuts", () => {
     const event = keyboardEvent("k", { metaKey: true });
     expect(findCommandForEvent(event, "selection")?.id).toBe(

@@ -312,7 +312,7 @@ export function useCanvasGestures({
         current: point,
         additive: event.shiftKey,
         baseSelection: selection,
-        clickSelection: editingId === null ? emptySelection() : selection,
+        clickSelection: emptySelection(),
         previewSelection: selection,
         viewportMoved: false,
         canvasSize: { width: bounds.width, height: bounds.height },

@@ -93,6 +93,10 @@ describe("recent document file actions", () => {
     const actionMenu = container.querySelector<HTMLElement>(
       ".document-switcher__actions-menu",
     )!;
+    expect(actionMenu.closest(".document-switcher__list")).toBeNull();
+    expect(actionMenu.parentElement).toBe(
+      container.querySelector(".document-switcher__popover"),
+    );
     await act(async () => {
       actionMenu.dispatchEvent(
         new KeyboardEvent("keydown", {

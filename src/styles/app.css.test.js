@@ -6,13 +6,26 @@ const appStyles = readFileSync(new URL("./app.css", import.meta.url), "utf8");
 describe("node editor styles", () => {
   it("uses one vertically centered surface for display and editing", () => {
     expect(appStyles).toContain(
-      ".mind-node__content,\n.mind-node__editor-shell {\n  display: flex;\n  align-items: center;\n  justify-content: center;",
+      ".mind-node__content,\n.mind-node__editor-shell {\n  display: flex;\n  align-items: center;\n  justify-content: flex-start;",
     );
     expect(appStyles).toContain(
       ".mind-node__editor {\n  display: block;",
     );
     expect(appStyles).toContain("  padding: 0;");
     expect(appStyles).not.toContain("padding-block: calc(");
+  });
+
+  it("left-aligns branch text while keeping the center topic centered", () => {
+    expect(appStyles).toContain("  text-align: left;\n  white-space: pre-wrap;");
+    expect(appStyles).toContain(
+      ".mind-node--root .mind-node__content,\n.mind-node--root .mind-node__editor-shell {",
+    );
+    expect(appStyles).toContain(
+      ".node-drag-preview__item--root {\n  justify-content: center;\n  text-align: center;",
+    );
+    expect(appStyles).toContain(
+      ".mind-node--root .mind-node__editor {\n  color: white;\n  caret-color: white;\n  text-align: center;",
+    );
   });
 
   it("keeps overflowed editor lines and the caret reachable", () => {
@@ -109,8 +122,14 @@ describe("node editor styles", () => {
     expect(appStyles).toContain(
       ".mind-node--leaf .mind-node__content,\n.mind-node--leaf .mind-node__editor-shell {",
     );
-    expect(appStyles).toContain("  font-size: 14px;");
-    expect(appStyles).toContain("  --node-padding-inline: 16px;");
+    expect(appStyles).toContain("  font-size: var(--fs-13);");
+    expect(appStyles).toContain("  --node-padding-inline: 14px;");
+  });
+
+  it("does not paint the search field focus as a selected canvas object", () => {
+    expect(appStyles).toContain(
+      ".command-overlay__search input:focus-visible {\n  box-shadow: none;",
+    );
   });
 
   it("keeps flow creation and connection controls contextual to selection", () => {

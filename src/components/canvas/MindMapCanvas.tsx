@@ -140,6 +140,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       layout: LayoutResult;
       selection: SelectionState;
     } | null>(null);
+    const lastSingleSelectionIdRef = useRef(
+      selection.selectedIds.length === 1 ? selection.primaryId : null,
+    );
     const draftHeightLayoutRef = useRef<{
       base: LayoutResult;
       editingId: string;
@@ -598,20 +601,24 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     );
 
     useEffect(() => {
+      const selectedId =
+        selection.selectedIds.length === 1 ? selection.primaryId : null;
       const fitGuard = fitSelectionRevealGuardRef.current;
       if (fitGuard?.layout === layout && fitGuard.selection === selection) {
         fitSelectionRevealGuardRef.current = null;
+        lastSingleSelectionIdRef.current = selectedId;
         return;
       }
       fitSelectionRevealGuardRef.current = null;
-      if (
-        selection.selectedIds.length !== 1 ||
-        !selection.primaryId ||
-        selecting
-      ) {
-        return;
-      }
-      const node = layout.nodes[selection.primaryId];
+      if (selecting) return;
+      const previousSelectedId = lastSingleSelectionIdRef.current;
+      lastSingleSelectionIdRef.current = selectedId;
+      // A selection transition may reveal its new target for keyboard
+      // navigation. Layout refreshes, draft edits, and viewport persistence
+      // must never act as a watchdog that drags the user back to an already
+      // selected node after a deliberate pan.
+      if (!selectedId || selectedId === previousSelectedId) return;
+      const node = layout.nodes[selectedId];
       const bounds = containerRef.current?.getBoundingClientRect();
       if (!node || !bounds) return;
       const current = liveViewport.current;

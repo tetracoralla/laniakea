@@ -4,6 +4,7 @@ export type CommandId =
   | "node.create-sibling"
   | "node.create-above"
   | "node.create-child"
+  | "node.insert-parent"
   | "node.outdent"
   | "node.delete"
   | "node.delete-preserve"
@@ -69,6 +70,13 @@ export const commandRegistry: CommandDefinition[] = [
     id: "node.create-child",
     label: "创建子节点",
     shortcut: "Tab",
+    contexts: ["selection"],
+    group: "节点",
+  },
+  {
+    id: "node.insert-parent",
+    label: "创建父节点",
+    shortcut: "Meta+Enter",
     contexts: ["selection"],
     group: "节点",
   },

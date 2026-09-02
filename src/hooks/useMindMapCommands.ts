@@ -27,6 +27,7 @@ import {
   deleteNodePreserveChildren,
   deleteSelectedSubtrees,
   firstChildOf,
+  insertParent,
   moveNode,
   outdentNode,
   parentOf,
@@ -74,6 +75,7 @@ const singleSelectionCommands = new Set<CommandId>([
   "node.create-sibling",
   "node.create-above",
   "node.create-child",
+  "node.insert-parent",
   "node.outdent",
   "node.delete-preserve",
   "node.move-up",
@@ -200,6 +202,17 @@ export function useMindMapCommands({
           createAndEdit(
             (current, createdId) =>
               createChild(
+                current.document,
+                current.selection.primaryId!,
+                "",
+                createdId,
+              ),
+          );
+          break;
+        case "node.insert-parent":
+          createAndEdit(
+            (current, createdId) =>
+              insertParent(
                 current.document,
                 current.selection.primaryId!,
                 "",

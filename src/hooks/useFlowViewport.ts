@@ -58,6 +58,7 @@ export function useFlowViewport({
   const observedSize = useRef<{ width: number; height: number } | null>(null);
   const canvasPointerDownRef = useRef(onCanvasPointerDown);
   const layoutRef = useRef(layout);
+  const previousSelectedIdRef = useRef(selectedId);
 
   viewportChangeRef.current = onViewportChange;
   canvasPointerDownRef.current = onCanvasPointerDown;
@@ -116,7 +117,9 @@ export function useFlowViewport({
   // Only a selection change may auto-pan. Layout also changes on every text
   // edit; re-centering then would fight the user's manual pan.
   useEffect(() => {
-    if (!selectedId) return;
+    const previousSelectedId = previousSelectedIdRef.current;
+    previousSelectedIdRef.current = selectedId;
+    if (!selectedId || selectedId === previousSelectedId) return;
     const node = layoutRef.current.nodes[selectedId];
     const bounds = containerRef.current?.getBoundingClientRect();
     if (!node || !bounds) return;

@@ -68,7 +68,7 @@ function updateNode(
 
 function createNode(
   text: string,
-  parentId: string,
+  parentId: string | null,
   id = createNodeId(),
 ): MindNode {
   const now = new Date().toISOString();
@@ -175,6 +175,79 @@ export function createSibling(
 
   return {
     document: withTimestamp(document, nodes),
+    selection: singleSelection(created.id),
+  };
+}
+
+/**
+ * Inserts a new topic between the selected node and its current parent.
+ * Root and floating-root topics are wrapped in place so their canvas role and
+ * location transfer to the new parent instead of moving the existing branch.
+ */
+export function insertParent(
+  document: MindMapDocument,
+  childId: string,
+  text = "",
+  nodeId = createNodeId(),
+): DocumentMutation {
+  const child = document.nodes[childId];
+  if (!child) {
+    return { document, selection: singleSelection(document.rootId) };
+  }
+
+  const created = createNode(text, child.parentId, nodeId);
+  created.children = [child.id];
+  let nodes = {
+    ...document.nodes,
+    [created.id]: created,
+  };
+  nodes = updateNode(nodes, child.id, { parentId: created.id });
+
+  if (child.parentId) {
+    const parent = document.nodes[child.parentId];
+    if (!parent) {
+      return { document, selection: singleSelection(child.id) };
+    }
+    const childIndex = parent.children.indexOf(child.id);
+    if (childIndex < 0) {
+      return { document, selection: singleSelection(child.id) };
+    }
+    const children = [...parent.children];
+    children[childIndex] = created.id;
+    nodes = updateNode(nodes, parent.id, {
+      children,
+      collapsed: false,
+    });
+    return {
+      document: withTimestamp(document, nodes),
+      selection: singleSelection(created.id),
+    };
+  }
+
+  if (child.id === document.rootId) {
+    return {
+      document: {
+        ...withTimestamp(document, nodes),
+        rootId: created.id,
+      },
+      selection: singleSelection(created.id),
+    };
+  }
+
+  const floatingIndex = floatingRootIndex(document, child.id);
+  if (floatingIndex < 0) {
+    return { document, selection: singleSelection(child.id) };
+  }
+  const floatingRoots = [...document.floatingRoots];
+  floatingRoots[floatingIndex] = {
+    ...floatingRoots[floatingIndex],
+    id: created.id,
+  };
+  return {
+    document: {
+      ...withTimestamp(document, nodes),
+      floatingRoots,
+    },
     selection: singleSelection(created.id),
   };
 }
