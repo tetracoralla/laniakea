@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@openadam/graph-view-compiler": "0.3.0",
+    "@openadam/graph-view-compiler": "0.4.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "mdast-util-to-string": "^4.0.0",
