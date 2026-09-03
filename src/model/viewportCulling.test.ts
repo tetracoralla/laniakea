@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { LayoutResult } from "../types/mindmap";
 import {
   shareStableVisibleIds,
+  viewportOverscan,
   viewportNeedsRenderWindowRefresh,
   visibleLayoutNodeIds,
 } from "./viewportCulling";
@@ -34,6 +35,11 @@ function largeLayout(count: number): LayoutResult {
 }
 
 describe("viewport node culling", () => {
+  it("sizes overscan from the short viewport dimension on wide canvases", () => {
+    expect(viewportOverscan({ width: 1600, height: 1000 })).toBe(1000);
+    expect(viewportOverscan({ width: 320, height: 460 })).toBe(480);
+  });
+
   it("reuses an equivalent mounted-node list across transient interaction state", () => {
     const previous = ["a", "b", "c"];
     expect(shareStableVisibleIds(previous, ["a", "b", "c"])).toBe(previous);
@@ -50,7 +56,8 @@ describe("viewport node culling", () => {
     expect(ids.length).toBeGreaterThan(10);
     expect(ids.length).toBeLessThan(40);
     expect(ids).toContain("node-0");
-    expect(ids).toContain("node-30");
+    expect(ids).toContain("node-28");
+    expect(ids).not.toContain("node-29");
     expect(ids).not.toContain("node-100");
   });
 
@@ -92,5 +99,24 @@ describe("viewport node culling", () => {
         { width: 1200, height: 900 },
       ),
     ).toBe(true);
+  });
+
+  it("refreshes after material zoom-in so an overview mount can contract", () => {
+    const size = { width: 1200, height: 900 };
+
+    expect(
+      viewportNeedsRenderWindowRefresh(
+        { x: 300, y: 180, zoom: 0.08 },
+        { x: -250, y: -120, zoom: 0.24 },
+        size,
+      ),
+    ).toBe(true);
+    expect(
+      viewportNeedsRenderWindowRefresh(
+        { x: 0, y: 0, zoom: 1 },
+        { x: 0, y: 0, zoom: 1.2 },
+        size,
+      ),
+    ).toBe(false);
   });
 });

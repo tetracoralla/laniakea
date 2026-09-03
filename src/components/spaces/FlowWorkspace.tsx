@@ -40,6 +40,7 @@ import {
 export interface FlowWorkspaceHandle {
   fit: () => void;
   focusCanvas: () => void;
+  finishEditing: () => void;
   flushViewport: () => void;
   selectedId: () => string | null;
 }
@@ -53,6 +54,14 @@ interface FlowWorkspaceProps {
   notify: (notice: AppNotice) => void;
   onBack: () => void;
   onRedo: () => void;
+  onEditorDraftChange?: (
+    target: {
+      objectId: string;
+      objectKind: "flow-node" | "flow-edge";
+    },
+    value: string,
+  ) => void;
+  onEditorDraftFinish?: (cancelled: boolean) => void;
   onUndo: () => void;
   onUpdateSpace: (space: FlowSpace) => void;
   onPositionsChange?: (positions: Record<string, FlowNodePosition>) => void;
@@ -72,6 +81,8 @@ export const FlowWorkspace = forwardRef<
   notify,
   onBack,
   onRedo,
+  onEditorDraftChange = () => undefined,
+  onEditorDraftFinish = () => undefined,
   onUndo,
   onUpdateSpace,
   onPositionsChange = () => undefined,
@@ -97,13 +108,6 @@ export const FlowWorkspace = forwardRef<
   const appliedSpaceRef = useRef(space);
   if (appliedSpaceRef.current !== space) appliedSpaceRef.current = space;
   const editingIdRef = useRef<string | null>(editingId);
-
-  useImperativeHandle(ref, () => ({
-    fit: () => canvasRef.current?.fit(),
-    focusCanvas: () => canvasRef.current?.focusCanvas(),
-    flushViewport: () => canvasRef.current?.flushViewport(),
-    selectedId: () => selectedIdRef.current,
-  }), []);
 
   useEffect(() => {
     setSelectedId(initialSelectedId);
@@ -145,8 +149,9 @@ export const FlowWorkspace = forwardRef<
     editingIdRef.current = null;
     setEditingId(null);
     setDraft("");
+    onEditorDraftFinish(true);
     window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
-  }, []);
+  }, [onEditorDraftFinish]);
 
   const commitEdit = useCallback((nodeId: string, value: string) => {
     if (editingIdRef.current !== nodeId) return;
@@ -156,8 +161,30 @@ export const FlowWorkspace = forwardRef<
     applySpace(setFlowNodeText(current, nodeId, value));
     setEditingId(null);
     setDraft("");
+    onEditorDraftFinish(false);
     window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
-  }, [applySpace]);
+  }, [applySpace, onEditorDraftFinish]);
+
+  const changeDraft = useCallback((value: string) => {
+    setDraft(value);
+    const nodeId = editingIdRef.current;
+    if (!nodeId) return;
+    onEditorDraftChange({
+      objectId: nodeId,
+      objectKind: "flow-node",
+    }, value);
+  }, [onEditorDraftChange]);
+
+  useImperativeHandle(ref, () => ({
+    fit: () => canvasRef.current?.fit(),
+    focusCanvas: () => canvasRef.current?.focusCanvas(),
+    finishEditing: () => {
+      const nodeId = editingIdRef.current;
+      if (nodeId) commitEdit(nodeId, draft);
+    },
+    flushViewport: () => canvasRef.current?.flushViewport(),
+    selectedId: () => selectedIdRef.current,
+  }), [commitEdit, draft]);
 
   const addNext = useCallback((nodeId: string) => {
     const created = addFlowStepAfter(appliedSpaceRef.current, nodeId);
@@ -279,12 +306,13 @@ export const FlowWorkspace = forwardRef<
     setSelectedId(removed.nextSelectedId);
     setEditingId(null);
     editingIdRef.current = null;
+    onEditorDraftFinish(true);
     notify({
       message: "已删除流程步骤",
       actionLabel: "撤销",
       onAction: onUndo,
     });
-  }, [applySpace, notify, onUndo]);
+  }, [applySpace, notify, onEditorDraftFinish, onUndo]);
 
   const removeEdge = useCallback((edgeId: string) => {
     const next = deleteFlowEdge(appliedSpaceRef.current, edgeId);
@@ -326,7 +354,14 @@ export const FlowWorkspace = forwardRef<
       onConnect={connect}
       onDelete={remove}
       onDeleteEdge={removeEdge}
-      onDraftChange={setDraft}
+      onDraftChange={changeDraft}
+      onEdgeDraftChange={(edgeId, value) =>
+        onEditorDraftChange({
+          objectId: edgeId,
+          objectKind: "flow-edge",
+        }, value)
+      }
+      onEdgeDraftFinish={onEditorDraftFinish}
       onSelect={setSelectedId}
       onPositionsChange={onPositionsChange}
       onReconnectEdge={reconnectEdge}

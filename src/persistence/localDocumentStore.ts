@@ -39,6 +39,10 @@ interface BackendLoadResult {
   recoveredFromBackup: boolean;
   notice: string | null;
   sourceHash: string | null;
+  recoveredFromPending?: boolean;
+  recoveryGeneration?: number | null;
+  recoveryKind?: "restored" | "conflict" | "safe-copy" | null;
+  editorDraft?: EditorRecoveryDraft | null;
 }
 
 interface BackendSaveResult {
@@ -63,6 +67,24 @@ export interface DocumentLoadResult {
   viewStateRestored: boolean;
   sourceHash: string | null;
   protectedSourceName?: string | null;
+  recoveredFromPending?: boolean;
+  recoveryGeneration?: number | null;
+  recoveryEditorDraftGeneration?: number | null;
+  recoveryKind?: "restored" | "copy" | null;
+}
+
+export interface EditorRecoveryDraft {
+  formatVersion: 1;
+  sessionId: string;
+  generation: number;
+  checkpointGeneration: number;
+  documentPath: string | null;
+  sourceHash: string | null;
+  surface: "root-map" | "map" | "flow";
+  spaceId: string | null;
+  objectKind: "title" | "mind-node" | "flow-node" | "flow-edge";
+  objectId: string;
+  text: string;
 }
 
 export interface DocumentSaveResult {
@@ -72,6 +94,8 @@ export interface DocumentSaveResult {
 
 interface DocumentSaveOptions {
   viewportOnly?: boolean;
+  recoveryCheckpointGeneration?: number | null;
+  recoveryEditorDraftGeneration?: number | null;
 }
 
 export interface DraftDocumentResult {
@@ -143,7 +167,7 @@ async function parseBackendDocument(
     );
     if (!parsed.canOverwriteSource) {
       return {
-        document: parsed.document,
+        document: applyEditorRecoveryDraft(parsed.document, loaded.editorDraft),
         documentPath: null,
         sourcePath: loaded.documentPath,
         recoveredFromBackup: loaded.recoveredFromBackup,
@@ -153,6 +177,10 @@ async function parseBackendDocument(
         importedAsCopy: true,
         viewStateRestored: false,
         sourceHash: null,
+        recoveredFromPending: loaded.recoveredFromPending ?? false,
+        recoveryGeneration: loaded.recoveryGeneration ?? null,
+        recoveryEditorDraftGeneration: loaded.editorDraft?.generation ?? null,
+        recoveryKind: loaded.recoveredFromPending ? "restored" : null,
       };
     }
 
@@ -160,10 +188,10 @@ async function parseBackendDocument(
     let viewStateRestored = false;
     if (loaded.document) {
       try {
-        document = resolveProvisionalDocumentTitle(
+        document = applyEditorRecoveryDraft(resolveProvisionalDocumentTitle(
           parseMindMapDocument(loaded.document),
           titleFromPath(loaded.documentPath),
-        );
+        ), loaded.editorDraft);
         viewStateRestored = true;
       } catch {
         // The Markdown source remains authoritative if its local view cache
@@ -181,14 +209,18 @@ async function parseBackendDocument(
       importedAsCopy: false,
       viewStateRestored,
       sourceHash: loaded.sourceHash ?? null,
+      recoveredFromPending: loaded.recoveredFromPending ?? false,
+      recoveryGeneration: loaded.recoveryGeneration ?? null,
+      recoveryEditorDraftGeneration: loaded.editorDraft?.generation ?? null,
+      recoveryKind: loaded.recoveryKind === "restored" ? "restored" : null,
     };
   }
 
   const nativeDocument = loaded.document
-    ? resolveProvisionalDocumentTitle(
+    ? applyEditorRecoveryDraft(resolveProvisionalDocumentTitle(
         parseMindMapDocument(loaded.document),
         titleFromPath(loaded.documentPath),
-      )
+      ), loaded.editorDraft)
     : null;
   const openingLegacyNativeFile = Boolean(
     nativeDocument && loaded.documentPath,
@@ -206,6 +238,85 @@ async function parseBackendDocument(
     importedAsCopy: openingLegacyNativeFile,
     viewStateRestored: Boolean(loaded.document),
     sourceHash: null,
+    recoveredFromPending: loaded.recoveredFromPending ?? false,
+    recoveryGeneration: loaded.recoveryGeneration ?? null,
+    recoveryEditorDraftGeneration: loaded.editorDraft?.generation ?? null,
+    recoveryKind: loaded.recoveryKind === "restored" ? "restored" : null,
+  };
+}
+
+function applyEditorRecoveryDraft(
+  document: MindMapDocument,
+  draft: EditorRecoveryDraft | null | undefined,
+): MindMapDocument {
+  if (!draft) return document;
+  if (draft.objectKind === "title") {
+    return document.title === draft.text
+      ? document
+      : { ...document, title: draft.text };
+  }
+  if (draft.objectKind === "mind-node") {
+    if (!draft.spaceId) {
+      const node = document.nodes[draft.objectId];
+      return !node || node.text === draft.text
+        ? document
+        : {
+            ...document,
+            nodes: {
+              ...document.nodes,
+              [node.id]: { ...node, text: draft.text },
+            },
+          };
+    }
+    const space = document.spaces?.[draft.spaceId];
+    if (!space || space.type !== "map") return document;
+    const node = space.nodes[draft.objectId];
+    if (!node || node.text === draft.text) return document;
+    return {
+      ...document,
+      spaces: {
+        ...document.spaces,
+        [space.id]: {
+          ...space,
+          nodes: {
+            ...space.nodes,
+            [node.id]: { ...node, text: draft.text },
+          },
+        },
+      },
+    };
+  }
+  const space = draft.spaceId ? document.spaces?.[draft.spaceId] : null;
+  if (!space || space.type !== "flow") return document;
+  if (draft.objectKind === "flow-node") {
+    const node = space.nodes[draft.objectId];
+    if (!node || node.text === draft.text) return document;
+    return {
+      ...document,
+      spaces: {
+        ...document.spaces,
+        [space.id]: {
+          ...space,
+          nodes: {
+            ...space.nodes,
+            [node.id]: { ...node, text: draft.text },
+          },
+        },
+      },
+    };
+  }
+  const edgeIndex = space.edges.findIndex(({ id }) => id === draft.objectId);
+  if (edgeIndex < 0 || space.edges[edgeIndex]?.label === draft.text) {
+    return document;
+  }
+  const edges = [...space.edges];
+  edges[edgeIndex] = { ...edges[edgeIndex], label: draft.text };
+  return {
+    ...document,
+    spaces: {
+      ...document.spaces,
+      [space.id]: { ...space, edges },
+    },
   };
 }
 
@@ -376,7 +487,33 @@ export async function loadLocalDocument(): Promise<DocumentLoadResult> {
   try {
     const loaded = await invoke<BackendLoadResult>("load_local_document");
     if (loaded.document || loaded.outlineContent !== null) {
-      return parseBackendDocument(loaded);
+      const parsed = await parseBackendDocument(loaded);
+      if (
+        loaded.recoveredFromPending &&
+        loaded.recoveryKind !== "restored" &&
+        parsed.document
+      ) {
+        const created = await createMarkdownDraft(parsed.document, true);
+        await discardDesktopPendingRecovery();
+        return {
+          ...parsed,
+          documentPath: created.documentPath,
+          sourcePath: created.documentPath,
+          sourceHash: created.sourceHash,
+          sourceFormat: "markdown",
+          importedAsCopy: false,
+          viewStateRestored: true,
+          recoveredFromPending: true,
+          recoveryGeneration: null,
+          recoveryEditorDraftGeneration: null,
+          recoveryKind: "copy",
+          notice:
+            loaded.recoveryKind === "safe-copy"
+              ? "恢复内容连续中断，已在安全副本中打开。"
+              : "原文件已有变化，恢复内容已保留为独立副本。",
+        };
+      }
+      return parsed;
     }
 
     const legacy = readLegacyDocument();
@@ -460,6 +597,18 @@ export async function saveLocalDocument(
         expectedSourceHash,
         protectedSourcePath,
         viewportOnly,
+        ...(options.recoveryCheckpointGeneration != null
+          ? {
+              recoveryCheckpointGeneration:
+                options.recoveryCheckpointGeneration,
+            }
+          : {}),
+        ...(options.recoveryEditorDraftGeneration != null
+          ? {
+              recoveryEditorDraftGeneration:
+                options.recoveryEditorDraftGeneration,
+            }
+          : {}),
         markdownContent:
           isMarkdownDocumentPath(documentPath) && !viewportOnly
           ? documentToMarkdown(document)
@@ -499,6 +648,11 @@ export async function saveLocalDocument(
   } catch (error) {
     throw friendlySaveError(error);
   }
+}
+
+export async function discardDesktopPendingRecovery(): Promise<void> {
+  if (!isDesktopRuntime()) return;
+  await invoke("discard_pending_recovery");
 }
 
 export async function createMarkdownDraft(

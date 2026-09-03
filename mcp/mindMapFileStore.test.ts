@@ -4,6 +4,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -18,6 +19,7 @@ import {
   readMindMapFile,
   markdownRevision,
   removeStaleLockIfUnchanged,
+  updateLockPath,
   updateMindMapFile,
 } from "./mindMapFileStore";
 
@@ -32,6 +34,12 @@ describe("Laniakea Agent Markdown file store", () => {
     await rm(workspace, { recursive: true, force: true });
   });
 
+  it("shares the desktop canonical-path lock naming contract", () => {
+    expect(updateLockPath("/tmp/方案.md")).toBe(
+      "/tmp/.laniakea-lock-1dd1bad2ed9e0344d0c85c386dd1e6ff",
+    );
+  });
+
   it("creates a new file but never overwrites an existing destination", async () => {
     const filePath = join(workspace, "map.md");
     await createMindMapFile(filePath, "Plan", {
@@ -44,6 +52,25 @@ describe("Laniakea Agent Markdown file store", () => {
     ).rejects.toMatchObject({ code: "already_exists" });
     expect(await readFile(filePath, "utf8")).toContain("First");
     expect(await readFile(filePath, "utf8")).not.toContain("Forbidden");
+  });
+
+  it("serializes first creation through the canonical parent lock", async () => {
+    const realDirectory = join(workspace, "real");
+    const aliasDirectory = join(workspace, "alias");
+    await mkdir(realDirectory);
+    await symlink(realDirectory, aliasDirectory, "dir");
+    const canonicalPath = join(await realpath(realDirectory), "new-map.md");
+    const aliasPath = join(aliasDirectory, "new-map.md");
+    const lockPath = updateLockPath(canonicalPath);
+    await writeFile(lockPath, `${process.pid}\n`, "utf8");
+
+    const creating = createMindMapFile(aliasPath, "Plan", { text: "Root" });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await expect(lstat(canonicalPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await rm(lockPath);
+    await expect(creating).resolves.toMatchObject({ filePath: aliasPath });
+    expect(await readFile(canonicalPath, "utf8")).toContain("# Plan");
   });
 
   it("rejects a stale update without changing the newer Markdown", async () => {

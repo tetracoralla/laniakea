@@ -96,6 +96,9 @@ MCP 可预期失败必须返回 `isError: true`，并在 `structuredContent.erro
 
 ## 桌面文件、恢复与退出序列
 
+恢复候选的格式、代次、合并与故障注入边界见
+[`crash-recovery-design.md`](crash-recovery-design.md)；它是语义设计，不是当前运行通过记录。
+
 - 新建立即生成独立 Markdown 草稿；打开/导入/另存前先保存当前文档。用户目录文件
   与应用草稿的另存语义不同，但 UI 只呈现一个“另存为”：草稿成功迁移后才清旧稿，
   用户文件则保留原件并切换绑定。
@@ -203,8 +206,15 @@ p50/p95/p99，搜索全扫描，500/5,000 节点响应字节，100-operation upd
 这个用例只防止重新退化成逐节点扫描，不替代真实浏览器的 input-to-visible 帧测量。
 在本机安装 Chrome，或通过 `CHROME_PATH` 指定兼容浏览器后，运行
 `npm run measure:overview-drag` 可从真实文件导入入口建立 10,000 节点临时文档，
-在 1600×1000 概览态执行真实 pointer 序列并输出帧分布。它只检查节点/错误残留并
-报告 `baseline_only`，不以内置毫秒阈值代替当前环境比较或 owner 体验判断。
+在 1600×1000 概览态执行真实 pointer 序列，要求放大后挂载窗口确实收缩，并输出
+pointer handler、首次反馈 mutation、持续帧、布局释放、heap 和残留状态。输出
+`measured` 只表示这些观测实际发生；它没有内置“流畅”阈值，也不替代同环境 before/after
+或 owner 体验判断。`releaseToSixStableFrames` 包含测量器主动等待的六帧下限，不得写成
+纯粹的产品响应耗时。
+
+运行 `npm run measure:bundle` 获取每个构建 chunk 的原始/gzip 字节及模块归因。入口拆包
+只能声明缓存、解析或按需加载边界发生变化；总 JavaScript 字节没有下降时，不得把构建
+警告消失写成总下载性能改善。
 
 当前没有批量文件 API；不要为跑分虚构。未来若增加批量，必须先定义批内局部失败、
 单文件 revision、总文件/节点/字节/时间预算、取消与原子性范围，不能把单文件 8 MiB
@@ -227,7 +237,8 @@ npm run check:regression
 npm run check:desktop-runtime
 ```
 
-该命令重建并确认 `.app` 进程启动，只证明启动基线。文件切换、外部冲突、另存、
+该命令用独立产品名、bundle ID 和应用数据目录重建 `Laniakea Verify.app`，不会终止或
+复用 owner 正在使用的 `Laniakea.app`。它只证明隔离构建与启动基线。文件切换、外部冲突、另存、
 全局快捷键、关闭/退出握手和视觉操作仍需在这份新构建上执行完整序列。
 
 最终分别报告：

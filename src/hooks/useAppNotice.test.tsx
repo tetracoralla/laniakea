@@ -60,4 +60,90 @@ describe("useAppNotice", () => {
     });
     expect(container.querySelector("output")?.textContent).toBe("");
   });
+
+  it("keeps a recovery decision visible until it is explicitly dismissed", async () => {
+    function Harness() {
+      const { announcement, notify, dismiss } = useAppNotice();
+      return (
+        <>
+          <output>{announcement?.message ?? ""}</output>
+          <button onClick={() => notify({
+            message: "已恢复上次中断前的内容",
+            persistent: true,
+          })}>恢复</button>
+          <button onClick={dismiss}>关闭</button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelectorAll("button")[0].click();
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(container.querySelector("output")?.textContent).toContain("已恢复");
+
+    await act(async () => container.querySelectorAll("button")[1].click());
+    expect(container.querySelector("output")?.textContent).toBe("");
+  });
+
+  it("restores a persistent decision bar after a transient notice fades", async () => {
+    function Harness() {
+      const { announcement, notify } = useAppNotice();
+      return (
+        <>
+          <output>{announcement?.message ?? ""}</output>
+          <button onClick={() => notify({
+            message: "已恢复上次中断前的内容",
+            persistent: true,
+          })}>恢复</button>
+          <button onClick={() => notify({ message: "已保存" })}>保存</button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => container.querySelectorAll("button")[0].click());
+    expect(container.querySelector("output")?.textContent).toContain("已恢复");
+
+    await act(async () => {
+      container.querySelectorAll("button")[1].click();
+      vi.advanceTimersByTime(100);
+    });
+    expect(container.querySelector("output")?.textContent).toBe("已保存");
+
+    await act(async () => vi.advanceTimersByTime(3600));
+    expect(container.querySelector("output")?.textContent).toContain("已恢复");
+  });
+
+  it("clearPersistentNotice retires a resolved decision without touching transients", async () => {
+    function Harness() {
+      const { announcement, notify, clearPersistentNotice } = useAppNotice();
+      return (
+        <>
+          <output>{announcement?.message ?? ""}</output>
+          <button onClick={() => notify({
+            message: "已恢复上次中断前的内容",
+            persistent: true,
+          })}>恢复</button>
+          <button onClick={() => notify({ message: "已保存" })}>保存</button>
+          <button onClick={clearPersistentNotice}>提交完成</button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => container.querySelectorAll("button")[0].click());
+    await act(async () => {
+      container.querySelectorAll("button")[1].click();
+      vi.advanceTimersByTime(100);
+    });
+    expect(container.querySelector("output")?.textContent).toBe("已保存");
+
+    await act(async () => container.querySelectorAll("button")[2].click());
+    expect(container.querySelector("output")?.textContent).toBe("已保存");
+
+    await act(async () => vi.advanceTimersByTime(3600));
+    expect(container.querySelector("output")?.textContent).toBe("");
+  });
 });

@@ -13,11 +13,25 @@ const persistence = vi.hoisted(() => ({
   clearActiveDocument: vi.fn(),
   createMarkdownDraft: vi.fn(),
   desktopRuntime: false,
+  discardDesktopPendingRecovery: vi.fn(async () => undefined),
   discardInternalDraft: vi.fn(),
   loadLocalDocument: vi.fn(),
   moveInternalDraft: vi.fn(),
+  openLocalDocument: vi.fn(),
   saveBrowserDocumentSynchronously: vi.fn(),
   saveLocalDocument: vi.fn(),
+}));
+
+const recovery = vi.hoisted(() => ({
+  checkpoint: vi.fn(async ({ generation }: { generation: number }) => ({
+    wrote: true,
+    generation,
+  })),
+  clear: vi.fn(async () => undefined),
+  draft: vi.fn(async ({ generation }: { generation: number }) => ({
+    wrote: true,
+    generation,
+  })),
 }));
 
 const lifecycle = vi.hoisted(() => ({
@@ -47,13 +61,21 @@ vi.mock("../persistence/localDocumentStore", () => ({
   activateLocalDocument: persistence.activateLocalDocument,
   clearActiveDocument: persistence.clearActiveDocument,
   createMarkdownDraft: persistence.createMarkdownDraft,
+  discardDesktopPendingRecovery: persistence.discardDesktopPendingRecovery,
   discardInternalDraft: persistence.discardInternalDraft,
   isDesktopRuntime: () => persistence.desktopRuntime,
   loadLocalDocument: persistence.loadLocalDocument,
   moveInternalDraft: persistence.moveInternalDraft,
+  openLocalDocument: persistence.openLocalDocument,
   saveBrowserDocumentSynchronously:
     persistence.saveBrowserDocumentSynchronously,
   saveLocalDocument: persistence.saveLocalDocument,
+}));
+
+vi.mock("../persistence/desktopRecovery", () => ({
+  clearDesktopPendingRecovery: recovery.clear,
+  writeDesktopEditorRecoveryDraft: recovery.draft,
+  writeDesktopRecoveryCheckpoint: recovery.checkpoint,
 }));
 
 vi.mock("../desktop/applicationLifecycle", () => ({
@@ -102,6 +124,12 @@ describe("mind map save presentation", () => {
     persistence.saveLocalDocument.mockResolvedValue({
       sourceHash: "hash-v1",
     });
+    persistence.discardDesktopPendingRecovery.mockReset();
+    persistence.discardDesktopPendingRecovery.mockResolvedValue(undefined);
+    persistence.openLocalDocument.mockReset();
+    recovery.checkpoint.mockClear();
+    recovery.clear.mockClear();
+    recovery.draft.mockClear();
     lifecycle.closeHandler = null;
     lifecycle.exitHandler = null;
     lifecycle.hide.mockReset();
@@ -295,6 +323,147 @@ describe("mind map save presentation", () => {
     expect(
       container.querySelector("[data-testid='save-error']")?.textContent,
     ).toContain("文件已在外部修改或移动");
+  });
+
+  it("keeps a restored recovery paused while only the viewport changes", async () => {
+    persistence.desktopRuntime = true;
+    const restoredDocument = createSeedDocument();
+    persistence.loadLocalDocument.mockResolvedValue({
+      document: restoredDocument,
+      documentPath: "/tmp/方案.md",
+      sourcePath: "/tmp/方案.md",
+      recoveredFromBackup: false,
+      notice: "已恢复上次中断前的内容",
+      saveError: null,
+      sourceFormat: "markdown",
+      importedAsCopy: false,
+      viewStateRestored: true,
+      sourceHash: "hash-v1",
+      recoveredFromPending: true,
+      recoveryGeneration: 500,
+      recoveryEditorDraftGeneration: null,
+      recoveryKind: "restored",
+    });
+
+    function Harness() {
+      const mindMap = useMindMap();
+      return (
+        <>
+          <output data-testid="save-state">{mindMap.saveState}</output>
+          <output data-testid="recovery-pending">
+            {mindMap.recoveredWorkPending ? "pending" : "settled"}
+          </output>
+          <button
+            data-testid="pan"
+            onClick={() =>
+              mindMap.setViewport({ x: 120, y: -40, zoom: 0.8 })
+            }
+          >
+            平移
+          </button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector("[data-testid='recovery-pending']")?.textContent,
+    ).toBe("pending");
+    persistence.saveLocalDocument.mockClear();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='pan']",
+      )!.click();
+      await vi.advanceTimersByTimeAsync(900);
+      await Promise.resolve();
+    });
+
+    // The recovered content is still undecided, so a viewport-only change
+    // must not be promoted into a full content write of the source.
+    expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(1);
+    expect(persistence.saveLocalDocument).toHaveBeenCalledWith(
+      expect.any(Object),
+      "/tmp/方案.md",
+      "hash-v1",
+      null,
+      { viewportOnly: true },
+    );
+    expect(
+      container.querySelector("[data-testid='recovery-pending']")?.textContent,
+    ).toBe("pending");
+  });
+
+  it("resolves the recovery banner once a committed save succeeds", async () => {
+    persistence.desktopRuntime = true;
+    const restoredDocument = createSeedDocument();
+    persistence.loadLocalDocument.mockResolvedValue({
+      document: restoredDocument,
+      documentPath: "/tmp/方案.md",
+      sourcePath: "/tmp/方案.md",
+      recoveredFromBackup: false,
+      notice: "已恢复上次中断前的内容",
+      saveError: null,
+      sourceFormat: "markdown",
+      importedAsCopy: false,
+      viewStateRestored: true,
+      sourceHash: "hash-v1",
+      recoveredFromPending: true,
+      recoveryGeneration: 500,
+      recoveryEditorDraftGeneration: null,
+      recoveryKind: "restored",
+    });
+
+    function Harness() {
+      const mindMap = useMindMap();
+      return (
+        <>
+          <output data-testid="recovery-pending">
+            {mindMap.recoveredWorkPending ? "pending" : "settled"}
+          </output>
+          <button
+            data-testid="keep-button"
+            onClick={() => void mindMap.keepRecoveredWork()}
+          >
+            保留
+          </button>
+        </>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector("[data-testid='recovery-pending']")?.textContent,
+    ).toBe("pending");
+    persistence.saveLocalDocument.mockClear();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='keep-button']",
+      )!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(persistence.saveLocalDocument).toHaveBeenCalledWith(
+      expect.any(Object),
+      "/tmp/方案.md",
+      "hash-v1",
+      null,
+      expect.objectContaining({ viewportOnly: false }),
+    );
+    expect(
+      container.querySelector("[data-testid='recovery-pending']")?.textContent,
+    ).toBe("settled");
   });
 
   it("advances the source hash after a committed save with an auxiliary warning", async () => {
@@ -839,6 +1008,7 @@ describe("mind map save presentation", () => {
       sourcePath,
       null,
       sourcePath,
+      expect.objectContaining({ viewportOnly: false }),
     );
     expect(
       container.querySelector("[data-testid='path']")?.textContent,
@@ -999,6 +1169,7 @@ describe("mind map save presentation", () => {
       "/app-data/drafts/复杂方案.md",
       "hash-draft",
       null,
+      expect.objectContaining({ viewportOnly: false }),
     );
   });
 
@@ -1060,6 +1231,7 @@ describe("mind map save presentation", () => {
       internalPath,
       "hash-internal",
       null,
+      expect.objectContaining({ viewportOnly: false }),
     );
     expect(persistence.moveInternalDraft).toHaveBeenCalledWith(
       internalPath,
@@ -1116,6 +1288,7 @@ describe("mind map save presentation", () => {
       targetPath,
       null,
       null,
+      expect.objectContaining({ viewportOnly: false }),
     );
     expect(
       container.querySelector("[data-testid='path']")?.textContent,

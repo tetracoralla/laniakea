@@ -179,6 +179,8 @@ export function App() {
     saveState,
     saveError,
     saveWarning,
+    recoveryError,
+    recoveredWorkPending,
     lifecycleSaveBlockedRequest,
     startupNotice,
     startupMode,
@@ -186,6 +188,11 @@ export function App() {
     canUndo,
     canRedo,
     applyMutation,
+    protectEditorDraft,
+    finishEditorDraft,
+    keepRecoveredWork,
+    discardRecoveredWork,
+    retryRecoveryProtection,
     isDocumentSessionCurrent,
     newDocument,
     openDocument,
@@ -241,6 +248,7 @@ export function App() {
     announcement,
     notify,
     dismiss: dismissAnnouncement,
+    clearPersistentNotice,
     pause: pauseAnnouncement,
     resume: resumeAnnouncement,
   } = useAppNotice();
@@ -313,6 +321,15 @@ export function App() {
     notify,
     undo,
   });
+  const finishDocumentSwitchWithRecovery = useCallback((fitContent: boolean) => {
+    finishDocumentSwitch(fitContent);
+    finishEditorDraft(true);
+  }, [finishDocumentSwitch, finishEditorDraft]);
+  const finishMindEditForNavigation = useCallback(() => {
+    if (!editingId) return;
+    commitEdit(editingId, draft);
+    finishEditorDraft(false);
+  }, [commitEdit, draft, editingId, finishEditorDraft]);
   const activeFlowCandidate = surface.kind === "flow"
     ? documentSpaces(mindMap)[surface.spaceId]
     : null;
@@ -382,8 +399,7 @@ export function App() {
         selection: singleSelection(nodeId),
       }));
     }
-    setEditingId(null);
-    setDraft("");
+    finishMindEditForNavigation();
     pushCurrentSurface();
     setSurface({
       kind: "map",
@@ -399,9 +415,8 @@ export function App() {
   }, [
     activeMap,
     applyActiveMapMutation,
+    finishMindEditForNavigation,
     pushCurrentSurface,
-    setDraft,
-    setEditingId,
     setSelection,
   ]);
 
@@ -426,8 +441,7 @@ export function App() {
         selection: singleSelection(nodeId),
       }));
     }
-    setEditingId(null);
-    setDraft("");
+    finishMindEditForNavigation();
     pushCurrentSurface();
     setSurface({
       kind: "flow",
@@ -442,9 +456,8 @@ export function App() {
   }, [
     activeMap,
     applyActiveMapMutation,
+    finishMindEditForNavigation,
     pushCurrentSurface,
-    setDraft,
-    setEditingId,
     setSelection,
   ]);
 
@@ -546,6 +559,8 @@ export function App() {
   }, [applyActiveMapMutation, nodeSpaceMenu, notify, undo]);
 
   const navigateBack = useCallback(() => {
+    if (surface.kind === "map") finishMindEditForNavigation();
+    else flowWorkspaceRef.current?.finishEditing();
     flowWorkspaceRef.current?.flushViewport();
     const restore = surfaceStack[surfaceStack.length - 1];
     if (!restore) {
@@ -560,7 +575,13 @@ export function App() {
       if (restore.surface.kind === "map") canvasRef.current?.focusCanvas();
       else flowWorkspaceRef.current?.focusCanvas();
     });
-  }, [mindMap.rootId, setSelection, surfaceStack]);
+  }, [
+    finishMindEditForNavigation,
+    mindMap.rootId,
+    setSelection,
+    surface.kind,
+    surfaceStack,
+  ]);
 
   const updateActiveFlow = useCallback((nextSpace: FlowSpace | null) => {
     if (!nextSpace) return;
@@ -638,9 +659,43 @@ export function App() {
   }, [beginBlankDocument, mindMap.rootId, startupMode]);
 
   useEffect(() => {
-    if (!startupNotice) return;
+    if (!startupNotice || recoveredWorkPending) return;
     notify({ message: startupNotice });
-  }, [notify, startupNotice]);
+  }, [notify, recoveredWorkPending, startupNotice]);
+
+  useEffect(() => {
+    if (!recoveredWorkPending) return;
+    notify({
+      message: "已恢复上次中断前的内容",
+      actionLabel: "保留",
+      onAction: () => void keepRecoveredWork(),
+      secondaryActionLabel: "放弃",
+      onSecondaryAction: () => void discardRecoveredWork(),
+      persistent: true,
+    });
+  }, [
+    discardRecoveredWork,
+    keepRecoveredWork,
+    notify,
+    recoveredWorkPending,
+  ]);
+
+  useEffect(() => {
+    // Once the recovered work is kept, discarded, or committed by a save,
+    // the decision bar has no pending decision left to offer.
+    if (recoveredWorkPending) return;
+    clearPersistentNotice();
+  }, [clearPersistentNotice, recoveredWorkPending]);
+
+  useEffect(() => {
+    if (!recoveryError) return;
+    notify({
+      message: "临时恢复保护失败",
+      actionLabel: "重试",
+      onAction: retryRecoveryProtection,
+      tone: "error",
+    });
+  }, [notify, recoveryError, retryRecoveryProtection]);
 
   useEffect(() => {
     if (startupMode === "loading" || !desktopRuntime) return;
@@ -693,7 +748,7 @@ export function App() {
     retrySave,
     saveBeforeSwitch,
     beginBlankDocument,
-    finishDocumentSwitch,
+    finishDocumentSwitch: finishDocumentSwitchWithRecovery,
     moveRecentDocument,
     deleteBrowserDocument,
     removeRecentDocument,
@@ -809,6 +864,15 @@ export function App() {
             ),
           )
         }
+        onTitleDraftChange={(title) =>
+          protectEditorDraft({
+            objectId: "document-title",
+            objectKind: "title",
+            spaceId: null,
+            surface: "root-map",
+          }, title)
+        }
+        onTitleDraftFinish={finishEditorDraft}
         recentDocuments={recentDocuments}
         showDesktopActions={desktopRuntime}
         spacePath={spacePath}
@@ -824,9 +888,24 @@ export function App() {
             editingId={editingId}
             fitRequest={fitRequest}
             onBeginEdit={beginEdit}
-            onCancelEdit={cancelEdit}
-            onCommitEdit={commitEdit}
-            onDraftChange={setDraft}
+            onCancelEdit={(id) => {
+              cancelEdit(id);
+              finishEditorDraft(true);
+            }}
+            onCommitEdit={(id, value) => {
+              commitEdit(id, value);
+              finishEditorDraft(false);
+            }}
+            onDraftChange={(value) => {
+              setDraft(value);
+              if (!editingId) return;
+              protectEditorDraft({
+                objectId: editingId,
+                objectKind: "mind-node",
+                spaceId: surface.spaceId,
+                surface: surface.spaceId ? "map" : "root-map",
+              }, value);
+            }}
             onAttachNode={attachNodeToParent}
             onDetachNode={detachNodeToCanvas}
             onOpenNodeContextMenu={openNodeSpaceMenu}
@@ -880,6 +959,14 @@ export function App() {
             onBack={navigateBack}
             onRedo={redo}
             onUndo={undo}
+            onEditorDraftChange={(target, value) =>
+              protectEditorDraft({
+                ...target,
+                spaceId: activeFlow.id,
+                surface: "flow",
+              }, value)
+            }
+            onEditorDraftFinish={finishEditorDraft}
             onUpdateSpace={updateActiveFlow}
             onPositionsChange={(positions) =>
               setFlowPositions(activeFlow.id, positions)

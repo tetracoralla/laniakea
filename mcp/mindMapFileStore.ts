@@ -159,7 +159,7 @@ async function writeExclusive(filePath: string, markdown: string, mode?: number)
   }
 }
 
-function updateLockPath(filePath: string): string {
+export function updateLockPath(filePath: string): string {
   const digest = createHash("sha256").update(filePath).digest("hex").slice(0, 32);
   return join(dirname(filePath), `.laniakea-lock-${digest}`);
 }
@@ -219,8 +219,24 @@ async function withUpdateLock<T>(
   work: (canonicalPath: string) => Promise<T>,
 ): Promise<T> {
   const resolved = requireMarkdownPath(filePath);
-  await requireRegularFile(resolved);
-  const canonicalPath = await realpath(resolved);
+  let canonicalPath: string;
+  try {
+    await requireRegularFile(resolved);
+    canonicalPath = await realpath(resolved);
+  } catch (error) {
+    if (!(error instanceof MindMapFileError) || error.code !== "not_found") {
+      throw error;
+    }
+    const parent = dirname(resolved);
+    const parentMetadata = await stat(parent).catch(() => null);
+    if (!parentMetadata?.isDirectory()) {
+      throw new MindMapFileError(
+        "invalid_path",
+        "The destination folder must already exist.",
+      );
+    }
+    canonicalPath = join(await realpath(parent), basename(resolved));
+  }
   const lockPath = updateLockPath(canonicalPath);
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   let lockHandle: Awaited<ReturnType<typeof open>> | null = null;
@@ -279,17 +295,19 @@ export async function createMindMapFile(
   }
   const document = createAgentMindMap(title, root);
   const markdown = documentToMarkdown(document);
-  try {
-    await writeExclusive(resolved, markdown);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new MindMapFileError(
-        "already_exists",
-        "The destination already exists. Laniakea will not overwrite it while creating a mind map.",
-      );
+  await withUpdateLock(resolved, async (canonicalPath) => {
+    try {
+      await writeExclusive(canonicalPath, markdown);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new MindMapFileError(
+          "already_exists",
+          "The destination already exists. Laniakea will not overwrite it while creating a mind map.",
+        );
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
   return {
     filePath: resolved,
     markdown,

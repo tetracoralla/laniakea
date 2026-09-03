@@ -1,12 +1,16 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::{
     collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque},
     fs::{self, File, OpenOptions},
     hash::{Hash, Hasher},
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Mutex, OnceLock},
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Manager};
 
@@ -16,10 +20,21 @@ const BACKUP_DIRECTORY: &str = "backups";
 const CORRUPT_DIRECTORY: &str = "recovery";
 const DOCUMENT_STATE_DIRECTORY: &str = "document-state";
 const DRAFT_DIRECTORY: &str = "drafts";
+const PENDING_RECOVERY_DIRECTORY: &str = "pending-recovery";
+const PENDING_CHECKPOINT_FILE: &str = "checkpoint.json";
+const PENDING_EDITOR_DRAFT_FILE: &str = "editor-draft.json";
 const MAX_BACKUPS: usize = 8;
+const MAX_RECOVERY_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
+const MAX_RECOVERY_MARKDOWN_BYTES: usize = 8 * 1024 * 1024;
+const MAX_RECOVERY_TEXT_BYTES: usize = 80_000;
+const MAX_QUARANTINED_RECOVERY_FILES: usize = 20;
+const UPDATE_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+const UPDATE_LOCK_RETRY: Duration = Duration::from_millis(25);
+const UPDATE_LOCK_STALE: Duration = Duration::from_secs(5 * 60);
 const EXTERNAL_DOCUMENT_CONFLICT: &str = "EXTERNAL_DOCUMENT_CONFLICT";
 const PROTECTED_SOURCE_OVERWRITE: &str = "PROTECTED_SOURCE_OVERWRITE";
 const STORAGE_HASH_VERSION: &str = "sha256-v1";
+static RECOVERY_IO_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +46,10 @@ pub(crate) struct LoadDocumentResult {
     recovered_from_backup: bool,
     notice: Option<String>,
     source_hash: Option<String>,
+    recovered_from_pending: bool,
+    recovery_generation: Option<u64>,
+    recovery_kind: Option<String>,
+    editor_draft: Option<EditorRecoveryDraft>,
 }
 
 #[derive(Debug, Serialize)]
@@ -56,6 +75,45 @@ pub(crate) struct CreateDraftResult {
 #[derive(Serialize, Deserialize)]
 struct ActiveDocument {
     path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecoveryCheckpoint {
+    format_version: u64,
+    session_id: String,
+    generation: u64,
+    saved_at_millis: u64,
+    document_path: Option<String>,
+    source_hash: Option<String>,
+    protected_source_path: Option<String>,
+    document: String,
+    markdown_content: String,
+    #[serde(default)]
+    startup_attempts: u8,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EditorRecoveryDraft {
+    format_version: u64,
+    session_id: String,
+    generation: u64,
+    checkpoint_generation: u64,
+    document_path: Option<String>,
+    source_hash: Option<String>,
+    surface: String,
+    space_id: Option<String>,
+    object_kind: String,
+    object_id: String,
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RecoveryWriteResult {
+    wrote: bool,
+    generation: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -638,14 +696,182 @@ fn write_atomic(target: &Path, content: &str) -> Result<(), String> {
             .map_err(|error| storage_error("无法写入临时文件", error))?;
         file.sync_all()
             .map_err(|error| storage_error("无法同步临时文件", error))?;
+        #[cfg(test)]
+        storage_fault_injection_pause("after-temp-sync");
         fs::rename(&temporary, target)
             .map_err(|error| storage_error("无法原子替换本地文件", error))?;
+        #[cfg(test)]
+        storage_fault_injection_pause("after-rename");
         sync_directory(directory)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+#[cfg(test)]
+fn storage_fault_injection_pause(point: &str) {
+    if std::env::var("LANIAKEA_TEST_STORAGE_PAUSE_AT")
+        .ok()
+        .as_deref()
+        != Some(point)
+    {
+        return;
+    }
+    if let Ok(marker) = std::env::var("LANIAKEA_TEST_STORAGE_MARKER") {
+        let _ = fs::write(marker, point);
+    }
+    thread::sleep(Duration::from_secs(30));
+}
+
+#[derive(Debug)]
+struct UpdateFileLock {
+    path: PathBuf,
+    file: Option<File>,
+}
+
+impl Drop for UpdateFileLock {
+    fn drop(&mut self) {
+        self.file.take();
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn update_lock_path(canonical_target: &Path) -> PathBuf {
+    let path = canonical_target.to_string_lossy();
+    let digest = sha256_hex(path.as_bytes());
+    canonical_target
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(".laniakea-lock-{}", &digest[..32]))
+}
+
+#[cfg(unix)]
+fn process_is_gone(pid: i32) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    let result = unsafe { libc::kill(pid, 0) };
+    result != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+#[cfg(not(unix))]
+fn process_is_gone(_pid: i32) -> bool {
+    false
+}
+
+fn stale_lock_observation(lock_path: &Path, stale_after: Duration) -> Option<(u64, SystemTime)> {
+    let metadata = fs::symlink_metadata(lock_path).ok()?;
+    let modified = metadata.modified().ok()?;
+    let old_enough = SystemTime::now()
+        .duration_since(modified)
+        .is_ok_and(|age| age > stale_after);
+    let owner_is_gone = fs::read_to_string(lock_path)
+        .ok()
+        .and_then(|owner| owner.trim().parse::<i32>().ok())
+        .is_some_and(process_is_gone);
+    if !old_enough && !owner_is_gone {
+        return None;
+    }
+    #[cfg(unix)]
+    let identity = metadata.ino();
+    #[cfg(not(unix))]
+    let identity = metadata.len();
+    Some((identity, modified))
+}
+
+fn remove_stale_lock_if_unchanged(lock_path: &Path, observed: (u64, SystemTime)) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(lock_path) else {
+        return true;
+    };
+    #[cfg(unix)]
+    let identity = metadata.ino();
+    #[cfg(not(unix))]
+    let identity = metadata.len();
+    if identity != observed.0 || metadata.modified().ok() != Some(observed.1) {
+        return false;
+    }
+    fs::remove_file(lock_path).is_ok()
+}
+
+fn acquire_update_lock(target: &Path) -> Result<Option<UpdateFileLock>, String> {
+    acquire_update_lock_with_timing(
+        target,
+        UPDATE_LOCK_TIMEOUT,
+        UPDATE_LOCK_RETRY,
+        UPDATE_LOCK_STALE,
+    )
+}
+
+fn acquire_update_lock_with_timing(
+    target: &Path,
+    timeout: Duration,
+    retry: Duration,
+    stale_after: Duration,
+) -> Result<Option<UpdateFileLock>, String> {
+    let canonical_target = match fs::symlink_metadata(target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err("本地 Markdown 目标必须是普通文件，且不能是符号链接".to_string());
+            }
+            fs::canonicalize(target).map_err(|error| storage_error("无法定位待保存文件", error))?
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let parent = target
+                .parent()
+                .ok_or_else(|| "无法定位文件所在目录".to_string())?;
+            let canonical_parent = match fs::canonicalize(parent) {
+                Ok(parent) => parent,
+                // Preserve the existing desktop behavior for an entirely new
+                // directory tree. There is no shared location in which to
+                // create a lock until write_atomic creates that tree.
+                Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+                Err(error) => return Err(storage_error("无法定位文件所在目录", error)),
+            };
+            let file_name = target.file_name().ok_or_else(|| "文件名为空".to_string())?;
+            canonical_parent.join(file_name)
+        }
+        Err(error) => return Err(storage_error("无法读取待保存文件", error)),
+    };
+    let lock_path = update_lock_path(&canonical_target);
+    let deadline = Instant::now() + timeout;
+    loop {
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        match options.open(&lock_path) {
+            Ok(mut file) => {
+                if let Err(error) = (|| {
+                    writeln!(file, "{}", std::process::id())?;
+                    file.sync_all()
+                })() {
+                    let _ = fs::remove_file(&lock_path);
+                    return Err(storage_error("无法记录本地文件写入锁", error));
+                }
+                return Ok(Some(UpdateFileLock {
+                    path: lock_path,
+                    file: Some(file),
+                }));
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                if stale_lock_observation(&lock_path, stale_after)
+                    .is_some_and(|observed| remove_stale_lock_if_unchanged(&lock_path, observed))
+                {
+                    continue;
+                }
+                if Instant::now() >= deadline {
+                    return Err(
+                        "LOCAL_DOCUMENT_BUSY: 另一个 Laniakea 写入仍在进行，原文件未被覆盖"
+                            .to_string(),
+                    );
+                }
+                thread::sleep(retry);
+            }
+            Err(error) => return Err(storage_error("无法创建本地文件写入锁", error)),
+        }
+    }
 }
 
 fn backup_directory_for(app_data: &Path, target: &Path) -> PathBuf {
@@ -996,6 +1222,12 @@ fn save_markdown_document_with_protected_source(
         }
     }
 
+    // Share the same canonical-path lock convention as the MCP writer. This
+    // closes the desktop/MCP check-to-rename race for cooperating Laniakea
+    // processes while retaining the final revision re-read below for external
+    // editors that do not participate in the lock.
+    let _update_lock = acquire_update_lock(target)?;
+
     let source_hash = content_hash_string(content);
     let observed_target = match fs::read_to_string(target) {
         Ok(current) if current == content => {
@@ -1182,6 +1414,10 @@ fn load_from_target(
                 recovered_from_backup: false,
                 notice: None,
                 source_hash: None,
+                recovered_from_pending: false,
+                recovery_generation: None,
+                recovery_kind: None,
+                editor_draft: None,
             });
         }
         Ok(_) => preserve_unreadable(app_data, target)?,
@@ -1194,6 +1430,10 @@ fn load_from_target(
                 recovered_from_backup: false,
                 notice: None,
                 source_hash: None,
+                recovered_from_pending: false,
+                recovery_generation: None,
+                recovery_kind: None,
+                editor_draft: None,
             });
         }
         Err(error) if error.kind() == ErrorKind::NotFound => {
@@ -1216,6 +1456,10 @@ fn load_from_target(
                 recovered_from_backup: true,
                 notice: Some("原文件无法读取，已从最近的自动备份恢复。".to_string()),
                 source_hash: None,
+                recovered_from_pending: false,
+                recovery_generation: None,
+                recovery_kind: None,
+                editor_draft: None,
             });
         }
     }
@@ -1240,6 +1484,10 @@ fn load_markdown_from_target(
                 recovered_from_backup: false,
                 notice: None,
                 source_hash: None,
+                recovered_from_pending: false,
+                recovery_generation: None,
+                recovery_kind: None,
+                editor_draft: None,
             });
         }
         Err(error) if error.kind() == ErrorKind::NotFound => {
@@ -1270,6 +1518,10 @@ fn load_markdown_from_target(
         recovered_from_backup,
         notice,
         source_hash: Some(source_hash),
+        recovered_from_pending: false,
+        recovery_generation: None,
+        recovery_kind: None,
+        editor_draft: None,
     })
 }
 
@@ -1315,7 +1567,338 @@ fn set_active_document(app_data: &Path, path: Option<&Path>) -> Result<(), Strin
     }
 }
 
-fn load_startup_document(app_data: &Path) -> Result<LoadDocumentResult, String> {
+fn pending_recovery_directory(app_data: &Path) -> PathBuf {
+    app_data.join(PENDING_RECOVERY_DIRECTORY)
+}
+
+fn pending_checkpoint_path(app_data: &Path) -> PathBuf {
+    pending_recovery_directory(app_data).join(PENDING_CHECKPOINT_FILE)
+}
+
+fn pending_editor_draft_path(app_data: &Path) -> PathBuf {
+    pending_recovery_directory(app_data).join(PENDING_EDITOR_DRAFT_FILE)
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+
+fn recovery_io_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    RECOVERY_IO_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "无法锁定临时恢复记录".to_string())
+}
+
+fn validate_recovery_checkpoint(checkpoint: &RecoveryCheckpoint) -> Result<(), String> {
+    if checkpoint.format_version != 1
+        || checkpoint.session_id.trim().is_empty()
+        || checkpoint.session_id.len() > 128
+        || checkpoint.generation == 0
+        || checkpoint.document.len() > MAX_RECOVERY_DOCUMENT_BYTES
+        || checkpoint.markdown_content.len() > MAX_RECOVERY_MARKDOWN_BYTES
+    {
+        return Err("临时恢复检查点版本、身份或大小无效".to_string());
+    }
+    if checkpoint
+        .document_path
+        .as_deref()
+        .is_some_and(|path| path.is_empty())
+        || checkpoint
+            .source_hash
+            .as_deref()
+            .is_some_and(|hash| hash.len() > 160)
+        || checkpoint
+            .protected_source_path
+            .as_deref()
+            .is_some_and(|path| path.is_empty())
+    {
+        return Err("临时恢复检查点来源无效".to_string());
+    }
+    validate_document(&checkpoint.document)
+}
+
+fn validate_editor_recovery_draft(draft: &EditorRecoveryDraft) -> Result<(), String> {
+    if draft.format_version != 1
+        || draft.session_id.trim().is_empty()
+        || draft.session_id.len() > 128
+        || draft.generation == 0
+        || draft.object_id.trim().is_empty()
+        || draft.object_id.len() > 256
+        || draft.text.len() > MAX_RECOVERY_TEXT_BYTES
+        || !matches!(
+            draft.object_kind.as_str(),
+            "title" | "mind-node" | "flow-node" | "flow-edge"
+        )
+        || !matches!(draft.surface.as_str(), "root-map" | "map" | "flow")
+    {
+        return Err("编辑恢复草稿版本、对象或大小无效".to_string());
+    }
+    if matches!(draft.object_kind.as_str(), "flow-node" | "flow-edge")
+        && draft.space_id.as_deref().is_none_or(str::is_empty)
+    {
+        return Err("流程编辑恢复草稿缺少空间身份".to_string());
+    }
+    Ok(())
+}
+
+fn quarantine_pending_record(app_data: &Path, path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let recovery_directory = app_data.join(CORRUPT_DIRECTORY);
+    fs::create_dir_all(&recovery_directory)
+        .map_err(|error| storage_error("无法创建恢复目录", error))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("pending-recovery.json");
+    let target = recovery_directory.join(format!("{name}.{}.recovery", unique_stamp()));
+    fs::rename(path, &target)
+        .map_err(|error| storage_error("无法保留损坏的临时恢复记录", error))?;
+    File::open(&target)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| storage_error("无法同步损坏恢复记录", error))?;
+    prune_quarantined_recovery_files(&recovery_directory);
+    sync_directory(&recovery_directory)
+}
+
+// Quarantined records only exist so the owner can inspect a rejected
+// candidate; an unbounded directory turns repeated corruption into a disk
+// leak. Keep the most recent records and drop the oldest overflow.
+fn prune_quarantined_recovery_files(recovery_directory: &Path) {
+    let Ok(entries) = fs::read_dir(recovery_directory) else {
+        return;
+    };
+    let mut records: Vec<(SystemTime, String, std::path::PathBuf)> = entries
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".recovery"))
+        .filter_map(|entry| {
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            Some((modified, name, entry.path()))
+        })
+        .collect();
+    let excess = records.len().saturating_sub(MAX_QUARANTINED_RECOVERY_FILES);
+    if excess == 0 {
+        return;
+    }
+    records.sort();
+    for (_, _, path) in records.into_iter().take(excess) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn read_recovery_checkpoint(app_data: &Path) -> Result<Option<RecoveryCheckpoint>, String> {
+    let path = pending_checkpoint_path(app_data);
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(storage_error("无法读取临时恢复检查点", error)),
+    };
+    let checkpoint = serde_json::from_str::<RecoveryCheckpoint>(&content)
+        .map_err(|error| storage_error("临时恢复检查点已损坏", error));
+    match checkpoint.and_then(|checkpoint| {
+        validate_recovery_checkpoint(&checkpoint)?;
+        Ok(checkpoint)
+    }) {
+        Ok(checkpoint) => Ok(Some(checkpoint)),
+        Err(error) => {
+            quarantine_pending_record(app_data, &path)?;
+            Err(error)
+        }
+    }
+}
+
+fn read_editor_recovery_draft(app_data: &Path) -> Result<Option<EditorRecoveryDraft>, String> {
+    let path = pending_editor_draft_path(app_data);
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(storage_error("无法读取编辑恢复草稿", error)),
+    };
+    let draft = serde_json::from_str::<EditorRecoveryDraft>(&content)
+        .map_err(|error| storage_error("编辑恢复草稿已损坏", error));
+    match draft.and_then(|draft| {
+        validate_editor_recovery_draft(&draft)?;
+        Ok(draft)
+    }) {
+        Ok(draft) => Ok(Some(draft)),
+        Err(error) => {
+            quarantine_pending_record(app_data, &path)?;
+            Err(error)
+        }
+    }
+}
+
+fn write_recovery_checkpoint_in(
+    app_data: &Path,
+    checkpoint: RecoveryCheckpoint,
+) -> Result<RecoveryWriteResult, String> {
+    validate_recovery_checkpoint(&checkpoint)?;
+    let _guard = recovery_io_guard()?;
+    if let Some(current) = read_recovery_checkpoint(app_data)? {
+        if current.generation > checkpoint.generation {
+            // A lower generation means the writer's clock moved backwards or
+            // it never observed the newest record. Silently accepting it
+            // would stop protecting new work; surface it instead.
+            return Err("恢复检查点代次回退，已保留较新的恢复记录，请重试".to_string());
+        }
+        if current.generation == checkpoint.generation {
+            return Ok(RecoveryWriteResult {
+                wrote: false,
+                generation: checkpoint.generation,
+            });
+        }
+    }
+    let content = serde_json::to_string(&checkpoint)
+        .map_err(|error| storage_error("无法序列化临时恢复检查点", error))?;
+    write_atomic(&pending_checkpoint_path(app_data), &content)?;
+    Ok(RecoveryWriteResult {
+        wrote: true,
+        generation: checkpoint.generation,
+    })
+}
+
+fn write_editor_recovery_draft_in(
+    app_data: &Path,
+    draft: EditorRecoveryDraft,
+) -> Result<RecoveryWriteResult, String> {
+    validate_editor_recovery_draft(&draft)?;
+    let _guard = recovery_io_guard()?;
+    if let Some(current) = read_editor_recovery_draft(app_data)? {
+        if current.generation > draft.generation {
+            return Err("编辑恢复草稿代次回退，已保留较新的恢复记录，请重试".to_string());
+        }
+        if current.generation == draft.generation {
+            return Ok(RecoveryWriteResult {
+                wrote: false,
+                generation: draft.generation,
+            });
+        }
+    }
+    let content = serde_json::to_string(&draft)
+        .map_err(|error| storage_error("无法序列化编辑恢复草稿", error))?;
+    write_atomic(&pending_editor_draft_path(app_data), &content)?;
+    Ok(RecoveryWriteResult {
+        wrote: true,
+        generation: draft.generation,
+    })
+}
+
+fn clear_pending_recovery_through(
+    app_data: &Path,
+    checkpoint_generation: Option<u64>,
+    editor_draft_generation: Option<u64>,
+) -> Result<(), String> {
+    let _guard = recovery_io_guard()?;
+    let mut changed = false;
+    if let Some(generation) = checkpoint_generation {
+        if read_recovery_checkpoint(app_data)?
+            .is_some_and(|checkpoint| checkpoint.generation <= generation)
+        {
+            remove_file_if_present(&pending_checkpoint_path(app_data))?;
+            changed = true;
+        }
+    }
+    if let Some(generation) = editor_draft_generation {
+        if read_editor_recovery_draft(app_data)?.is_some_and(|draft| draft.generation <= generation)
+        {
+            remove_file_if_present(&pending_editor_draft_path(app_data))?;
+            changed = true;
+        }
+    }
+    if changed {
+        sync_directory(&pending_recovery_directory(app_data))?;
+    }
+    Ok(())
+}
+
+fn discard_pending_recovery_in(app_data: &Path) -> Result<(), String> {
+    let _guard = recovery_io_guard()?;
+    remove_file_if_present(&pending_checkpoint_path(app_data))?;
+    remove_file_if_present(&pending_editor_draft_path(app_data))?;
+    if pending_recovery_directory(app_data).exists() {
+        sync_directory(&pending_recovery_directory(app_data))?;
+    }
+    Ok(())
+}
+
+fn append_notice(current: Option<String>, next: impl Into<String>) -> Option<String> {
+    let next = next.into();
+    match current {
+        Some(current) if !current.is_empty() => Some(format!("{current}；{next}")),
+        _ => Some(next),
+    }
+}
+
+fn editor_draft_matches_checkpoint(
+    checkpoint: &RecoveryCheckpoint,
+    draft: &EditorRecoveryDraft,
+) -> bool {
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(&checkpoint.document) else {
+        return false;
+    };
+    let object_text = match draft.object_kind.as_str() {
+        "title" => document.get("title").and_then(serde_json::Value::as_str),
+        "mind-node" => {
+            let nodes = match draft.space_id.as_deref() {
+                Some(space_id) => document
+                    .get("spaces")
+                    .and_then(|spaces| spaces.get(space_id))
+                    .filter(|space| {
+                        space.get("type").and_then(serde_json::Value::as_str) == Some("map")
+                    })
+                    .and_then(|space| space.get("nodes")),
+                None => document.get("nodes"),
+            };
+            nodes
+                .and_then(|nodes| nodes.get(&draft.object_id))
+                .and_then(|node| node.get("text"))
+                .and_then(serde_json::Value::as_str)
+        }
+        "flow-node" => draft
+            .space_id
+            .as_deref()
+            .and_then(|space_id| {
+                document
+                    .get("spaces")
+                    .and_then(|spaces| spaces.get(space_id))
+            })
+            .filter(|space| space.get("type").and_then(serde_json::Value::as_str) == Some("flow"))
+            .and_then(|space| space.get("nodes"))
+            .and_then(|nodes| nodes.get(&draft.object_id))
+            .and_then(|node| node.get("text"))
+            .and_then(serde_json::Value::as_str),
+        "flow-edge" => draft
+            .space_id
+            .as_deref()
+            .and_then(|space_id| {
+                document
+                    .get("spaces")
+                    .and_then(|spaces| spaces.get(space_id))
+            })
+            .filter(|space| space.get("type").and_then(serde_json::Value::as_str) == Some("flow"))
+            .and_then(|space| space.get("edges"))
+            .and_then(serde_json::Value::as_array)
+            .and_then(|edges| {
+                edges.iter().find(|edge| {
+                    edge.get("id").and_then(serde_json::Value::as_str)
+                        == Some(draft.object_id.as_str())
+                })
+            })
+            .and_then(|edge| edge.get("label"))
+            .and_then(serde_json::Value::as_str),
+        _ => None,
+    };
+    object_text == Some(draft.text.as_str())
+}
+
+fn load_authoritative_startup_document(app_data: &Path) -> Result<LoadDocumentResult, String> {
     if let Some(active_path) = active_document_path(app_data) {
         match load_any_target(app_data, &active_path, false) {
             Ok(mut loaded) => {
@@ -1334,6 +1917,167 @@ fn load_startup_document(app_data: &Path) -> Result<LoadDocumentResult, String> 
     load_from_target(app_data, &recovery_target(app_data), true)
 }
 
+fn load_startup_document(app_data: &Path) -> Result<LoadDocumentResult, String> {
+    let checkpoint = match read_recovery_checkpoint(app_data) {
+        Ok(checkpoint) => checkpoint,
+        Err(error) => {
+            let mut loaded = load_authoritative_startup_document(app_data)?;
+            loaded.notice = append_notice(
+                loaded.notice,
+                format!("临时恢复记录无法读取，原始记录已保留：{error}"),
+            );
+            return Ok(loaded);
+        }
+    };
+    let Some(mut checkpoint) = checkpoint else {
+        return load_authoritative_startup_document(app_data);
+    };
+
+    let active_path = active_document_path(app_data);
+    let checkpoint_path = checkpoint.document_path.as_deref().map(PathBuf::from);
+    let authoritative = if let Some(path) = checkpoint_path.as_deref() {
+        load_any_target(app_data, path, false)
+            .ok()
+            .map(|mut loaded| {
+                loaded.document_path = checkpoint.document_path.clone();
+                loaded
+            })
+    } else {
+        load_from_target(app_data, &recovery_target(app_data), true).ok()
+    };
+    let same_binding = checkpoint_path == active_path;
+    let source_matches = same_binding
+        && authoritative.as_ref().is_some_and(|loaded| {
+            loaded.source_hash.as_deref() == checkpoint.source_hash.as_deref()
+        });
+    let mut recovery_notice = None;
+    let editor_draft = match read_editor_recovery_draft(app_data) {
+        Ok(Some(draft))
+            if draft.session_id == checkpoint.session_id
+                && draft.checkpoint_generation <= checkpoint.generation
+                && draft.document_path == checkpoint.document_path =>
+        {
+            Some(draft)
+        }
+        Ok(Some(_)) => {
+            remove_file_if_present(&pending_editor_draft_path(app_data))?;
+            recovery_notice =
+                append_notice(recovery_notice, "已忽略与当前检查点不匹配的编辑恢复草稿");
+            None
+        }
+        Ok(None) => None,
+        Err(error) => {
+            recovery_notice = append_notice(
+                recovery_notice,
+                format!("编辑恢复草稿无法读取，原始记录已保留：{error}"),
+            );
+            None
+        }
+    };
+
+    // A checkpoint can outlive the successful source save that absorbed it
+    // (for example, the process dies after the source rename but before pending
+    // cleanup). Do not present that as recovered work or start a crash loop.
+    let editor_draft_absorbed = editor_draft
+        .as_ref()
+        .is_some_and(|draft| editor_draft_matches_checkpoint(&checkpoint, draft));
+    let already_absorbed = (editor_draft.is_none() || editor_draft_absorbed)
+        && authoritative.as_ref().is_some_and(|loaded| {
+            loaded
+                .outline_content
+                .as_deref()
+                .is_some_and(|content| content == checkpoint.markdown_content)
+                || loaded
+                    .document
+                    .as_deref()
+                    .is_some_and(|document| document == checkpoint.document)
+        });
+    if same_binding && already_absorbed {
+        discard_pending_recovery_in(app_data)?;
+        let mut loaded = authoritative.expect("absorbed checkpoint requires readable source");
+        loaded.notice = match recovery_notice {
+            Some(notice) => append_notice(loaded.notice, notice),
+            None => loaded.notice,
+        };
+        return Ok(loaded);
+    }
+
+    let force_safe_copy = checkpoint.startup_attempts >= 2;
+    checkpoint.startup_attempts = checkpoint.startup_attempts.saturating_add(1);
+    {
+        let _guard = recovery_io_guard()?;
+        let content = serde_json::to_string(&checkpoint)
+            .map_err(|error| storage_error("无法更新恢复尝试记录", error))?;
+        write_atomic(&pending_checkpoint_path(app_data), &content)?;
+    }
+    let recovery_generation = editor_draft
+        .as_ref()
+        .map_or(checkpoint.generation, |draft| {
+            checkpoint.generation.max(draft.generation)
+        });
+
+    // An unbound-copy checkpoint has no committed source to compare with:
+    // whether a legacy recovery file happens to exist must not decide its
+    // fate. It returns as a pending document whose "keep" materializes it
+    // as an independent draft.
+    let unbound_copy =
+        checkpoint.document_path.is_none() && checkpoint.protected_source_path.is_some();
+    if unbound_copy && !force_safe_copy {
+        return Ok(LoadDocumentResult {
+            document: Some(checkpoint.document),
+            outline_content: Some(checkpoint.markdown_content),
+            document_format: Some("markdown".to_string()),
+            document_path: None,
+            recovered_from_backup: false,
+            notice: append_notice(recovery_notice, "已恢复上次中断前的内容"),
+            source_hash: None,
+            recovered_from_pending: true,
+            recovery_generation: Some(recovery_generation),
+            recovery_kind: Some("restored".to_string()),
+            editor_draft,
+        });
+    }
+
+    if source_matches && !force_safe_copy {
+        let mut loaded = authoritative.expect("matching recovery requires readable source");
+        loaded.document = Some(checkpoint.document);
+        loaded.recovered_from_pending = true;
+        loaded.recovery_generation = Some(recovery_generation);
+        loaded.recovery_kind = Some("restored".to_string());
+        loaded.editor_draft = editor_draft;
+        loaded.notice = append_notice(loaded.notice, "已恢复上次中断前的内容");
+        if let Some(notice) = recovery_notice {
+            loaded.notice = append_notice(loaded.notice, notice);
+        }
+        return Ok(loaded);
+    }
+
+    Ok(LoadDocumentResult {
+        document: Some(checkpoint.document),
+        outline_content: Some(checkpoint.markdown_content),
+        document_format: Some("markdown".to_string()),
+        document_path: checkpoint.document_path,
+        recovered_from_backup: false,
+        notice: append_notice(
+            recovery_notice,
+            if force_safe_copy {
+                "恢复内容连续中断，已在安全副本中打开。".to_string()
+            } else {
+                "原文件已有变化，恢复内容将保留为独立副本。".to_string()
+            },
+        ),
+        source_hash: checkpoint.source_hash,
+        recovered_from_pending: true,
+        recovery_generation: Some(recovery_generation),
+        recovery_kind: Some(if force_safe_copy {
+            "safe-copy".to_string()
+        } else {
+            "conflict".to_string()
+        }),
+        editor_draft,
+    })
+}
+
 #[tauri::command]
 pub(crate) async fn load_local_document(app: AppHandle) -> Result<LoadDocumentResult, String> {
     let app_data = app
@@ -1343,6 +2087,82 @@ pub(crate) async fn load_local_document(app: AppHandle) -> Result<LoadDocumentRe
     tauri::async_runtime::spawn_blocking(move || load_startup_document(&app_data))
         .await
         .map_err(|error| storage_error("读取任务异常结束", error))?
+}
+
+#[tauri::command]
+pub(crate) async fn write_recovery_checkpoint(
+    app: AppHandle,
+    session_id: String,
+    generation: u64,
+    document_json: String,
+    markdown_content: String,
+    document_path: Option<String>,
+    source_hash: Option<String>,
+    protected_source_path: Option<String>,
+) -> Result<RecoveryWriteResult, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| storage_error("无法定位本地数据目录", error))?;
+    let checkpoint = RecoveryCheckpoint {
+        format_version: 1,
+        session_id,
+        generation,
+        saved_at_millis: now_millis(),
+        document_path,
+        source_hash,
+        protected_source_path,
+        document: document_json,
+        markdown_content,
+        startup_attempts: 0,
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        write_recovery_checkpoint_in(&app_data, checkpoint)
+    })
+    .await
+    .map_err(|error| storage_error("恢复检查点任务异常结束", error))?
+}
+
+#[tauri::command]
+pub(crate) async fn write_editor_recovery_draft(
+    app: AppHandle,
+    draft: EditorRecoveryDraft,
+) -> Result<RecoveryWriteResult, String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| storage_error("无法定位本地数据目录", error))?;
+    tauri::async_runtime::spawn_blocking(move || write_editor_recovery_draft_in(&app_data, draft))
+        .await
+        .map_err(|error| storage_error("编辑恢复草稿任务异常结束", error))?
+}
+
+#[tauri::command]
+pub(crate) async fn clear_pending_recovery(
+    app: AppHandle,
+    checkpoint_generation: Option<u64>,
+    editor_draft_generation: Option<u64>,
+) -> Result<(), String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| storage_error("无法定位本地数据目录", error))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        clear_pending_recovery_through(&app_data, checkpoint_generation, editor_draft_generation)
+    })
+    .await
+    .map_err(|error| storage_error("清理临时恢复记录异常结束", error))?
+}
+
+#[tauri::command]
+pub(crate) async fn discard_pending_recovery(app: AppHandle) -> Result<(), String> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| storage_error("无法定位本地数据目录", error))?;
+    tauri::async_runtime::spawn_blocking(move || discard_pending_recovery_in(&app_data))
+        .await
+        .map_err(|error| storage_error("放弃临时恢复记录异常结束", error))?
 }
 
 #[tauri::command]
@@ -1452,6 +2272,8 @@ pub(crate) async fn save_local_document(
     expected_source_hash: Option<String>,
     protected_source_path: Option<String>,
     viewport_only: Option<bool>,
+    recovery_checkpoint_generation: Option<u64>,
+    recovery_editor_draft_generation: Option<u64>,
 ) -> Result<SaveDocumentResult, String> {
     let app_data = app
         .path()
@@ -1486,6 +2308,13 @@ pub(crate) async fn save_local_document(
             if let Err(error) = set_active_document(&app_data, Some(target.as_path())) {
                 warnings.push(error);
             }
+            if let Err(error) = clear_pending_recovery_through(
+                &app_data,
+                recovery_checkpoint_generation,
+                recovery_editor_draft_generation,
+            ) {
+                warnings.push(error);
+            }
             Ok(SaveDocumentResult {
                 source_hash: Some(saved.source_hash),
                 auxiliary_warning: combine_auxiliary_warnings(warnings),
@@ -1497,6 +2326,13 @@ pub(crate) async fn save_local_document(
             if let Err(error) =
                 set_active_document(&app_data, document_path.as_ref().map(|_| target.as_path()))
             {
+                warnings.push(error);
+            }
+            if let Err(error) = clear_pending_recovery_through(
+                &app_data,
+                recovery_checkpoint_generation,
+                recovery_editor_draft_generation,
+            ) {
                 warnings.push(error);
             }
             Ok(SaveDocumentResult {
@@ -1685,6 +2521,27 @@ mod tests {
         sorted_markdown_backups_for_target(app_data, target)
             .unwrap()
             .len()
+    }
+
+    fn recovery_checkpoint(
+        generation: u64,
+        document_json: String,
+        markdown: &str,
+        document_path: Option<&Path>,
+        source_hash: Option<String>,
+    ) -> RecoveryCheckpoint {
+        RecoveryCheckpoint {
+            format_version: 1,
+            session_id: "test-session".to_string(),
+            generation,
+            saved_at_millis: now_millis(),
+            document_path: document_path.map(|path| path.to_string_lossy().into_owned()),
+            source_hash,
+            protected_source_path: None,
+            document: document_json,
+            markdown_content: markdown.to_string(),
+            startup_attempts: 0,
+        }
     }
 
     #[test]
@@ -2375,6 +3232,469 @@ mod tests {
         assert!(saved.auxiliary_warning.is_some());
         assert_eq!(fs::read_to_string(&target).unwrap(), markdown);
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn pending_recovery_generations_never_move_backward_or_clear_newer_work() {
+        let directory = test_directory("pending-generation");
+        let app_data = directory.join("app-data");
+        let newer = recovery_checkpoint(20, document("新版"), "# 新版\n", None, None);
+        let older = recovery_checkpoint(10, document("旧版"), "# 旧版\n", None, None);
+
+        assert!(
+            write_recovery_checkpoint_in(&app_data, newer)
+                .unwrap()
+                .wrote
+        );
+        // A backward generation must be rejected loudly: silently treating
+        // it as already-written would stop protecting current work.
+        assert!(write_recovery_checkpoint_in(&app_data, older).is_err());
+        clear_pending_recovery_through(&app_data, Some(19), None).unwrap();
+
+        let retained = read_recovery_checkpoint(&app_data).unwrap().unwrap();
+        assert_eq!(retained.generation, 20);
+        assert!(retained.document.contains("新版"));
+        clear_pending_recovery_through(&app_data, Some(20), None).unwrap();
+        assert!(read_recovery_checkpoint(&app_data).unwrap().is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn restores_a_compatible_checkpoint_and_matching_editor_draft() {
+        let directory = test_directory("pending-compatible");
+        let app_data = directory.join("app-data");
+        let target = directory.join("方案.md");
+        let source = "# 方案\n\n- 已保存\n";
+        let source_hash =
+            save_markdown_document(&app_data, &target, source, &document("已保存"), None)
+                .unwrap()
+                .source_hash;
+        set_active_document(&app_data, Some(&target)).unwrap();
+        write_recovery_checkpoint_in(
+            &app_data,
+            recovery_checkpoint(
+                30,
+                document("中断内容"),
+                "# 方案\n\n- 中断内容\n",
+                Some(&target),
+                Some(source_hash.clone()),
+            ),
+        )
+        .unwrap();
+        write_editor_recovery_draft_in(
+            &app_data,
+            EditorRecoveryDraft {
+                format_version: 1,
+                session_id: "test-session".to_string(),
+                generation: 31,
+                checkpoint_generation: 30,
+                document_path: Some(target.to_string_lossy().into_owned()),
+                source_hash: Some(source_hash),
+                surface: "root-map".to_string(),
+                space_id: None,
+                object_kind: "mind-node".to_string(),
+                object_id: "root".to_string(),
+                text: "输入法完成后的文字".to_string(),
+            },
+        )
+        .unwrap();
+
+        let loaded = load_startup_document(&app_data).unwrap();
+
+        assert!(loaded.recovered_from_pending);
+        assert_eq!(loaded.recovery_kind.as_deref(), Some("restored"));
+        assert_eq!(loaded.recovery_generation, Some(31));
+        assert_eq!(
+            loaded
+                .editor_draft
+                .as_ref()
+                .map(|draft| draft.text.as_str()),
+            Some("输入法完成后的文字")
+        );
+        assert!(loaded.document.unwrap().contains("中断内容"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn sends_recovery_to_a_safe_copy_when_the_source_changed() {
+        let directory = test_directory("pending-conflict");
+        let app_data = directory.join("app-data");
+        let target = directory.join("方案.md");
+        let source = "# 方案\n\n- 已保存\n";
+        let source_hash =
+            save_markdown_document(&app_data, &target, source, &document("已保存"), None)
+                .unwrap()
+                .source_hash;
+        set_active_document(&app_data, Some(&target)).unwrap();
+        write_recovery_checkpoint_in(
+            &app_data,
+            recovery_checkpoint(
+                40,
+                document("未保存"),
+                "# 方案\n\n- 未保存\n",
+                Some(&target),
+                Some(source_hash),
+            ),
+        )
+        .unwrap();
+        fs::write(&target, "# 方案\n\n- 外部修改\n").unwrap();
+
+        let loaded = load_startup_document(&app_data).unwrap();
+
+        assert_eq!(loaded.recovery_kind.as_deref(), Some("conflict"));
+        assert!(loaded.document.unwrap().contains("未保存"));
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "# 方案\n\n- 外部修改\n"
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn silently_discards_a_checkpoint_already_absorbed_by_the_source() {
+        let directory = test_directory("pending-absorbed");
+        let app_data = directory.join("app-data");
+        let target = directory.join("方案.md");
+        let markdown = "# 方案\n\n- 已吸收\n";
+        let document_json = document("已吸收");
+        let source_hash =
+            save_markdown_document(&app_data, &target, markdown, &document_json, None)
+                .unwrap()
+                .source_hash;
+        set_active_document(&app_data, Some(&target)).unwrap();
+        write_recovery_checkpoint_in(
+            &app_data,
+            recovery_checkpoint(
+                50,
+                document_json,
+                markdown,
+                Some(&target),
+                Some(source_hash),
+            ),
+        )
+        .unwrap();
+
+        let loaded = load_startup_document(&app_data).unwrap();
+
+        assert!(!loaded.recovered_from_pending);
+        assert!(read_recovery_checkpoint(&app_data).unwrap().is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn silently_discards_an_editor_draft_already_absorbed_by_the_source() {
+        let directory = test_directory("pending-editor-absorbed");
+        let app_data = directory.join("app-data");
+        let target = directory.join("方案.md");
+        let markdown = "# 方案\n\n- 已吸收\n";
+        let document_json = document("已吸收");
+        let source_hash =
+            save_markdown_document(&app_data, &target, markdown, &document_json, None)
+                .unwrap()
+                .source_hash;
+        set_active_document(&app_data, Some(&target)).unwrap();
+        write_recovery_checkpoint_in(
+            &app_data,
+            recovery_checkpoint(
+                51,
+                document_json,
+                markdown,
+                Some(&target),
+                Some(source_hash.clone()),
+            ),
+        )
+        .unwrap();
+        write_editor_recovery_draft_in(
+            &app_data,
+            EditorRecoveryDraft {
+                format_version: 1,
+                session_id: "test-session".to_string(),
+                generation: 52,
+                checkpoint_generation: 51,
+                document_path: Some(target.to_string_lossy().into_owned()),
+                source_hash: Some(source_hash),
+                surface: "root-map".to_string(),
+                space_id: None,
+                object_kind: "title".to_string(),
+                object_id: "document-title".to_string(),
+                text: "已吸收".to_string(),
+            },
+        )
+        .unwrap();
+
+        let loaded = load_startup_document(&app_data).unwrap();
+
+        assert!(!loaded.recovered_from_pending);
+        assert!(read_recovery_checkpoint(&app_data).unwrap().is_none());
+        assert!(read_editor_recovery_draft(&app_data).unwrap().is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn quarantines_a_corrupt_checkpoint_without_hiding_the_source() {
+        let directory = test_directory("pending-corrupt");
+        let app_data = directory.join("app-data");
+        let target = directory.join("方案.md");
+        save_markdown_document(
+            &app_data,
+            &target,
+            "# 方案\n\n- 完好来源\n",
+            &document("完好来源"),
+            None,
+        )
+        .unwrap();
+        set_active_document(&app_data, Some(&target)).unwrap();
+        fs::create_dir_all(pending_recovery_directory(&app_data)).unwrap();
+        fs::write(pending_checkpoint_path(&app_data), "{broken").unwrap();
+
+        let loaded = load_startup_document(&app_data).unwrap();
+
+        assert!(loaded.document.unwrap().contains("完好来源"));
+        assert!(!pending_checkpoint_path(&app_data).exists());
+        assert!(fs::read_dir(app_data.join(CORRUPT_DIRECTORY))
+            .unwrap()
+            .any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("checkpoint")));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn repeated_recovery_startup_is_marked_for_a_safe_copy() {
+        let directory = test_directory("pending-loop");
+        let app_data = directory.join("app-data");
+        let mut checkpoint =
+            recovery_checkpoint(60, document("循环恢复"), "# 循环恢复\n", None, None);
+        checkpoint.startup_attempts = 2;
+        write_recovery_checkpoint_in(&app_data, checkpoint).unwrap();
+
+        let loaded = load_startup_document(&app_data).unwrap();
+
+        assert_eq!(loaded.recovery_kind.as_deref(), Some("safe-copy"));
+        assert!(loaded.notice.unwrap().contains("安全副本"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn restores_an_unbound_copy_as_pending_work_regardless_of_legacy_files() {
+        let directory = test_directory("pending-unbound");
+        let app_data = directory.join("app-data");
+        let mut checkpoint =
+            recovery_checkpoint(70, document("未绑定副本"), "# 未绑定副本\n", None, None);
+        checkpoint.protected_source_path = Some("/tmp/丰富来源.md".to_string());
+        write_recovery_checkpoint_in(&app_data, checkpoint).unwrap();
+
+        let loaded = load_startup_document(&app_data).unwrap();
+
+        assert_eq!(loaded.recovery_kind.as_deref(), Some("restored"));
+        assert!(loaded.recovered_from_pending);
+        assert!(loaded.notice.unwrap().contains("已恢复"));
+        assert!(loaded.document.unwrap().contains("未绑定副本"));
+        assert!(loaded.document_path.is_none());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_recovery_generation_that_moves_backward() {
+        let directory = test_directory("pending-generation-regression");
+        let app_data = directory.join("app-data");
+        write_recovery_checkpoint_in(
+            &app_data,
+            recovery_checkpoint(80, document("新版"), "# 新版\n", None, None),
+        )
+        .unwrap();
+
+        let backward = write_recovery_checkpoint_in(
+            &app_data,
+            recovery_checkpoint(79, document("旧版"), "# 旧版\n", None, None),
+        );
+        assert!(backward.is_err());
+        let duplicate = write_recovery_checkpoint_in(
+            &app_data,
+            recovery_checkpoint(80, document("新版"), "# 新版\n", None, None),
+        )
+        .unwrap();
+        assert!(!duplicate.wrote);
+
+        let retained = read_recovery_checkpoint(&app_data).unwrap().unwrap();
+        assert_eq!(retained.generation, 80);
+        assert!(retained.document.contains("新版"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn prunes_quarantined_recovery_files_beyond_the_cap() {
+        let directory = test_directory("quarantine-cap");
+        let recovery_directory = directory.join("app-data").join(CORRUPT_DIRECTORY);
+        fs::create_dir_all(&recovery_directory).unwrap();
+        for index in 0..25 {
+            let name = format!("checkpoint.json.{:02}.recovery", index);
+            fs::write(recovery_directory.join(name), "broken").unwrap();
+        }
+
+        prune_quarantined_recovery_files(&recovery_directory);
+
+        let remaining: Vec<String> = fs::read_dir(&recovery_directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(remaining.len(), MAX_QUARANTINED_RECOVERY_FILES);
+        assert!(!remaining.contains(&"checkpoint.json.00.recovery".to_string()));
+        assert!(remaining.contains(&"checkpoint.json.24.recovery".to_string()));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn desktop_and_mcp_use_the_same_lock_name() {
+        assert_eq!(
+            update_lock_path(Path::new("/tmp/方案.md")),
+            Path::new("/tmp/.laniakea-lock-1dd1bad2ed9e0344d0c85c386dd1e6ff")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_target_still_uses_the_canonical_parent_lock() {
+        let directory = test_directory("missing-shared-lock");
+        let real_directory = directory.join("real");
+        let alias_directory = directory.join("alias");
+        fs::create_dir_all(&real_directory).unwrap();
+        std::os::unix::fs::symlink(&real_directory, &alias_directory).unwrap();
+        let target = real_directory.join("方案.md");
+        let alias = alias_directory.join("方案.md");
+        let first = acquire_update_lock_with_timing(
+            &target,
+            Duration::from_millis(20),
+            Duration::from_millis(2),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+
+        let error = acquire_update_lock_with_timing(
+            &alias,
+            Duration::from_millis(20),
+            Duration::from_millis(2),
+            Duration::from_secs(60),
+        )
+        .unwrap_err();
+
+        assert!(error.starts_with("LOCAL_DOCUMENT_BUSY"));
+        assert!(!target.exists());
+        drop(first);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn update_lock_holder_child() {
+        let Ok(target) = std::env::var("LANIAKEA_TEST_LOCK_TARGET") else {
+            return;
+        };
+        let lock = acquire_update_lock(Path::new(&target)).unwrap();
+        assert!(lock.is_some());
+        if let Ok(marker) = std::env::var("LANIAKEA_TEST_LOCK_MARKER") {
+            fs::write(marker, "locked").unwrap();
+        }
+        thread::sleep(Duration::from_secs(30));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_live_lock_in_another_process_blocks_desktop_writes() {
+        let directory = test_directory("shared-lock");
+        fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("方案.md");
+        let marker = directory.join("lock-marker");
+        fs::write(&target, "# 原文\n").unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("storage::tests::update_lock_holder_child")
+            .arg("--nocapture")
+            .env("LANIAKEA_TEST_LOCK_TARGET", &target)
+            .env("LANIAKEA_TEST_LOCK_MARKER", &marker)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !marker.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(marker.exists(), "child process did not acquire the lock");
+
+        let error = acquire_update_lock_with_timing(
+            &target,
+            Duration::from_millis(20),
+            Duration::from_millis(2),
+            Duration::from_secs(60),
+        )
+        .unwrap_err();
+
+        assert!(error.starts_with("LOCAL_DOCUMENT_BUSY"));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "# 原文\n");
+        assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGKILL) }, 0);
+        child.wait().unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn recovery_fault_injection_child() {
+        let Ok(app_data) = std::env::var("LANIAKEA_TEST_STORAGE_APP_DATA") else {
+            return;
+        };
+        let checkpoint =
+            recovery_checkpoint(91, document("强退后的新版"), "# 强退后的新版\n", None, None);
+        let _ = write_recovery_checkpoint_in(Path::new(&app_data), checkpoint);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_real_process_kill_leaves_either_the_old_or_new_complete_checkpoint() {
+        for (pause_at, expected_generation) in
+            [("after-temp-sync", 90_u64), ("after-rename", 91_u64)]
+        {
+            let directory = test_directory(pause_at);
+            let app_data = directory.join("app-data");
+            let marker = directory.join("fault-marker");
+            write_recovery_checkpoint_in(
+                &app_data,
+                recovery_checkpoint(90, document("强退前的旧版"), "# 强退前的旧版\n", None, None),
+            )
+            .unwrap();
+
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--exact")
+                .arg("storage::tests::recovery_fault_injection_child")
+                .arg("--nocapture")
+                .env("LANIAKEA_TEST_STORAGE_APP_DATA", &app_data)
+                .env("LANIAKEA_TEST_STORAGE_PAUSE_AT", pause_at)
+                .env("LANIAKEA_TEST_STORAGE_MARKER", &marker)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !marker.exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert!(
+                marker.exists(),
+                "fault marker was not reached at {pause_at}"
+            );
+            assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGKILL) }, 0);
+            let status = child.wait().unwrap();
+            assert!(!status.success());
+
+            let recovered = read_recovery_checkpoint(&app_data).unwrap().unwrap();
+            assert_eq!(recovered.generation, expected_generation);
+            assert!(recovered.document.contains(if expected_generation == 90 {
+                "强退前的旧版"
+            } else {
+                "强退后的新版"
+            }));
+            fs::remove_dir_all(directory).unwrap();
+        }
     }
 
     #[test]

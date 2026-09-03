@@ -332,14 +332,18 @@ pub fn run() {
             resolve_application_exit,
             set_global_shortcut,
             storage::activate_local_document,
+            storage::clear_pending_recovery,
             storage::clear_active_document,
             storage::create_markdown_draft,
+            storage::discard_pending_recovery,
             storage::discard_internal_draft,
             storage::load_local_document,
             storage::move_internal_draft,
             storage::open_local_document,
             storage::read_outline_file,
             storage::save_local_document,
+            storage::write_editor_recovery_draft,
+            storage::write_recovery_checkpoint,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Laniakea")

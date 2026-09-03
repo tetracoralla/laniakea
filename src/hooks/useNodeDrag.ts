@@ -482,9 +482,20 @@ export function useNodeDrag({
         currentDocument,
         requestedSelection,
       ).filter((rootId) => rootId !== currentDocument.rootId);
-      const leadId =
-        rootIds.find((rootId) => subtreeIds(currentDocument, rootId).has(id)) ??
-        rootIds[0];
+      const subtreeByRoot = new Map<string, Set<string>>();
+      const descendantsFor = (rootId: string) => {
+        const cached = subtreeByRoot.get(rootId);
+        if (cached) return cached;
+        const descendants = subtreeIds(currentDocument, rootId);
+        subtreeByRoot.set(rootId, descendants);
+        return descendants;
+      };
+      // The common single-node drag already identifies its lead root. Avoid
+      // walking a large branch once to rediscover that fact and a second time
+      // to build the exclusion set used by hit testing.
+      const leadId = rootIds.length === 1
+        ? rootIds[0]
+        : rootIds.find((rootId) => descendantsFor(rootId).has(id)) ?? rootIds[0];
       const source = leadId ? currentLayout.nodes[leadId] : null;
       if (!source) return;
       const roots = rootIds
@@ -515,7 +526,7 @@ export function useNodeDrag({
       );
       const excludedIds = new Set<string>();
       roots.forEach(({ id: rootId }) => {
-        subtreeIds(currentDocument, rootId).forEach((subtreeId) => {
+        descendantsFor(rootId).forEach((subtreeId) => {
           excludedIds.add(subtreeId);
         });
       });

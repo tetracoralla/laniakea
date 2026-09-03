@@ -521,6 +521,7 @@
   --node-padding-block: 10px;
   position: absolute;
   z-index: 2;
+  contain: layout style;
   pointer-events: auto;
 }
 
@@ -1859,6 +1860,18 @@
 .status-bar__action:hover,
 .status-bar__action:focus-visible {
   background: var(--violet-soft);
+}
+
+/* A destructive secondary choice (放弃) reads as quiet text next to the
+   primary action instead of competing with it. */
+.status-bar__action--secondary {
+  color: var(--muted);
+  font-weight: var(--fw-ui);
+}
+
+.status-bar__action--secondary:hover,
+.status-bar__action--secondary:focus-visible {
+  background: var(--surface-hover);
 }
 
 @media (prefers-reduced-motion: reduce) {

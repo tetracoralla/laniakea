@@ -28,6 +28,8 @@ interface FlowEdgeLayerProps {
   nodes: FlowSpace["nodes"];
   onChangeLabel: (edgeId: string, label: string) => void;
   onDeleteEdge: (edgeId: string) => void;
+  onDraftChange?: (edgeId: string, value: string) => void;
+  onDraftFinish?: (cancelled: boolean) => void;
   onEndpointPointerDown: (
     edge: FlowEdge,
     endpoint: "from" | "to",
@@ -47,6 +49,8 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   nodes,
   onChangeLabel,
   onDeleteEdge,
+  onDraftChange = () => undefined,
+  onDraftFinish = () => undefined,
   onEndpointPointerDown,
   onSelectEdge,
   selectedEdgeId,
@@ -95,9 +99,10 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
     setDraft(edge.label);
   };
 
-  const finishEdit = () => {
+  const finishEdit = (cancelled: boolean) => {
     setEditingEdgeId(null);
     setDraft("");
+    onDraftFinish(cancelled);
   };
 
   return (
@@ -275,19 +280,23 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
               }
               if (editFinishedByKeyRef.current) return;
               onChangeLabel(edge.id, event.currentTarget.value);
-              finishEdit();
+              finishEdit(false);
             }}
             onChange={(event) => {
-              if (!composingRef.current) setDraft(event.target.value);
+              if (!composingRef.current) {
+                setDraft(event.target.value);
+                onDraftChange(edge.id, event.target.value);
+              }
             }}
             onCompositionEnd={(event) => {
               composingRef.current = false;
               markInputMethodComposition(event.currentTarget, false);
               setDraft(event.currentTarget.value);
+              onDraftChange(edge.id, event.currentTarget.value);
               if (commitAfterCompositionRef.current) {
                 commitAfterCompositionRef.current = false;
                 onChangeLabel(edge.id, event.currentTarget.value);
-                finishEdit();
+                finishEdit(false);
               }
             }}
             onCompositionStart={(event) => {
@@ -302,11 +311,11 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
                 event.preventDefault();
                 editFinishedByKeyRef.current = true;
                 onChangeLabel(edge.id, event.currentTarget.value);
-                finishEdit();
+                finishEdit(false);
               } else if (event.key === "Escape") {
                 event.preventDefault();
                 editFinishedByKeyRef.current = true;
-                finishEdit();
+                finishEdit(true);
               }
             }}
             ref={editorRef}

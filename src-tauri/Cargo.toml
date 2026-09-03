@@ -19,5 +19,8 @@ sha2 = "0.10"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-global-shortcut = "2"

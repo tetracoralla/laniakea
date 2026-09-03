@@ -26,6 +26,7 @@
     "check:release-hygiene": "node scripts/checkReleaseHygiene.mjs",
     "check:graph-view-compiler": "node scripts/checkGraphViewCompiler.mjs",
     "measure:overview-drag": "npm run build:web && node scripts/measureOverviewDrag.mjs",
+    "measure:bundle": "node scripts/measureBundle.mjs",
     "check:desktop-runtime": "./script/build_and_run.sh --verify",
     "preview": "vite preview"
   },

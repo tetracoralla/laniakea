@@ -183,6 +183,8 @@ export function StatusBar({
     displayedNotice?.actionLabel,
     displayedNotice?.message,
     displayedNotice?.onAction,
+    displayedNotice?.onSecondaryAction,
+    displayedNotice?.secondaryActionLabel,
     displayedSaveStatus,
     measureWidth,
     saveLabel,
@@ -196,7 +198,14 @@ export function StatusBar({
 
   const runNoticeAction = () => {
     displayedNotice?.onAction?.();
-    onNoticeActionComplete();
+    // A persistent decision bar stays until its action resolves the pending
+    // state (which clears it) or fails (which brings it back).
+    if (!displayedNotice?.persistent) onNoticeActionComplete();
+  };
+
+  const runNoticeSecondaryAction = () => {
+    displayedNotice?.onSecondaryAction?.();
+    if (!displayedNotice?.persistent) onNoticeActionComplete();
   };
 
   const renderedSaveState = displayedSaveStatus?.state;
@@ -279,6 +288,16 @@ export function StatusBar({
                 {displayedNotice.actionLabel}
               </button>
             )}
+            {displayedNotice.secondaryActionLabel &&
+              displayedNotice.onSecondaryAction && (
+                <button
+                  className="status-bar__action status-bar__action--secondary"
+                  onClick={runNoticeSecondaryAction}
+                  type="button"
+                >
+                  {displayedNotice.secondaryActionLabel}
+                </button>
+              )}
           </span>
         )}
       </div>

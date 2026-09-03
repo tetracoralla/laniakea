@@ -47,6 +47,8 @@ export interface FlowCanvasProps {
   onSelect: (id: string | null) => void;
   onBeginEdit: (id: string) => void;
   onDraftChange: (value: string) => void;
+  onEdgeDraftChange?: (edgeId: string, value: string) => void;
+  onEdgeDraftFinish?: (cancelled: boolean) => void;
   onCommitEdit: (id: string, value: string) => void;
   onCancelEdit: () => void;
   onAddNode?: (
@@ -100,6 +102,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       onSelect,
       onBeginEdit,
       onDraftChange,
+      onEdgeDraftChange = () => undefined,
+      onEdgeDraftFinish = () => undefined,
       onCommitEdit,
       onCancelEdit,
       onAddNode = () => undefined,
@@ -404,6 +408,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             measureTextWidth={measureTextWidth}
             nodes={space.nodes}
             onChangeLabel={onChangeEdgeLabel}
+            onDraftChange={onEdgeDraftChange}
+            onDraftFinish={onEdgeDraftFinish}
             onDeleteEdge={(edgeId) => {
               onDeleteEdge(edgeId);
               setSelectedEdgeId(null);

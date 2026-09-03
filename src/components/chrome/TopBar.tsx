@@ -6,12 +6,17 @@ import {
 } from "react";
 import type { RecentDocument } from "../../persistence/recentDocuments";
 import { Icon } from "../icons/Icon";
-import { isInputMethodKey } from "../../model/inputMethod";
+import {
+  isInputMethodKey,
+  markInputMethodComposition,
+} from "../../model/inputMethod";
 import { DocumentSwitcher } from "./DocumentSwitcher";
 
 interface TopBarProps {
   title: string;
   onTitleChange: (title: string) => void;
+  onTitleDraftChange?: (title: string) => void;
+  onTitleDraftFinish?: (cancelled: boolean) => void;
   onSearch: (returnFocus: HTMLElement) => void;
   onNew: () => void;
   onImport: () => void;
@@ -37,6 +42,8 @@ interface TopBarProps {
 export function TopBar({
   title,
   onTitleChange,
+  onTitleDraftChange = () => undefined,
+  onTitleDraftFinish = () => undefined,
   onSearch,
   onNew,
   onImport,
@@ -66,6 +73,8 @@ export function TopBar({
   const currentSpace = spacePath[spacePath.length - 1];
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const composingTitleRef = useRef(false);
+  const cancelTitleRef = useRef(false);
 
   useEffect(() => setDraft(title), [title]);
 
@@ -151,9 +160,16 @@ export function TopBar({
     action();
   };
 
-  const commitTitle = () => {
-    if (draft.trim() !== title) onTitleChange(draft);
+  const finishTitle = (value: string) => {
+    if (cancelTitleRef.current) {
+      cancelTitleRef.current = false;
+      setDraft(title);
+      onTitleDraftFinish(true);
+      return;
+    }
+    if (value.trim() !== title) onTitleChange(value);
     else setDraft(title);
+    onTitleDraftFinish(false);
   };
 
   return (
@@ -173,12 +189,32 @@ export function TopBar({
           <span className="sr-only">文档标题</span>
           <input
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={commitTitle}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              if (!composingTitleRef.current) {
+                onTitleDraftChange(event.target.value);
+              }
+            }}
+            onBlur={(event) => finishTitle(event.currentTarget.value)}
+            onCompositionEnd={(event) => {
+              composingTitleRef.current = false;
+              markInputMethodComposition(event.currentTarget, false);
+              setDraft(event.currentTarget.value);
+              onTitleDraftChange(event.currentTarget.value);
+            }}
+            onCompositionStart={(event) => {
+              composingTitleRef.current = true;
+              cancelTitleRef.current = false;
+              markInputMethodComposition(event.currentTarget, true);
+            }}
+            onFocus={() => {
+              cancelTitleRef.current = false;
+            }}
             onKeyDown={(event) => {
-              if (isInputMethodKey(event.nativeEvent)) return;
+              if (isInputMethodKey(event.nativeEvent, composingTitleRef.current)) return;
               if (event.key === "Enter") event.currentTarget.blur();
               if (event.key === "Escape") {
+                cancelTitleRef.current = true;
                 setDraft(title);
                 event.currentTarget.blur();
               }

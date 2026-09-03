@@ -22,13 +22,21 @@ import {
   activateLocalDocument,
   clearActiveDocument,
   createMarkdownDraft,
+  discardDesktopPendingRecovery,
   discardInternalDraft,
   isDesktopRuntime,
   loadLocalDocument,
   moveInternalDraft,
+  openLocalDocument,
   saveBrowserDocumentSynchronously,
   saveLocalDocument,
 } from "../persistence/localDocumentStore";
+import {
+  RecoveryCoordinator,
+  type RecoveryBinding,
+  type RecoveryEditorTarget,
+  type RecoverySaveCutoff,
+} from "../persistence/recoveryCoordinator";
 import {
   forgetRecentDocument,
   isInternalDocumentPath,
@@ -97,6 +105,8 @@ export function useMindMap({
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [recoveredWorkPending, setRecoveredWorkPending] = useState(false);
   const [lifecycleSaveBlockedRequest, setLifecycleSaveBlockedRequest] =
     useState(0);
   const [documentPath, setDocumentPath] = useState<string | null>(null);
@@ -119,6 +129,8 @@ export function useMindMap({
   const lastPersistedContentDocument = useRef<MindMapDocument | null>(
     null,
   );
+  const recoveredWorkPendingRef = useRef(false);
+  const recoveredBaselineDocumentRef = useRef<MindMapDocument | null>(null);
   const protectedUnboundSourceContent = useRef<string | null>(null);
   const protectedUnboundSourceDocument = useRef<MindMapDocument | null>(
     null,
@@ -137,6 +149,16 @@ export function useMindMap({
   const saveRequest = useRef(0);
   const documentSessionRef = useRef(0);
   const [documentSessionId, setDocumentSessionId] = useState(0);
+  const recoveryCoordinatorRef = useRef<RecoveryCoordinator | null>(null);
+  if (!recoveryCoordinatorRef.current) {
+    recoveryCoordinatorRef.current = new RecoveryCoordinator({
+      enabled: isDesktopRuntime(),
+      isDocumentSessionCurrent: (session) =>
+        documentSessionRef.current === session,
+      onError: setRecoveryError,
+    });
+  }
+  const recoveryCoordinator = recoveryCoordinatorRef.current;
 
   latestDocument.current = snapshot.document;
   documentPathRef.current = documentPath;
@@ -213,21 +235,63 @@ export function useMindMap({
         const expectedSourceHash = savingCurrentBinding
           ? sourceHashRef.current
           : null;
+        // While a restored recovery is still undecided, silent viewport
+        // saves must stay auxiliary-only: the recovered document is the
+        // content baseline, not a version the source has committed.
+        const silentSaveBaseline =
+          lastPersistedContentDocument.current ??
+          recoveredBaselineDocumentRef.current;
         const viewportOnly = Boolean(
           silent &&
-          lastPersistedContentDocument.current &&
-          sharesDocumentContent(
-            target,
-            lastPersistedContentDocument.current,
-          ),
+          silentSaveBaseline &&
+          sharesDocumentContent(target, silentSaveBaseline),
         );
-        const result = viewportOnly
+        const recoveryBinding: RecoveryBinding = {
+          documentPath: documentPathRef.current,
+          protectedSourcePath: protectedUnboundSourcePath.current,
+          sourceHash: sourceHashRef.current,
+        };
+        let recoveryCutoff: RecoverySaveCutoff = {
+          checkpointGeneration: null,
+          editorDraftGeneration: null,
+        };
+        try {
+          recoveryCutoff = await recoveryCoordinator.prepareSave(
+            target,
+            recoveryBinding,
+            targetSession,
+            viewportOnly,
+          );
+        } catch {
+          // A normal source save is itself the strongest recovery path. A
+          // failed pending-checkpoint write is surfaced separately and must
+          // not prevent that source save from succeeding.
+        }
+        const hasRecoveryCutoff = Boolean(
+          recoveryCutoff.checkpointGeneration ||
+          recoveryCutoff.editorDraftGeneration,
+        );
+        const result = viewportOnly || hasRecoveryCutoff
           ? await saveLocalDocument(
               target,
               targetPath,
               expectedSourceHash,
               protectedSourceForSave,
-              { viewportOnly: true },
+              {
+                viewportOnly,
+                ...(recoveryCutoff.checkpointGeneration
+                  ? {
+                      recoveryCheckpointGeneration:
+                        recoveryCutoff.checkpointGeneration,
+                    }
+                  : {}),
+                ...(recoveryCutoff.editorDraftGeneration
+                  ? {
+                      recoveryEditorDraftGeneration:
+                        recoveryCutoff.editorDraftGeneration,
+                    }
+                  : {}),
+              },
             )
           : await saveLocalDocument(
               target,
@@ -243,9 +307,25 @@ export function useMindMap({
           }
           return { result, stale: true } as const;
         }
-        lastPersistedContentDocument.current = target;
+        if (!viewportOnly || !recoveredBaselineDocumentRef.current) {
+          lastPersistedContentDocument.current = target;
+        }
+        recoveryCoordinator.markSaveCompleted(target, recoveryCutoff);
         if (savingCurrentBinding) {
           sourceHashRef.current = result.sourceHash;
+        }
+        if (
+          recoveredWorkPendingRef.current &&
+          savingCurrentBinding &&
+          !viewportOnly
+        ) {
+          // Any committed content save keeps the restored work — explicit
+          // save, first edit, or a document switch all resolve the banner
+          // instead of leaving a stale "discard" offer on committed content.
+          recoveredWorkPendingRef.current = false;
+          recoveredBaselineDocumentRef.current = null;
+          setRecoveredWorkPending(false);
+          setStartupNotice(null);
         }
         return { result, stale: false } as const;
       });
@@ -279,7 +359,7 @@ export function useMindMap({
       }
       return null;
     }
-  }, []);
+  }, [recoveryCoordinator]);
 
   const saveNow = useCallback(async (
     document?: MindMapDocument,
@@ -340,12 +420,33 @@ export function useMindMap({
           protectedBrowserSourceNameRef.current =
             loaded.protectedSourceName ?? null;
           setProtectedBrowserSourceName(loaded.protectedSourceName ?? null);
+          recoveryCoordinator.adoptDocument(
+            loaded.document,
+            loaded.recoveryKind === "restored"
+              ? loaded.recoveryGeneration ?? null
+              : null,
+            loaded.recoveryKind === "restored"
+              ? loaded.recoveryEditorDraftGeneration ?? null
+              : null,
+          );
+          recoveredWorkPendingRef.current =
+            loaded.recoveryKind === "restored";
+          recoveredBaselineDocumentRef.current =
+            loaded.recoveryKind === "restored" ? loaded.document : null;
+          setRecoveredWorkPending(loaded.recoveryKind === "restored");
           if (
             !loaded.recoveredFromBackup &&
-            protectedUnboundSourceContent.current === null
+            protectedUnboundSourceContent.current === null &&
+            loaded.recoveryKind !== "restored"
           ) {
             skipNextSave.current = loaded.document;
             lastPersistedContentDocument.current = loaded.document;
+          } else if (loaded.recoveryKind === "restored") {
+            // The source still contains the last committed version. Keep the
+            // recovered document visible without silently accepting it as the
+            // committed baseline until the owner keeps or edits it.
+            skipNextSave.current = loaded.document;
+            lastPersistedContentDocument.current = null;
           } else {
             lastPersistedContentDocument.current = null;
           }
@@ -388,6 +489,10 @@ export function useMindMap({
           protectedUnboundSourcePath.current = null;
           protectedBrowserSourceNameRef.current = null;
           setProtectedBrowserSourceName(null);
+          recoveryCoordinator.adoptDocument(latestDocument.current);
+          recoveredWorkPendingRef.current = false;
+          recoveredBaselineDocumentRef.current = null;
+          setRecoveredWorkPending(false);
           lastPersistedContentDocument.current = freshPath
             ? latestDocument.current
             : null;
@@ -426,7 +531,7 @@ export function useMindMap({
     return () => {
       cancelled = true;
     };
-  }, [advanceDocumentSession, refreshBrowserDocuments]);
+  }, [advanceDocumentSession, recoveryCoordinator, refreshBrowserDocuments]);
 
   useEffect(() => {
     persistRecentDocuments(recentDocuments);
@@ -452,6 +557,24 @@ export function useMindMap({
     documentPath,
     snapshot.document.title,
     sourceDocumentPath,
+  ]);
+
+  useEffect(() => {
+    if (startupMode === "loading") return;
+    recoveryCoordinator.observeDocument(
+      snapshot.document,
+      {
+        documentPath,
+        protectedSourcePath: protectedUnboundSourcePath.current,
+        sourceHash: sourceHashRef.current,
+      },
+      documentSessionRef.current,
+    );
+  }, [
+    documentPath,
+    recoveryCoordinator,
+    snapshot.document,
+    startupMode,
   ]);
 
   useEffect(() => {
@@ -585,6 +708,10 @@ export function useMindMap({
       : null;
     protectedBrowserSourceNameRef.current = browserSourceName;
     setProtectedBrowserSourceName(browserSourceName);
+    recoveryCoordinator.adoptDocument(document);
+    recoveredWorkPendingRef.current = false;
+    recoveredBaselineDocumentRef.current = null;
+    setRecoveredWorkPending(false);
     skipNextSave.current =
       skipAutosave && !protectUnboundCopy ? document : null;
     lastPersistedContentDocument.current =
@@ -601,7 +728,7 @@ export function useMindMap({
         selection: singleSelection(document.rootId),
       }),
     );
-  }, [advanceDocumentSession]);
+  }, [advanceDocumentSession, recoveryCoordinator]);
 
   const replaceDocument = useCallback((document: MindMapDocument) => {
     installDocument(document, null, null, false);
@@ -626,6 +753,79 @@ export function useMindMap({
       browserSourceName,
     );
   }, [installDocument]);
+
+  const keepRecoveredWork = useCallback(async (): Promise<boolean> => {
+    if (!recoveredWorkPending) return true;
+    const saved = await saveNow();
+    if (!saved) return false;
+    recoveredWorkPendingRef.current = false;
+    recoveredBaselineDocumentRef.current = null;
+    setRecoveredWorkPending(false);
+    setStartupNotice(null);
+    return true;
+  }, [recoveredWorkPending, saveNow]);
+
+  const discardRecoveredWork = useCallback(async (): Promise<boolean> => {
+    if (!recoveredWorkPending || !isDesktopRuntime()) return false;
+    const sourcePath = documentPathRef.current;
+    try {
+      await discardDesktopPendingRecovery();
+      const loaded = sourcePath
+        ? await openLocalDocument(sourcePath)
+        : await loadLocalDocument();
+      if (!loaded.document) {
+        throw new Error("没有可重新打开的已保存内容");
+      }
+      installDocument(
+        loaded.document,
+        loaded.documentPath,
+        loaded.sourcePath,
+        true,
+        loaded.importedAsCopy,
+        loaded.sourceHash,
+        loaded.protectedSourceName ?? null,
+      );
+      recoveredWorkPendingRef.current = false;
+      recoveredBaselineDocumentRef.current = null;
+      setRecoveredWorkPending(false);
+      setStartupNotice("已放弃中断前的临时修改");
+      setSaveState("saved");
+      setSaveError(null);
+      return true;
+    } catch (error) {
+      setRecoveryError(
+        error instanceof Error
+          ? error.message
+          : "无法重新打开已保存的内容。",
+      );
+      return false;
+    }
+  }, [installDocument, recoveredWorkPending]);
+
+  const protectEditorDraft = useCallback((
+    target: RecoveryEditorTarget,
+    text: string,
+  ) => {
+    recoveryCoordinator.protectEditorDraft(
+      latestDocument.current,
+      {
+        documentPath: documentPathRef.current,
+        protectedSourcePath: protectedUnboundSourcePath.current,
+        sourceHash: sourceHashRef.current,
+      },
+      documentSessionRef.current,
+      target,
+      text,
+    );
+  }, [recoveryCoordinator]);
+
+  const finishEditorDraft = useCallback((cancelled: boolean) => {
+    recoveryCoordinator.finishEditorDraft(cancelled);
+  }, [recoveryCoordinator]);
+
+  const retryRecoveryProtection = useCallback(() => {
+    recoveryCoordinator.retryLastCheckpoint();
+  }, [recoveryCoordinator]);
 
   const restoreActiveDocument = useCallback(async (): Promise<void> => {
     const path = documentPathRef.current ?? sourceDocumentPathRef.current;
@@ -1024,6 +1224,8 @@ export function useMindMap({
     saveState,
     saveError,
     saveWarning,
+    recoveryError,
+    recoveredWorkPending,
     lifecycleSaveBlockedRequest,
     startupNotice,
     startupMode,
@@ -1031,6 +1233,11 @@ export function useMindMap({
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
     applyMutation,
+    protectEditorDraft,
+    finishEditorDraft,
+    keepRecoveredWork,
+    discardRecoveredWork,
+    retryRecoveryProtection,
     isDocumentSessionCurrent,
     newDocument,
     openDocument,
