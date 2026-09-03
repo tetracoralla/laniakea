@@ -72,13 +72,21 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
 
   useEffect(() => {
     const cancel = () => resetDrag();
+    const cancelOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !dragRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      resetDrag();
+    };
     const cancelWhenHidden = () => {
       if (document.visibilityState !== "visible") resetDrag();
     };
     window.addEventListener("blur", cancel);
+    window.addEventListener("keydown", cancelOnEscape, true);
     document.addEventListener("visibilitychange", cancelWhenHidden);
     return () => {
       window.removeEventListener("blur", cancel);
+      window.removeEventListener("keydown", cancelOnEscape, true);
       document.removeEventListener("visibilitychange", cancelWhenHidden);
       resetDrag();
     };

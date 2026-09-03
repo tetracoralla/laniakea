@@ -32,11 +32,22 @@
 .canvas-controls__touch-actions,
 .canvas-controls__feedback,
 .status-bar {
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-12);
   box-shadow: var(--shadow-chrome);
-  backdrop-filter: blur(14px);
+  backdrop-filter: var(--blur-glass);
+}
+
+/* Floating panels share the glass material of the chrome shells. */
+.document-switcher__popover,
+.menu-popover,
+.command-overlay,
+.space-picker,
+.node-space-menu,
+.shortcut-settings,
+.flow-target-picker {
+  backdrop-filter: var(--blur-glass);
 }
 
 .topbar__identity {
@@ -143,7 +154,7 @@
   left: 0;
   width: 310px;
   padding: 7px;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-12);
   box-shadow: var(--shadow-float);
@@ -254,7 +265,7 @@
   z-index: 2;
   width: 212px;
   padding: 6px;
-  background: rgba(255, 255, 255, 0.99);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-10);
   box-shadow: var(--shadow-float);
@@ -339,6 +350,20 @@
   border-color: var(--line-strong);
 }
 
+.document-title__dirty {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  align-self: center;
+  margin-left: 2px;
+  background: var(--violet);
+  border-radius: 50%;
+}
+
+.document-title__dirty--error {
+  background: var(--danger);
+}
+
 .topbar__actions {
   flex: none;
   height: 42px;
@@ -397,7 +422,7 @@
   right: -4px;
   width: 230px;
   padding: 7px;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-12);
   box-shadow: var(--shadow-float);
@@ -598,6 +623,14 @@
   font-weight: var(--fw-quiet);
 }
 
+/* Second-level nodes match the base scale on purpose; stating it here keeps
+   layout.ts's 15px contract explicit instead of coincidental. */
+.mind-node--secondary .mind-node__content,
+.mind-node--secondary .mind-node__editor-shell {
+  font-size: var(--fs-15);
+  font-weight: var(--fw-node);
+}
+
 .mind-node--branch::before {
   position: absolute;
   top: 50%;
@@ -763,6 +796,22 @@
   box-shadow: var(--shadow-raised);
 }
 
+/* Sibling insertion feedback: the ordinal comes from data-drop-position
+   (written 1-based) so CSS alone can render where the drop will land. */
+.node-drag-preview[data-drop-position]::after {
+  position: absolute;
+  top: -9px;
+  left: 12px;
+  padding: 1px 7px;
+  color: white;
+  background: var(--violet);
+  border-radius: var(--radius-6);
+  content: "插入为第 " attr(data-drop-position) " 项";
+  font-size: var(--fs-11);
+  font-weight: var(--fw-ui-strong);
+  white-space: nowrap;
+}
+
 .mind-node--root.is-selected .mind-node__content,
 .mind-node--root.is-primary .mind-node__content {
   border-color: color-mix(in srgb, var(--violet) 70%, white);
@@ -847,12 +896,32 @@
 }
 
 .subspace-portal {
+  /* Tone follows the anchored branch color so the summary card and its
+     connector read as one relationship (--map/--flow/--tone classes are
+     emitted by SubspacePortalNode). */
+  --portal-tone: var(--violet);
+  --portal-tone-soft: var(--violet-soft);
   position: absolute;
   z-index: 2;
   cursor: grab;
   pointer-events: auto;
   touch-action: none;
   will-change: transform;
+}
+
+.subspace-portal--blue {
+  --portal-tone: var(--blue);
+  --portal-tone-soft: color-mix(in srgb, var(--blue) 7%, var(--surface));
+}
+
+.subspace-portal--emerald {
+  --portal-tone: var(--emerald);
+  --portal-tone-soft: color-mix(in srgb, var(--emerald) 7%, var(--surface));
+}
+
+.subspace-portal--amber {
+  --portal-tone: var(--amber);
+  --portal-tone-soft: color-mix(in srgb, var(--amber) 9%, var(--surface));
 }
 
 .subspace-portal__content {
@@ -864,8 +933,8 @@
   padding: 12px 18px;
   overflow: hidden;
   color: var(--ink);
-  background: color-mix(in srgb, var(--surface) 94%, var(--violet-soft));
-  border: 1px solid color-mix(in srgb, var(--violet) 23%, var(--line));
+  background: color-mix(in srgb, var(--surface) 94%, var(--portal-tone-soft));
+  border: 1px solid color-mix(in srgb, var(--portal-tone) 23%, var(--line));
   border-radius: var(--radius-node);
   box-shadow: var(--shadow-hairline);
   cursor: grab;
@@ -877,12 +946,12 @@
 
 .subspace-portal:hover .subspace-portal__content,
 .subspace-portal:focus-within .subspace-portal__content {
-  border-color: color-mix(in srgb, var(--violet) 42%, var(--line));
+  border-color: color-mix(in srgb, var(--portal-tone) 42%, var(--line));
   box-shadow: var(--shadow-hover);
 }
 
 .subspace-portal.is-selected .subspace-portal__content {
-  border-color: var(--violet);
+  border-color: var(--portal-tone);
   box-shadow: var(--shadow-selection);
 }
 
@@ -916,6 +985,8 @@
 
 .subspace-portal__map-summary > span,
 .subspace-portal__flow-summary {
+  /* Fixed 20px rows match sizeForSubspacePreview's per-line estimate. */
+  line-height: 20px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -931,12 +1002,12 @@
   top: -9px;
   right: -9px;
   display: grid;
-  width: 25px;
-  height: 25px;
+  width: 26px;
+  height: 26px;
   padding: 0;
-  color: color-mix(in srgb, var(--violet) 82%, var(--ink));
+  color: color-mix(in srgb, var(--portal-tone) 82%, var(--ink));
   background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--violet) 34%, white);
+  border: 1px solid color-mix(in srgb, var(--portal-tone) 34%, white);
   border-radius: var(--radius-8);
   box-shadow: var(--shadow-hairline);
   cursor: pointer;
@@ -960,7 +1031,7 @@
 .subspace-portal__open:hover,
 .subspace-portal__open:focus-visible {
   color: white;
-  background: var(--violet);
+  background: var(--portal-tone);
 }
 
 .flow-canvas {
@@ -985,7 +1056,7 @@
   z-index: 14;
   display: flex;
   padding: 5px;
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-12);
   box-shadow: var(--shadow-chrome);
@@ -1092,6 +1163,10 @@
 
 .flow-connectors marker path {
   fill: color-mix(in srgb, var(--violet) 62%, var(--muted));
+}
+
+.flow-connectors marker.is-selected path {
+  fill: var(--violet);
 }
 
 .flow-connector {
@@ -1366,7 +1441,7 @@
   display: flex;
   gap: 2px;
   padding: 3px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-raised);
@@ -1421,7 +1496,7 @@
 
 .flow-node__quick-shape {
   display: block;
-  border: 1.6px solid currentColor;
+  border: 1.5px solid currentColor;
 }
 
 .flow-node__quick-shape--step {
@@ -1598,7 +1673,7 @@
   height: 36px;
   padding: 0;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.94);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-chrome);
@@ -1625,7 +1700,7 @@
   background: var(--surface-soft);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-5);
-  box-shadow: 0 1px 0 white inset, 0 1px 1px rgba(21, 22, 40, 0.04);
+  box-shadow: 0 1px 0 var(--surface) inset, 0 1px 1px rgba(21, 22, 40, 0.04);
   font-size: var(--fs-11);
   font-weight: var(--fw-ui);
   place-items: center;
@@ -1681,7 +1756,7 @@
   transform: translateY(4px);
   transition:
     opacity var(--motion-fast) ease,
-    transform var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1);
+    transform var(--motion-standard) var(--ease-standard);
   white-space: nowrap;
 }
 
@@ -1705,7 +1780,7 @@
   transform: translateY(5px);
   transition:
     opacity var(--motion-fast) ease,
-    transform var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1);
+    transform var(--motion-standard) var(--ease-standard);
 }
 
 .status-bar.is-expanded {
@@ -1715,10 +1790,10 @@
 
 .status-bar.is-measured {
   transition:
-    width var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1),
+    width var(--motion-standard) var(--ease-standard),
     color var(--motion-fast) ease,
     opacity var(--motion-fast) ease,
-    transform var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1);
+    transform var(--motion-standard) var(--ease-standard);
   will-change: width, opacity, transform;
 }
 
@@ -1766,6 +1841,18 @@
 .status-bar__save--error:focus-visible {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+
+.status-bar--error {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--line));
+}
+
+.status-bar--error .status-bar__message {
+  color: var(--danger);
+}
+
+.status-bar--error .status-bar__divider {
+  background: color-mix(in srgb, var(--danger) 32%, var(--line));
 }
 
 .status-bar__spinner {
@@ -1958,11 +2045,11 @@
 .command-overlay {
   width: min(560px, calc(100vw - 48px));
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-12);
   box-shadow: var(--shadow-overlay);
-  animation: overlay-in var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1);
+  animation: overlay-in var(--motion-standard) var(--ease-standard);
 }
 
 @keyframes overlay-in {
@@ -2089,11 +2176,11 @@
 .space-picker {
   width: min(640px, calc(100vw - 56px));
   padding: 22px;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-16);
   box-shadow: var(--shadow-overlay);
-  animation: overlay-in var(--motion-standard) cubic-bezier(0.22, 0.8, 0.2, 1);
+  animation: overlay-in var(--motion-standard) var(--ease-standard);
 }
 
 .space-picker__header {
@@ -2274,7 +2361,7 @@
   display: grid;
   width: 220px;
   padding: 6px;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-12);
   box-shadow: var(--shadow-overlay);
@@ -2299,7 +2386,7 @@
 
 .node-space-menu button:disabled {
   cursor: default;
-  opacity: 0.36;
+  opacity: var(--disabled-opacity);
 }
 
 .flow-node-menu__type-trigger,
@@ -2478,7 +2565,7 @@
 .shortcut-settings {
   width: 360px;
   padding: 20px;
-  background: rgba(255, 255, 255, 0.98);
+  background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-16);
   box-shadow: var(--shadow-float);
@@ -2581,7 +2668,7 @@
 
 .shortcut-settings__actions button:disabled {
   cursor: default;
-  opacity: 0.42;
+  opacity: var(--disabled-opacity);
 }
 
 @media (max-width: 980px) {
@@ -2633,4 +2720,98 @@
   .space-picker__choices button {
     min-height: 220px;
   }
+}
+
+/* ---- 动效与状态反馈：画布对象与平面按钮的统一反馈层 ---- */
+
+.mind-node__content,
+.mind-node__editor-shell,
+.flow-node__content {
+  transition:
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
+}
+
+.mind-node__disclosure svg {
+  transition: transform var(--motion-fast) ease;
+}
+
+.overlay-backdrop {
+  animation: veil-in var(--motion-fast) ease;
+}
+
+@keyframes veil-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.toolbar-button:active,
+.node-space-menu button:active,
+.menu-popover button:active,
+.status-bar__action:active,
+.status-bar__save:active,
+.subspace-portal__open:active,
+.mind-node__disclosure:active {
+  filter: brightness(0.95);
+}
+
+/* Type choices sit on a soft resting fill; hover must darken it. */
+.flow-node-menu__types button:hover,
+.flow-node-menu__types button:focus-visible {
+  background: var(--surface-hover);
+}
+
+.flow-target-picker header > button:hover,
+.flow-target-picker header > button:focus-visible {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+
+.canvas-controls__feedback {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-overlay,
+  .node-space-menu,
+  .overlay-backdrop,
+  .space-picker {
+    animation: none;
+  }
+
+  .mind-node__content,
+  .mind-node__editor-shell,
+  .flow-node__content,
+  .mind-node__disclosure svg,
+  .subspace-portal__open {
+    transition: none;
+  }
+
+  .flow-canvas--loading::after {
+    animation-duration: 1.5s;
+  }
+}
+
+/* Loading and placeholder states share the canvas quiet voice. */
+.flow-canvas--loading::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border: 2px solid color-mix(in srgb, var(--violet) 24%, transparent);
+  border-top-color: var(--violet);
+  border-radius: 50%;
+  content: "";
+  animation: status-spin 780ms linear infinite;
+}
+
+.flow-node__content.is-placeholder {
+  color: var(--muted);
+  font-weight: var(--fw-quiet);
 }

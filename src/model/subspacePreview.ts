@@ -106,15 +106,48 @@ export function subspacePreview(space: LaniakeaSpace): SubspacePreview {
   return space.type === "map" ? mapPreview(space) : flowPreview(space);
 }
 
-export function sizeForSubspacePreview(space: LaniakeaSpace): {
+export interface SubspacePreviewTextStyle {
+  fontSize: number;
+  fontWeight: number;
+  letterSpacing: number;
+}
+
+export type SubspacePreviewTextMeasurer = (
+  text: string,
+  style: SubspacePreviewTextStyle,
+) => number;
+
+const previewTextStyle: SubspacePreviewTextStyle = {
+  fontSize: 13,
+  fontWeight: 500,
+  letterSpacing: 0,
+};
+
+/**
+ * Sizing prefers a real text measurer (the same one nodes use) and falls back
+ * to per-character estimates: CJK counts one unit, latin roughly half.
+ */
+export function sizeForSubspacePreview(
+  space: LaniakeaSpace,
+  measureTextWidth?: SubspacePreviewTextMeasurer,
+): {
   height: number;
   width: number;
 } {
   const preview = subspacePreview(space);
+  const lineWidth = (line: string) =>
+    measureTextWidth
+      ? measureTextWidth(line, previewTextStyle)
+      : Array.from(line).reduce(
+          (total, character) =>
+            total +
+            (/[\u2e80-\u9fff\uf900-\ufaff]/u.test(character) ? 13 : 8),
+          0,
+        );
   if (space.type === "flow") {
     return {
       height: 62,
-      width: Math.min(420, Math.max(238, 58 + Array.from(preview.text).length * 13)),
+      width: Math.min(420, Math.max(238, 58 + lineWidth(preview.text))),
     };
   }
   return {
@@ -125,7 +158,7 @@ export function sizeForSubspacePreview(space: LaniakeaSpace): {
         220,
         54 +
           preview.lines.reduce(
-            (maximum, line) => Math.max(maximum, Array.from(line).length * 13),
+            (maximum, line) => Math.max(maximum, lineWidth(line)),
             0,
           ),
       ),

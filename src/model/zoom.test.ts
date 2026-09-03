@@ -5,6 +5,7 @@ import {
   canvasZoomToFit,
   maxCanvasZoom,
   minCanvasZoom,
+  steppedCanvasZoom,
 } from "./zoom";
 
 describe("canvas zoom", () => {
@@ -67,5 +68,24 @@ describe("canvas zoom", () => {
     expect(next).toBeGreaterThan(overview);
     expect(next).toBeLessThan(minCanvasZoom);
     expect(canvasZoomFromWheel(overview, 24, 0, 900)).toBe(overview);
+  });
+});
+
+describe("canvas zoom range", () => {
+  it("gives overview and close-up inspection usable headroom", () => {
+    expect(minCanvasZoom).toBe(0.4);
+    expect(maxCanvasZoom).toBe(2.5);
+  });
+});
+
+describe("stepped button zoom", () => {
+  it("steps multiplicatively in the readable range", () => {
+    expect(steppedCanvasZoom(1, 1)).toBeCloseTo(1.2, 6);
+    expect(steppedCanvasZoom(1, -1)).toBeCloseTo(1 / 1.2, 6);
+  });
+
+  it("keeps a 0.1 additive floor so a deep overview escapes quickly", () => {
+    expect(steppedCanvasZoom(0.02, 1)).toBeCloseTo(0.12, 6);
+    expect(steppedCanvasZoom(0.02, 1) / 0.02).toBeGreaterThan(5);
   });
 });

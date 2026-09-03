@@ -347,6 +347,10 @@ export const FlowWorkspace = forwardRef<
       onAddShape={addShape}
       onAddNext={addNext}
       onBeginEdit={beginEdit}
+      onSpaceTap={() => {
+        // Mirrors the main map: a Space tap (no pan) edits the selection.
+        if (selectedId && editingId === null) beginEdit(selectedId);
+      }}
       onCancelEdit={cancelEdit}
       onChangeEdgeLabel={changeEdgeLabel}
       onChangeKind={changeKind}

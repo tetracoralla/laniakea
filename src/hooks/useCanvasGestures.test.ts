@@ -6,6 +6,7 @@ function fakeTarget(options: {
   button?: boolean;
   canvas?: boolean;
   dialog?: boolean;
+  flowCanvas?: boolean;
 }): EventTarget {
   return {
     matches: (selector: string) =>
@@ -14,6 +15,7 @@ function fakeTarget(options: {
     closest: (selector: string) => {
       if (options.dialog && selector.includes("[role='dialog']")) return {};
       if (options.canvas && selector.includes(".mindmap-canvas")) return {};
+      if (options.flowCanvas && selector.includes(".flow-canvas")) return {};
       if (options.button && selector.includes("button")) return {};
       return null;
     },
@@ -29,6 +31,18 @@ describe("canvas Space shortcut target isolation", () => {
     expect(
       ignoresSpaceShortcut(fakeTarget({ button: true, canvas: true })),
     ).toBe(false);
+  });
+
+  it("supports the same isolation contract for Flow canvas nodes", () => {
+    expect(
+      ignoresSpaceShortcut(
+        fakeTarget({ button: true, flowCanvas: true }),
+        ".flow-canvas",
+      ),
+    ).toBe(false);
+    expect(
+      ignoresSpaceShortcut(fakeTarget({ button: true }), ".flow-canvas"),
+    ).toBe(true);
   });
 
   it("never handles text fields or dialog controls", () => {

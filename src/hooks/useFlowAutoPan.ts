@@ -13,7 +13,9 @@ export function flowAutoPanDelta(
   clientY: number,
 ): { x: number; y: number } {
   const edgeZone = 58;
-  const maximumSpeed = 12;
+  // Pixels per second; the caller integrates over real elapsed time so the
+  // pan speed stays identical on 60 Hz and 120 Hz displays.
+  const maximumSpeed = 720;
   const axis = (point: number, low: number, high: number) => {
     if (point < low + edgeZone) {
       return maximumSpeed * Math.min(1, (low + edgeZone - point) / edgeZone);
@@ -35,29 +37,39 @@ export function useFlowAutoPan(
   const frameRef = useRef(0);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const panRef = useRef<((x: number, y: number) => void) | null>(null);
+  const timestampRef = useRef<number | null>(null);
 
   const stop = useCallback(() => {
     pointerRef.current = null;
     panRef.current = null;
+    timestampRef.current = null;
     if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
     frameRef.current = 0;
   }, []);
 
-  const tickRef = useRef<() => void>(() => undefined);
-  tickRef.current = () => {
+  const tickRef = useRef<(timestamp: number) => void>(() => undefined);
+  tickRef.current = (timestamp: number) => {
     frameRef.current = 0;
     const pointer = pointerRef.current;
     const container = containerRef.current;
     const pan = panRef.current;
     if (!pointer || !container || !pan) return;
-    const delta = flowAutoPanDelta(
+    const velocity = flowAutoPanDelta(
       container.getBoundingClientRect(),
       pointer.x,
       pointer.y,
     );
-    if (delta.x === 0 && delta.y === 0) return;
-    pan(delta.x, delta.y);
-    frameRef.current = window.requestAnimationFrame(() => tickRef.current());
+    if (velocity.x === 0 && velocity.y === 0) {
+      timestampRef.current = null;
+      return;
+    }
+    const previousTimestamp =
+      timestampRef.current ?? timestamp - 1000 / 60;
+    const elapsedSeconds =
+      Math.min(32, Math.max(0, timestamp - previousTimestamp)) / 1000;
+    timestampRef.current = timestamp;
+    pan(velocity.x * elapsedSeconds, velocity.y * elapsedSeconds);
+    frameRef.current = window.requestAnimationFrame(tickRef.current);
   };
 
   const update = useCallback((
@@ -68,7 +80,7 @@ export function useFlowAutoPan(
     pointerRef.current = { x: clientX, y: clientY };
     panRef.current = onPan;
     if (!frameRef.current) {
-      frameRef.current = window.requestAnimationFrame(() => tickRef.current());
+      frameRef.current = window.requestAnimationFrame(tickRef.current);
     }
   }, []);
 

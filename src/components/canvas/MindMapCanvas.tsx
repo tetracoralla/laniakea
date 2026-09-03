@@ -45,7 +45,10 @@ import {
   canvasZoomFromWheel,
   clampCanvasZoom,
   minCanvasZoom,
+  steppedCanvasZoom,
+  wheelPanPixelDelta,
 } from "../../model/zoom";
+import { clientPointToCanvas } from "../../model/nodeDrag";
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
 import { SelectionMarquee } from "./SelectionMarquee";
@@ -74,6 +77,7 @@ interface MindMapCanvasProps {
   onPasteStructured: (id: string, value: string) => boolean;
   onCommitEdit: (id: string, value: string) => void;
   onCancelEdit: (id: string) => void;
+  onEditTab?: (id: string, value: string, shiftKey: boolean) => void;
   onToggle: (id: string) => void;
   onOpenNodeContextMenu?: (
     id: string,
@@ -94,6 +98,13 @@ interface MindMapCanvasProps {
   ) => void;
   onViewportChange: (viewport: Viewport) => void;
   onZoomPreview?: (zoom: number) => void;
+  onOpenCanvasContextMenu?: (anchor: {
+    clientX: number;
+    clientY: number;
+    contentX: number;
+    contentY: number;
+  }) => void;
+  onCreateFloatingAt?: (contentX: number, contentY: number) => void;
 }
 
 export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
@@ -111,6 +122,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onPasteStructured,
       onCommitEdit,
       onCancelEdit,
+      onEditTab,
       onToggle,
       onOpenNodeContextMenu = () => undefined,
       onOpenSubspace = () => undefined,
@@ -121,6 +133,8 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onDetachNode,
       onViewportChange,
       onZoomPreview,
+      onOpenCanvasContextMenu = () => undefined,
+      onCreateFloatingAt = () => undefined,
     },
     ref,
   ) {
@@ -281,19 +295,25 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           if (contentRef.current) {
             contentRef.current.style.transform = `translate3d(${live.x}px, ${live.y}px, 0) scale(${live.zoom})`;
           }
-          if (
-            !viewportNeedsRenderWindowRefresh(
-              renderViewportStateRef.current,
-              live,
-              containerSizeRef.current,
-            )
-          ) {
-            return;
-          }
-          renderViewportStateRef.current = live;
-          setRenderViewportState(live);
+          applyRenderWindowRefresh(live);
         });
       }
+    }, []);
+
+    // Render-window maintenance for one viewport sample. Committed viewports
+    // apply it synchronously so contraction never depends on a frame firing.
+    const applyRenderWindowRefresh = useCallback((live: Viewport) => {
+      if (
+        !viewportNeedsRenderWindowRefresh(
+          renderViewportStateRef.current,
+          live,
+          containerSizeRef.current,
+        )
+      ) {
+        return;
+      }
+      renderViewportStateRef.current = live;
+      setRenderViewportState(live);
     }, []);
 
     // The delayed pan commit must target the surface that was panned, not the
@@ -329,8 +349,30 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       }
       pendingViewportCommitRef.current = null;
       renderViewport(next);
+      applyRenderWindowRefresh(next);
       onViewportChange(next);
-    }, [onViewportChange, renderViewport]);
+    }, [applyRenderWindowRefresh, onViewportChange, renderViewport]);
+
+    const zoomAtCenter = (nextZoom: number) => {
+      const bounds = containerRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const current = liveViewport.current;
+      const clamped = clampCanvasZoom(
+        nextZoom,
+        Math.min(current.zoom, minCanvasZoom),
+      );
+      const centerX = bounds.width / 2;
+      const centerY = bounds.height / 2;
+      const contentX = (centerX - current.x) / current.zoom;
+      const contentY = (centerY - current.y) / current.zoom;
+      const target = {
+        zoom: clamped,
+        x: centerX - contentX * clamped,
+        y: centerY - contentY * clamped,
+      };
+      onZoomPreview?.(clamped);
+      commitViewportImmediately(target);
+    };
 
     const handleWheel = useCallback((event: WheelEvent) => {
       const editor =
@@ -376,10 +418,18 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         return;
       }
       const current = liveViewport.current;
+      const panDelta = wheelPanPixelDelta(
+        event.deltaX,
+        event.deltaY,
+        event.deltaMode,
+        containerBoundsRef.current?.height ??
+          containerRef.current?.getBoundingClientRect().height ??
+          0,
+      );
       scheduleViewportCommit({
         ...current,
-        x: current.x - event.deltaX,
-        y: current.y - event.deltaY,
+        x: current.x - panDelta.x,
+        y: current.y - panDelta.y,
       });
     }, [onZoomPreview, scheduleViewportCommit]);
 
@@ -413,6 +463,8 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       selection: activeSelection,
       editingId,
       liveViewport,
+      renderViewport,
+      commitViewport: commitViewportImmediately,
       onSelectionChange,
       onAttach: onAttachNode,
       onDetach: onDetachNode,
@@ -471,26 +523,6 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       [onSelectionChange],
     );
 
-    const zoomAtCenter = (nextZoom: number) => {
-      const bounds = containerRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      const current = liveViewport.current;
-      const clamped = clampCanvasZoom(
-        nextZoom,
-        Math.min(current.zoom, minCanvasZoom),
-      );
-      const centerX = bounds.width / 2;
-      const centerY = bounds.height / 2;
-      const contentX = (centerX - current.x) / current.zoom;
-      const contentY = (centerY - current.y) / current.zoom;
-      onZoomPreview?.(clamped);
-      commitViewportImmediately({
-        zoom: clamped,
-        x: centerX - contentX * clamped,
-        y: centerY - contentY * clamped,
-      });
-    };
-
     const fit = useCallback(() => {
       const bounds = containerRef.current?.getBoundingClientRect();
       if (!bounds) return;
@@ -548,18 +580,32 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         focusCanvas: () =>
           containerRef.current?.focus({ preventScroll: true }),
         focusSelected,
-        zoomIn: () => zoomAtCenter(liveViewport.current.zoom + 0.1),
-        zoomOut: () => zoomAtCenter(liveViewport.current.zoom - 0.1),
+        zoomIn: () => zoomAtCenter(steppedCanvasZoom(liveViewport.current.zoom, 1)),
+        zoomOut: () => zoomAtCenter(steppedCanvasZoom(liveViewport.current.zoom, -1)),
         resetZoom: () => {
+          const bounds = containerRef.current?.getBoundingClientRect();
+          if (!bounds) return;
+          const current = liveViewport.current;
+          const anchorNode = selection.primaryId
+            ? selectedSubspaceAnchorId === selection.primaryId
+              ? layout.portals?.[selection.primaryId]
+              : layout.nodes[selection.primaryId]
+            : null;
+          const anchorX = anchorNode
+            ? anchorNode.x + anchorNode.width / 2
+            : (bounds.width / 2 - current.x) / current.zoom;
+          const anchorY = anchorNode
+            ? anchorNode.y + anchorNode.height / 2
+            : (bounds.height / 2 - current.y) / current.zoom;
           onZoomPreview?.(1);
           commitViewportImmediately({
             zoom: 1,
-            x: 96,
-            y: -24,
+            x: bounds.width / 2 - anchorX,
+            y: bounds.height / 2 - anchorY,
           });
         },
       }),
-      [commitViewportImmediately, fit, layout, onZoomPreview, selectedSubspaceAnchorId, selection.primaryId, viewport],
+      [fit, layout, onZoomPreview, selectedSubspaceAnchorId, selection.primaryId, viewport],
     );
 
     useLayoutEffect(() => {
@@ -672,6 +718,20 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       }
     }, [commitViewportImmediately, layout, selecting, selection]);
 
+    const canvasPointFromClient = (clientX: number, clientY: number) =>
+      clientPointToCanvas(
+        clientX,
+        clientY,
+        containerBoundsRef.current ??
+          containerRef.current?.getBoundingClientRect() ?? {
+            left: 0,
+            top: 0,
+            width: 0,
+            height: 0,
+          },
+        liveViewport.current,
+      );
+
     return (
       <div
         aria-label="思维导图画布"
@@ -679,6 +739,28 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         onClickCapture={(event) => {
           nodeDragBindings.onClickCapture(event);
           if (!event.defaultPrevented) bindings.onClickCapture(event);
+        }}
+        onContextMenu={(event) => {
+          if (event.target !== event.currentTarget) return;
+          event.preventDefault();
+          const point = canvasPointFromClient(
+            event.clientX,
+            event.clientY,
+          );
+          onOpenCanvasContextMenu({
+            clientX: event.clientX,
+            clientY: event.clientY,
+            contentX: point.x,
+            contentY: point.y,
+          });
+        }}
+        onDoubleClick={(event) => {
+          if (event.target !== event.currentTarget) return;
+          const point = canvasPointFromClient(
+            event.clientX,
+            event.clientY,
+          );
+          onCreateFloatingAt(point.x, point.y);
         }}
         onPointerCancel={(event) => {
           nodeDragBindings.onPointerCancel(event);
@@ -741,6 +823,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
                 onCancelEdit={onCancelEdit}
                 onCommitEdit={onCommitEdit}
                 onDraftChange={onDraftChange}
+                onEditTab={onEditTab}
                 onOpenContextMenu={onOpenNodeContextMenu}
                 onDragPointerDown={beginNodeDrag}
                 onPasteStructured={onPasteStructured}

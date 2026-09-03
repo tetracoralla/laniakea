@@ -6,9 +6,11 @@ import {
   type RefObject,
 } from "react";
 import type { FlowLayoutResult } from "../model/flowLayout";
+import { ignoresSpaceShortcut } from "./useCanvasGestures";
 import {
   canvasZoomFromWheel,
   canvasZoomToFit,
+  wheelPanPixelDelta,
 } from "../model/zoom";
 import type { Viewport } from "../types/mindmap";
 
@@ -16,8 +18,12 @@ interface FlowViewportOptions {
   layout: FlowLayoutResult;
   onCanvasPointerDown: () => void;
   onViewportChange: (viewport: Viewport) => void;
+  /** Space tapped without panning: the main-map "edit selection" gesture. */
+  onSpaceTap?: () => void;
   selectedId: string | null;
   viewport: Viewport;
+  /** True while a node drag, connection, or edge reconnect owns the pointer. */
+  interactionsActive?: () => boolean;
 }
 
 interface FlowViewportBindings {
@@ -34,12 +40,16 @@ interface FlowViewportController {
   fit: () => void;
   flushViewport: () => void;
   panBy: (x: number, y: number) => void;
+  /** Live ref: true while Space is held (the pan modifier). */
+  panModifierHeld: RefObject<boolean>;
 }
 
 export function useFlowViewport({
+  interactionsActive,
   layout,
   onCanvasPointerDown,
   onViewportChange,
+  onSpaceTap,
   selectedId,
   viewport,
 }: FlowViewportOptions): FlowViewportController {
@@ -57,11 +67,17 @@ export function useFlowViewport({
   const viewportChangeRef = useRef(onViewportChange);
   const observedSize = useRef<{ width: number; height: number } | null>(null);
   const canvasPointerDownRef = useRef(onCanvasPointerDown);
+  const interactionsActiveRef = useRef(interactionsActive);
+  const onSpaceTapRef = useRef(onSpaceTap);
+  const spaceHeldRef = useRef(false);
+  const spaceUsedForPanRef = useRef(false);
   const layoutRef = useRef(layout);
   const previousSelectedIdRef = useRef(selectedId);
 
   viewportChangeRef.current = onViewportChange;
   canvasPointerDownRef.current = onCanvasPointerDown;
+  interactionsActiveRef.current = interactionsActive;
+  onSpaceTapRef.current = onSpaceTap;
   layoutRef.current = layout;
 
   const renderViewport = useCallback((next: Viewport) => {
@@ -149,6 +165,12 @@ export function useFlowViewport({
     if (!container) return;
     const handleWheel = (event: WheelEvent) => {
       event.preventDefault();
+      // Drag math divides by the viewport captured at pointer-down; changing
+      // the viewport mid-gesture would slide the dragged content away from
+      // the cursor, so the wheel yields until the gesture ends.
+      if (panRef.current !== null || interactionsActiveRef.current?.()) {
+        return;
+      }
       const current = liveViewport.current;
       if (event.metaKey || event.ctrlKey) {
         const bounds = container.getBoundingClientRect();
@@ -168,10 +190,16 @@ export function useFlowViewport({
           y: y - contentY * zoom,
         });
       } else {
+        const panDelta = wheelPanPixelDelta(
+          event.deltaX,
+          event.deltaY,
+          event.deltaMode,
+          container.getBoundingClientRect().height,
+        );
         scheduleViewport({
           ...current,
-          x: current.x - event.deltaX,
-          y: current.y - event.deltaY,
+          x: current.x - panDelta.x,
+          y: current.y - panDelta.y,
         });
       }
     };
@@ -206,6 +234,54 @@ export function useFlowViewport({
 
   useEffect(() => () => flushViewport(), [flushViewport]);
 
+  // Space mirrors the main map: hold to pan, a tap without panning opens the
+  // editor for the current selection.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key !== " " ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        ignoresSpaceShortcut(event.target, ".flow-canvas")
+      ) {
+        return;
+      }
+      event.preventDefault();
+      if (!spaceHeldRef.current) {
+        spaceHeldRef.current = true;
+        spaceUsedForPanRef.current = false;
+      }
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key !== " " || !spaceHeldRef.current) return;
+      event.preventDefault();
+      spaceHeldRef.current = false;
+      if (spaceUsedForPanRef.current) {
+        spaceUsedForPanRef.current = false;
+        flushViewport();
+      } else {
+        onSpaceTapRef.current?.();
+      }
+    };
+    const handleBlur = () => {
+      if (!spaceHeldRef.current) return;
+      spaceHeldRef.current = false;
+      if (spaceUsedForPanRef.current) {
+        spaceUsedForPanRef.current = false;
+        flushViewport();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [flushViewport]);
+
   const panBy = useCallback((x: number, y: number) => {
     if (x === 0 && y === 0) return;
     const current = liveViewport.current;
@@ -218,6 +294,7 @@ export function useFlowViewport({
     fit,
     flushViewport,
     panBy,
+    panModifierHeld: spaceHeldRef,
     bindings: {
       onPointerCancel: (event) => {
         if (panRef.current?.pointerId !== event.pointerId) return;
@@ -225,8 +302,16 @@ export function useFlowViewport({
         flushViewport();
       },
       onPointerDown: (event) => {
-        if (event.target !== event.currentTarget) return;
-        canvasPointerDownRef.current();
+        // Left button only (middle button is reserved for panning by the
+        // main map); right-click must never start a viewport drag.
+        if (event.button !== 0 && event.button !== 1) return;
+        const spacePan = spaceHeldRef.current && event.button === 0;
+        if (event.target !== event.currentTarget && !spacePan) return;
+        if (spacePan) {
+          spaceUsedForPanRef.current = true;
+        } else {
+          canvasPointerDownRef.current();
+        }
         panRef.current = {
           pointerId: event.pointerId,
           x: event.clientX,

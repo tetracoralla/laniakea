@@ -227,14 +227,14 @@ export const commandRegistry: CommandDefinition[] = [
   {
     id: "map.collapse-all",
     label: "折叠除根节点外全部分支",
-    shortcut: "Alt+Meta+ArrowLeft",
+    shortcut: "Alt+ArrowLeft",
     contexts: ["selection"],
     group: "视图",
   },
   {
     id: "map.expand-all",
     label: "展开全部分支",
-    shortcut: "Alt+Meta+ArrowRight",
+    shortcut: "Alt+ArrowRight",
     contexts: ["selection"],
     group: "视图",
   },
@@ -304,14 +304,14 @@ export const commandRegistry: CommandDefinition[] = [
   {
     id: "viewport.fit",
     label: "画布适应内容",
-    shortcut: "Shift+1",
+    shortcut: "Meta+1",
     contexts: ["selection", "global"],
     group: "视图",
   },
   {
     id: "viewport.focus",
     label: "聚焦选中节点",
-    shortcut: "Shift+2",
+    shortcut: "Meta+2",
     contexts: ["selection", "global"],
     group: "视图",
   },
@@ -349,9 +349,7 @@ function eventShortcut(event: KeyboardEvent): string {
   if (commandModifier) parts.push("Meta");
 
   let key = event.key;
-  if (event.shiftKey && event.code?.startsWith("Digit")) {
-    key = event.code.slice("Digit".length);
-  } else if (shiftedEqual) {
+  if (shiftedEqual) {
     key = "=";
   }
   parts.push(key.length === 1 ? key.toLowerCase() : key);

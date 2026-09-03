@@ -209,7 +209,10 @@ export function computeLayout(
         nodeSizes.set(frame.id, size);
         const portal = portalForNode(frame.id);
         if (portal) {
-          portalSizes.set(frame.id, sizeForSubspacePreview(portal));
+          portalSizes.set(
+            frame.id,
+            sizeForSubspacePreview(portal, measureTextWidth),
+          );
         }
         if (
           current.collapsed ||

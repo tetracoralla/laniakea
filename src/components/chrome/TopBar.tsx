@@ -5,6 +5,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { RecentDocument } from "../../persistence/recentDocuments";
+import type { SaveState } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
 import {
   isInputMethodKey,
@@ -37,6 +38,7 @@ interface TopBarProps {
   onRestoreFullBackup?: () => void;
   spacePath?: Array<{ id: string; label: string; typeLabel: string }>;
   onNavigateBack?: () => void;
+  saveState?: SaveState;
 }
 
 export function TopBar({
@@ -64,6 +66,7 @@ export function TopBar({
   onRestoreFullBackup,
   spacePath = [],
   onNavigateBack,
+  saveState = "saved",
 }: TopBarProps) {
   const [draft, setDraft] = useState(title);
   const [openMenu, setOpenMenu] = useState<"documents" | "more" | null>(
@@ -220,6 +223,24 @@ export function TopBar({
               }
             }}
           />
+          {(saveState === "saving" || saveState === "error") && (
+            <span
+              aria-label={
+                saveState === "error" ? "保存失败" : "有未保存的更改"
+              }
+              className={`document-title__dirty${
+                saveState === "error"
+                  ? " document-title__dirty--error"
+                  : ""
+              }`}
+              role="img"
+              title={
+                saveState === "error"
+                  ? "保存失败，可在左下角状态条重试"
+                  : "有未保存的更改"
+              }
+            />
+          )}
         </label>
         <DocumentSwitcher
           currentPath={currentDocumentPath}

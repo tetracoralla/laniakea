@@ -29,6 +29,7 @@ interface DisplayedSaveStatus {
 const contentExitDuration = 160;
 const shellExitDuration = 240;
 const collapsedShellWidth = 38;
+const saveProgressDelay = 1000;
 
 function useAnimatedPresence<T>(value: T | null) {
   const [displayedValue, setDisplayedValue] = useState<T | null>(value);
@@ -136,7 +137,7 @@ export function StatusBar({
     }
     const timer = window.setTimeout(() => {
       setProgressVisible(true);
-    }, 1000);
+    }, saveProgressDelay);
     return () => window.clearTimeout(timer);
   }, [saveState]);
 

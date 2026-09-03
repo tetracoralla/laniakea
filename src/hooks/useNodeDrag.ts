@@ -15,7 +15,7 @@ import type {
   SelectionState,
   Viewport,
 } from "../types/mindmap";
-import { passedDragThreshold, type CanvasPoint } from "../model/marquee";
+import { passedDragThreshold, marqueeAutoPanVelocity, type CanvasPoint } from "../model/marquee";
 import {
   attachedNodeDetachTravel,
   buildNodeDropSpatialIndex,
@@ -57,7 +57,9 @@ interface NodeDragGesture {
   startedFloating: boolean;
   moved: boolean;
   selectionChanged: boolean;
+  viewportMoved: boolean;
   point: CanvasPoint;
+  latestClient: CanvasPoint;
   dropTargetId: string | null;
   dropPosition: number | null;
   dropIntent: NodeDropIntent;
@@ -81,6 +83,8 @@ interface NodeDragOptions {
   selection: SelectionState;
   editingId: string | null;
   liveViewport: RefObject<Viewport>;
+  renderViewport: (viewport: Viewport) => void;
+  commitViewport: (viewport: Viewport) => void;
   onSelectionChange: (selection: SelectionState) => void;
   onAttach: (
     ids: readonly string[],
@@ -275,6 +279,8 @@ export function useNodeDrag({
   selection,
   editingId,
   liveViewport,
+  renderViewport,
+  commitViewport,
   onSelectionChange,
   onAttach,
   onDetach,
@@ -296,6 +302,8 @@ export function useNodeDrag({
   const onSelectionChangeRef = useRef(onSelectionChange);
   const onAttachRef = useRef(onAttach);
   const onDetachRef = useRef(onDetach);
+  const renderViewportRef = useRef(renderViewport);
+  const commitViewportRef = useRef(commitViewport);
   documentRef.current = document;
   layoutRef.current = layout;
   selectionRef.current = selection;
@@ -304,6 +312,8 @@ export function useNodeDrag({
   onSelectionChangeRef.current = onSelectionChange;
   onAttachRef.current = onAttach;
   onDetachRef.current = onDetach;
+  renderViewportRef.current = renderViewport;
+  commitViewportRef.current = commitViewport;
   const hidePreview = useCallback(() => {
     if (previewRef.current) {
       previewRef.current.hidden = true;
@@ -333,7 +343,9 @@ export function useNodeDrag({
       if (gesture.dropPosition === null) {
         delete preview.dataset.dropPosition;
       } else {
-        preview.dataset.dropPosition = String(gesture.dropPosition);
+        // 1-based display ordinal consumed by the ::after badge in app.css;
+        // the gesture keeps the 0-based index.
+        preview.dataset.dropPosition = String(gesture.dropPosition + 1);
       }
       preview.style.opacity =
         gesture.dropIntent === "retain" ? "0.58" : "0.86";
@@ -360,6 +372,163 @@ export function useNodeDrag({
     }
   }, [connectorPreviewRef, previewRef]);
 
+  // Shared by pointer moves and the auto-pan tick: everything below the drag
+  // threshold is a pure function of the pointer position and live viewport.
+  const applyDragPosition = useCallback(
+    (gesture: NodeDragGesture, clientX: number, clientY: number) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const point = clientPointToCanvas(
+        clientX,
+        clientY,
+        containerBoundsRef.current ?? container.getBoundingClientRect(),
+        liveViewport.current,
+      );
+      const source = layoutRef.current.nodes[gesture.leadId];
+      if (!source) return;
+      const position = leadPosition(gesture, point);
+      const probe = {
+        ...position,
+        height: source.height,
+        width: source.width,
+      };
+      const scale = 1 / liveViewport.current.zoom;
+      const candidateIds = nodeDropCandidateIds(
+        dropSpatialIndexRef.current,
+        probe,
+        scale,
+      );
+      const hit = nodeDropParentHitTest(
+        layoutRef.current,
+        probe,
+        gesture.excludedIds,
+        scale,
+        candidateIds,
+        gesture.originalParentId,
+      );
+      const targetId = hit.targetId;
+      const nextDropPosition = targetId
+        ? childInsertionPosition(
+            documentRef.current,
+            layoutRef.current,
+            targetId,
+            gesture.roots.map(({ id: rootId }) => rootId),
+            probe,
+          )
+        : null;
+      const hasDetachTravel = passedDragThreshold(
+        gesture.startClient,
+        { x: clientX, y: clientY },
+        attachedNodeDetachTravel,
+      );
+      const nextDropIntent: NodeDropIntent = targetId
+        ? "attach"
+        : !hit.blockedByDraggedSubtree &&
+            (gesture.startedFloating || hasDetachTravel)
+          ? "detach"
+          : "retain";
+      const firstMove = !gesture.moved;
+      const previousTargetId = gesture.dropTargetId;
+      gesture.moved = true;
+      gesture.point = point;
+      gesture.dropTargetId = targetId;
+      gesture.dropPosition = nextDropPosition;
+      gesture.dropIntent = nextDropIntent;
+      if (firstMove) {
+        // Drag-only feedback is intentionally independent from React state.
+        // Updating five parent states here reconciled every mounted overview
+        // node even though only roots, one target, and one preview can change.
+        gesture.roots.forEach(({ id }) => {
+          const root = nodeElement(container, id);
+          if (root) root.dataset.nodeDragging = "true";
+        });
+        if (previewRef.current) {
+          populatePreview(
+            previewRef.current,
+            gesture,
+            layoutRef.current,
+            documentRef.current,
+          );
+        }
+      }
+      if (previousTargetId !== targetId) {
+        if (previousTargetId) {
+          const previousTarget = nodeElement(container, previousTargetId);
+          if (previousTarget) delete previousTarget.dataset.nodeDropTarget;
+        }
+        if (targetId) {
+          const target = nodeElement(container, targetId);
+          if (target) target.dataset.nodeDropTarget = "true";
+        }
+      }
+      if (announcementRef.current) {
+        announcementRef.current.textContent = dragAnnouncement(
+          gesture,
+          documentRef.current,
+        );
+      }
+      syncPreview();
+    },
+    [
+      announcementRef,
+      containerBoundsRef,
+      containerRef,
+      liveViewport,
+      previewRef,
+      syncPreview,
+    ],
+  );
+
+  const autoPanFrameRef = useRef<number | null>(null);
+  const autoPanTimestampRef = useRef<number | null>(null);
+
+  const stopAutoPan = useCallback(() => {
+    if (autoPanFrameRef.current !== null) {
+      window.cancelAnimationFrame(autoPanFrameRef.current);
+      autoPanFrameRef.current = null;
+    }
+    autoPanTimestampRef.current = null;
+  }, []);
+
+  const startAutoPan = useCallback(() => {
+    if (autoPanFrameRef.current !== null) return;
+    const step = (timestamp: number) => {
+      autoPanFrameRef.current = null;
+      const gesture = gestureRef.current;
+      const bounds = containerBoundsRef.current;
+      if (!gesture?.moved || !bounds) {
+        autoPanTimestampRef.current = null;
+        return;
+      }
+      const velocity = marqueeAutoPanVelocity(
+        {
+          x: gesture.latestClient.x - bounds.left,
+          y: gesture.latestClient.y - bounds.top,
+        },
+        { width: bounds.width, height: bounds.height },
+      );
+      if (velocity.x === 0 && velocity.y === 0) {
+        autoPanTimestampRef.current = null;
+        return;
+      }
+      const previousTimestamp =
+        autoPanTimestampRef.current ?? timestamp - 1000 / 60;
+      const elapsedSeconds =
+        Math.min(32, Math.max(0, timestamp - previousTimestamp)) / 1000;
+      autoPanTimestampRef.current = timestamp;
+      const currentViewport = liveViewport.current;
+      renderViewportRef.current({
+        ...currentViewport,
+        x: currentViewport.x - velocity.x * elapsedSeconds,
+        y: currentViewport.y - velocity.y * elapsedSeconds,
+      });
+      gesture.viewportMoved = true;
+      applyDragPosition(gesture, gesture.latestClient.x, gesture.latestClient.y);
+      autoPanFrameRef.current = window.requestAnimationFrame(step);
+    };
+    autoPanFrameRef.current = window.requestAnimationFrame(step);
+  }, [applyDragPosition, containerBoundsRef, liveViewport]);
+
   const clearGesture = useCallback((suppressClick = false) => {
     const gesture = gestureRef.current;
     gestureRef.current = null;
@@ -383,6 +552,9 @@ export function useNodeDrag({
         onSelectionChangeRef.current(gesture.nextSelection);
       });
     }
+    if (gesture?.viewportMoved) {
+      commitViewportRef.current(liveViewport.current);
+    }
     const container = containerRef.current;
     if (container) {
       gesture?.roots.forEach(({ id }) => {
@@ -399,8 +571,9 @@ export function useNodeDrag({
         selectionRef.current,
       );
     }
+    stopAutoPan();
     hidePreview();
-  }, [announcementRef, containerRef, hidePreview]);
+  }, [announcementRef, containerRef, hidePreview, liveViewport, stopAutoPan]);
 
   useLayoutEffect(() => {
     const gesture = gestureRef.current;
@@ -562,7 +735,9 @@ export function useNodeDrag({
         ),
         moved: false,
         selectionChanged: false,
+        viewportMoved: false,
         point,
+        latestClient: { x: event.clientX, y: event.clientY },
         dropTargetId: null,
         dropPosition: null,
         dropIntent: "retain",
@@ -590,12 +765,10 @@ export function useNodeDrag({
       if (!gesture || gesture.pointerId !== event.pointerId || !container) {
         return;
       }
+      gesture.latestClient = { x: event.clientX, y: event.clientY };
       const moved =
         gesture.moved ||
-        passedDragThreshold(gesture.startClient, {
-          x: event.clientX,
-          y: event.clientY,
-        });
+        passedDragThreshold(gesture.startClient, gesture.latestClient);
       const point = clientPointToCanvas(
         event.clientX,
         event.clientY,
@@ -627,90 +800,8 @@ export function useNodeDrag({
       ) {
         gesture.captureElement.setPointerCapture(event.pointerId);
       }
-      const source = layoutRef.current.nodes[gesture.leadId];
-      if (!source) return;
-      const position = leadPosition(gesture, point);
-      const probe = {
-        ...position,
-        height: source.height,
-        width: source.width,
-      };
-      const scale = 1 / liveViewport.current.zoom;
-      const candidateIds = nodeDropCandidateIds(
-        dropSpatialIndexRef.current,
-        probe,
-        scale,
-      );
-      const hit = nodeDropParentHitTest(
-        layoutRef.current,
-        probe,
-        gesture.excludedIds,
-        scale,
-        candidateIds,
-        gesture.originalParentId,
-      );
-      const targetId = hit.targetId;
-      const nextDropPosition = targetId
-        ? childInsertionPosition(
-            documentRef.current,
-            layoutRef.current,
-            targetId,
-            gesture.roots.map(({ id: rootId }) => rootId),
-            probe,
-          )
-        : null;
-      const hasDetachTravel = passedDragThreshold(
-        gesture.startClient,
-        { x: event.clientX, y: event.clientY },
-        attachedNodeDetachTravel,
-      );
-      const nextDropIntent: NodeDropIntent = targetId
-        ? "attach"
-        : !hit.blockedByDraggedSubtree &&
-            (gesture.startedFloating || hasDetachTravel)
-          ? "detach"
-          : "retain";
-      const firstMove = !gesture.moved;
-      const previousTargetId = gesture.dropTargetId;
-      gesture.moved = true;
-      gesture.point = point;
-      gesture.dropTargetId = targetId;
-      gesture.dropPosition = nextDropPosition;
-      gesture.dropIntent = nextDropIntent;
-      if (firstMove) {
-        // Drag-only feedback is intentionally independent from React state.
-        // Updating five parent states here reconciled every mounted overview
-        // node even though only roots, one target, and one preview can change.
-        gesture.roots.forEach(({ id }) => {
-          const root = nodeElement(container, id);
-          if (root) root.dataset.nodeDragging = "true";
-        });
-        if (previewRef.current) {
-          populatePreview(
-            previewRef.current,
-            gesture,
-            layoutRef.current,
-            documentRef.current,
-          );
-        }
-      }
-      if (previousTargetId !== targetId) {
-        if (previousTargetId) {
-          const previousTarget = nodeElement(container, previousTargetId);
-          if (previousTarget) delete previousTarget.dataset.nodeDropTarget;
-        }
-        if (targetId) {
-          const target = nodeElement(container, targetId);
-          if (target) target.dataset.nodeDropTarget = "true";
-        }
-      }
-      if (announcementRef.current) {
-        announcementRef.current.textContent = dragAnnouncement(
-          gesture,
-          documentRef.current,
-        );
-      }
-      syncPreview();
+      startAutoPan();
+      applyDragPosition(gesture, event.clientX, event.clientY);
     },
     onPointerUp: (event) => {
       const gesture = gestureRef.current;

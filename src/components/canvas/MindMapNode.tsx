@@ -29,6 +29,7 @@ interface MindMapNodeProps {
   onPasteStructured: (id: string, value: string) => boolean;
   onCommitEdit: (id: string, value: string) => void;
   onCancelEdit: (id: string) => void;
+  onEditTab?: (id: string, value: string, shiftKey: boolean) => void;
   onToggle: (id: string) => void;
   onOpenContextMenu?: (
     id: string,
@@ -51,6 +52,7 @@ export const MindMapNode = memo(function MindMapNode({
   onPasteStructured,
   onCommitEdit,
   onCancelEdit,
+  onEditTab,
   onToggle,
   onOpenContextMenu = () => undefined,
   onDragPointerDown,
@@ -230,6 +232,15 @@ export const MindMapNode = memo(function MindMapNode({
                   inputMethodComposingRef.current,
                 )
               ) {
+                return;
+              }
+              if (event.key === "Tab") {
+                event.preventDefault();
+                onEditTab?.(
+                  node.id,
+                  event.currentTarget.value,
+                  event.shiftKey,
+                );
                 return;
               }
               if (event.key === "Enter" && !event.shiftKey) {

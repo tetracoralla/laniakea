@@ -1,51 +1,46 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { LaniakeaSpace } from "../../types/mindmap";
 
-interface NodeSpaceMenuProps {
-  nodeLabel: string;
+interface CanvasBlankMenuProps {
   onClose: (restoreFocus: boolean) => void;
-  onDelete: () => void;
-  onDrillDown: () => void;
-  onEnter: () => void;
-  targetRect: { left: number; right: number; top: number; bottom: number };
-  space: LaniakeaSpace | null;
+  onCreateNode: () => void;
+  onFit: () => void;
+  onPaste: () => void;
+  clientX: number;
+  clientY: number;
 }
 
-export function NodeSpaceMenu({
-  nodeLabel,
+/**
+ * Context menu for empty canvas: create a free-floating node, paste a
+ * clipboard subtree, or fit the view. Shares the node-space-menu styling.
+ */
+export function CanvasBlankMenu({
   onClose,
-  onDelete,
-  onDrillDown,
-  onEnter,
-  targetRect,
-  space,
-}: NodeSpaceMenuProps) {
+  onCreateNode,
+  onFit,
+  onPaste,
+  clientX,
+  clientY,
+}: CanvasBlankMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const [menuSize, setMenuSize] = useState({
-    width: 220,
-    height: space ? 93 : 48,
-  });
+  const [menuSize, setMenuSize] = useState({ width: 220, height: 116 });
   const location = useMemo(() => {
     const viewportInset = 12;
-    const targetGap = 10;
-    const preferredLeft = targetRect.right + targetGap;
-    const fallbackLeft = targetRect.left - targetGap - menuSize.width;
-    const left = preferredLeft + menuSize.width <= window.innerWidth - viewportInset
-      ? preferredLeft
-      : fallbackLeft >= viewportInset
-        ? fallbackLeft
-        : Math.max(viewportInset, window.innerWidth - menuSize.width - viewportInset);
-    return {
-      left,
-      top: Math.max(
-        viewportInset,
-        Math.min(
-          targetRect.top,
-          window.innerHeight - menuSize.height - viewportInset,
-        ),
+    const left = Math.max(
+      viewportInset,
+      Math.min(
+        clientX,
+        window.innerWidth - menuSize.width - viewportInset,
       ),
-    };
-  }, [menuSize, targetRect]);
+    );
+    const top = Math.max(
+      viewportInset,
+      Math.min(
+        clientY,
+        window.innerHeight - menuSize.height - viewportInset,
+      ),
+    );
+    return { left, top };
+  }, [clientX, clientY, menuSize]);
 
   useLayoutEffect(() => {
     const menu = menuRef.current;
@@ -55,7 +50,7 @@ export function NodeSpaceMenu({
         ? current
         : { width: menu.offsetWidth, height: menu.offsetHeight },
     );
-  }, [space]);
+  }, []);
 
   useEffect(() => {
     menuRef.current
@@ -84,13 +79,13 @@ export function NodeSpaceMenu({
   }, [onClose]);
 
   const run = (action: () => void) => () => {
-    onClose(false);
+    onClose(true);
     action();
   };
 
   return (
     <div
-      aria-label={`${nodeLabel || "未命名节点"}的节点操作`}
+      aria-label="画布操作"
       className="node-space-menu"
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
@@ -108,26 +103,15 @@ export function NodeSpaceMenu({
       role="menu"
       style={location}
     >
-      {space ? (
-        <>
-          <button onClick={run(onEnter)} role="menuitem" type="button">
-            进入{space.type === "map" ? "思维图" : "流程"}
-          </button>
-          <div className="node-space-menu__separator" role="separator" />
-          <button
-            className="node-space-menu__danger"
-            onClick={run(onDelete)}
-            role="menuitem"
-            type="button"
-          >
-            删除下层图
-          </button>
-        </>
-      ) : (
-        <button onClick={run(onDrillDown)} role="menuitem" type="button">
-          下钻为…
-        </button>
-      )}
+      <button onClick={run(onCreateNode)} role="menuitem" type="button">
+        新建浮动节点
+      </button>
+      <button onClick={run(onPaste)} role="menuitem" type="button">
+        粘贴
+      </button>
+      <button onClick={run(onFit)} role="menuitem" type="button">
+        适应视图
+      </button>
     </div>
   );
 }

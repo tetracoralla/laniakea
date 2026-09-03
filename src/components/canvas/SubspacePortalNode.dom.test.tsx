@@ -110,8 +110,8 @@ describe("SubspacePortalNode", () => {
       );
     });
 
-    expect(container.textContent).toContain("-方向一");
-    expect(container.textContent).toContain("-方向二");
+    expect(container.textContent).toContain("方向一");
+    expect(container.textContent).toContain("方向二");
     const summary = container.querySelector<HTMLButtonElement>(
       ".subspace-portal__content",
     )!;
@@ -200,5 +200,55 @@ describe("SubspacePortalNode", () => {
 
     expect(onMove).not.toHaveBeenCalled();
     expect(container.querySelector(".is-dragging")).toBeNull();
+  });
+
+  it("cancels the active drag when Escape is pressed", async () => {
+    const onMove = vi.fn();
+    const target = document.createElement("div");
+    target.className = "mind-node";
+    target.dataset.nodeId = "target";
+    document.body.append(target);
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn(() => target),
+    });
+    await act(async () => {
+      root.render(
+        <SubspacePortalNode
+          anchorId="anchor"
+          canMoveTo={(nodeId) => nodeId === "target"}
+          layout={layout}
+          onMove={onMove}
+          onOpen={() => undefined}
+          onOpenContextMenu={() => undefined}
+          onSelect={() => undefined}
+          selected
+          space={space}
+          zoom={1}
+        />,
+      );
+    });
+    const summary = container.querySelector<HTMLButtonElement>(
+      ".subspace-portal__content",
+    )!;
+    await act(async () => {
+      summary.dispatchEvent(pointerEvent("pointerdown", 330, 190));
+      summary.dispatchEvent(pointerEvent("pointermove", 410, 240));
+    });
+    expect(target.classList.contains("is-portal-drop-target")).toBe(true);
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+      );
+    });
+    expect(container.querySelector(".is-dragging")).toBeNull();
+    expect(target.classList.contains("is-portal-drop-target")).toBe(false);
+
+    // A late pointer release after the escape must not commit a move.
+    await act(async () =>
+      summary.dispatchEvent(pointerEvent("pointerup", 410, 240)),
+    );
+    expect(onMove).not.toHaveBeenCalled();
   });
 });

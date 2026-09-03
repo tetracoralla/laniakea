@@ -21,4 +21,10 @@ describe("flow edge auto-pan", () => {
     expect(nearBoundary).toBeGreaterThan(0);
     expect(nearBoundary).toBeLessThan(atEdge);
   });
+
+  it("expresses speed in pixels per second, matching the marquee ramp scale", () => {
+    // A pointer beyond the canvas reaches the full 720 px/s velocity.
+    expect(flowAutoPanDelta(bounds, 100, 380).x).toBe(720);
+    expect(flowAutoPanDelta(bounds, 900, 380).x).toBe(-720);
+  });
 });

@@ -4,6 +4,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -46,6 +47,7 @@ export interface FlowCanvasProps {
   draft: string;
   onSelect: (id: string | null) => void;
   onBeginEdit: (id: string) => void;
+  onSpaceTap?: () => void;
   onDraftChange: (value: string) => void;
   onEdgeDraftChange?: (edgeId: string, value: string) => void;
   onEdgeDraftFinish?: (cancelled: boolean) => void;
@@ -101,6 +103,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       draft,
       onSelect,
       onBeginEdit,
+      onSpaceTap = () => undefined,
       onDraftChange,
       onEdgeDraftChange = () => undefined,
       onEdgeDraftFinish = () => undefined,
@@ -138,6 +141,9 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       setSelectedEdgeId(null);
       setNodeMenu(null);
     }, [onSelect]);
+    // Declared before the gesture hooks (which appear later in this body) and
+    // re-pointed at them below; the viewport hook only calls it on wheel.
+    const interactionsActiveRef = useRef<() => boolean>(() => false);
     const {
       bindings,
       containerRef,
@@ -145,10 +151,13 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       fit,
       flushViewport,
       panBy,
+      panModifierHeld,
     } = useFlowViewport({
+      interactionsActive: () => interactionsActiveRef.current(),
       layout,
       onCanvasPointerDown: clearCanvasSelection,
       onViewportChange,
+      onSpaceTap,
       selectedId,
       viewport: space.viewport,
     });
@@ -199,11 +208,12 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       fromPort: FlowPlacementDirection,
       event: ReactPointerEvent<HTMLButtonElement>,
     ) => {
+      if (panModifierHeld.current) return;
       setNodeMenu(null);
       setConnectingFromId(null);
       setSelectedEdgeId(null);
       connection.begin(fromId, fromPort, event);
-    }, [connection.begin]);
+    }, [connection.begin, panModifierHeld]);
     const moveNode = useCallback((
       nodeId: string,
       position: FlowNodePosition,
@@ -230,6 +240,10 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       onSelect: selectNode,
       space,
     });
+    interactionsActiveRef.current = () =>
+      nodeDrag.active() ||
+      connection.state !== null ||
+      edgeReconnect.state !== null;
     const autoPan = useFlowAutoPan(containerRef);
     const keepAutoPanning = useCallback((
       clientX: number,
@@ -461,7 +475,12 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
                 onCommitEdit={onCommitEdit}
                 onDraftChange={onDraftChange}
                 onOpenMenu={openNodeMenu}
-                onNodePointerDown={nodeDrag.begin}
+                onNodePointerDown={(nodeId, event) => {
+                  // Space-held pointer presses pan the canvas instead of
+                  // dragging nodes.
+                  if (panModifierHeld.current) return;
+                  nodeDrag.begin(nodeId, event);
+                }}
                 onPortClick={(nodeId, port) => {
                   if (connection.consumeHandledPortClick(nodeId, port)) return;
                   createFromPort(nodeId, port);

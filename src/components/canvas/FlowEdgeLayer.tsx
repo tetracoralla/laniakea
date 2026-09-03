@@ -126,6 +126,17 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
           >
             <path d="M0,0 L8,4 L0,8 Z" />
           </marker>
+          <marker
+            className="is-selected"
+            id={`flow-arrow-selected-${spaceId}`}
+            markerHeight="8"
+            markerWidth="8"
+            orient="auto"
+            refX="7"
+            refY="4"
+          >
+            <path d="M0,0 L8,4 L0,8 Z" />
+          </marker>
         </defs>
         {edges.map((edge) => {
           const from = layout.nodes[edge.from];
@@ -144,7 +155,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
                 d={path}
                 markerEnd={
                   selectedEdgeId === edge.id
-                    ? undefined
+                    ? `url(#flow-arrow-selected-${spaceId})`
                     : `url(#flow-arrow-${spaceId})`
                 }
               />

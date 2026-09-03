@@ -95,6 +95,14 @@
   --veil-strong: rgba(239, 240, 247, 0.62);
   --blur-strong: blur(8px);
 
+  /* 悬浮玻璃面：topbar/状态条/缩放控件/弹层共用一种材质 */
+  --surface-glass: rgba(255, 255, 255, 0.94);
+  --blur-glass: blur(14px);
+  --disabled-opacity: 0.38;
+
+  /* 动效缓动：界面位移统一 ease-out，动效时长沿用 --motion-* */
+  --ease-standard: cubic-bezier(0.22, 0.8, 0.2, 1);
+
   --motion-fast: 140ms;
   --motion-standard: 220ms;
 }

@@ -21,6 +21,9 @@ describe("node editor styles", () => {
       ".mind-node--root .mind-node__content,\n.mind-node--root .mind-node__editor-shell {",
     );
     expect(appStyles).toContain(
+      "  white-space: pre;\n  overflow-wrap: normal;\n  word-break: normal;",
+    );
+    expect(appStyles).toContain(
       ".node-drag-preview__item--root {\n  justify-content: center;\n  text-align: center;",
     );
     expect(appStyles).toContain(
@@ -139,5 +142,46 @@ describe("node editor styles", () => {
     expect(appStyles).toContain(".flow-node__quick-actions {");
     expect(appStyles).toContain(".flow-node__port {");
     expect(appStyles).toContain(".flow-node.is-connection-target .flow-node__content {");
+  });
+});
+
+describe("status feedback styles", () => {
+  it("paints the error save state and error notices with danger semantics", () => {
+    expect(appStyles).toContain(
+      ".flow-connectors marker.is-selected path {\n  fill: var(--violet);\n}",
+    );
+    expect(appStyles).toContain(
+      ".status-bar--error {\n  border-color: color-mix(in srgb, var(--danger) 38%, var(--line));\n}",
+    );
+    expect(appStyles).toContain(
+      ".status-bar--error .status-bar__message {\n  color: var(--danger);\n}",
+    );
+    expect(appStyles).toContain(
+      ".status-bar--error .status-bar__divider {\n  background: color-mix(in srgb, var(--danger) 32%, var(--line));\n}",
+    );
+  });
+
+  it("renders the drag insertion ordinal from data-drop-position", () => {
+    expect(appStyles).toContain(
+      ".node-drag-preview[data-drop-position]::after",
+    );
+    expect(appStyles).toContain(
+      'content: "插入为第 " attr(data-drop-position) " 项";',
+    );
+  });
+
+  it("states the second-level node scale explicitly", () => {
+    expect(appStyles).toContain(
+      ".mind-node--secondary .mind-node__content,\n.mind-node--secondary .mind-node__editor-shell {\n  font-size: var(--fs-15);\n  font-weight: var(--fw-node);\n}",
+    );
+  });
+
+  it("removes spatial overlay motion when reduced motion is requested", () => {
+    expect(appStyles).toContain(
+      ".command-overlay,\n  .node-space-menu,\n  .overlay-backdrop,\n  .space-picker {\n    animation: none;",
+    );
+    expect(appStyles).toContain(
+      ".mind-node__disclosure svg,\n  .subspace-portal__open {\n    transition: none;",
+    );
   });
 });

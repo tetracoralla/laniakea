@@ -114,6 +114,65 @@ describe("FlowCanvas", () => {
     expect(canvas.getAttribute("role")).toBe("application");
   });
 
+  it("leaves Space activation to controls outside the Flow canvas", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const space = flowSpaceForNode(created.document, "path")!;
+    const onSpaceTap = vi.fn();
+    const chromeButton = document.createElement("button");
+    chromeButton.textContent = "新建";
+    document.body.append(chromeButton);
+
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDraftChange={() => undefined}
+          onSelect={() => undefined}
+          onSpaceTap={onSpaceTap}
+          onViewportChange={() => undefined}
+          selectedId={created.selectedFlowNodeId}
+          space={space}
+        />,
+      );
+    });
+
+    const chromeKeyDown = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: " ",
+    });
+    await act(async () => {
+      chromeButton.dispatchEvent(chromeKeyDown);
+      chromeButton.dispatchEvent(
+        new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: " " }),
+      );
+    });
+    expect(chromeKeyDown.defaultPrevented).toBe(false);
+    expect(onSpaceTap).not.toHaveBeenCalled();
+
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    await act(async () => {
+      canvas.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: " " }),
+      );
+      canvas.dispatchEvent(
+        new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: " " }),
+      );
+    });
+    expect(onSpaceTap).toHaveBeenCalledOnce();
+    chromeButton.remove();
+  });
+
   it("shows selected-only direct creation controls and keeps the right-click fallback", async () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
@@ -688,6 +747,80 @@ describe("FlowCanvas", () => {
     );
   });
 
+  it("ignores wheel viewport changes while a node drag owns the pointer", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const space = {
+      ...flowSpaceForNode(created.document, "path")!,
+      viewport: { x: 0, y: 0, zoom: 1 },
+    };
+    const onPositionsChange = vi.fn();
+    const onViewportChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDeleteEdge={() => undefined}
+          onDraftChange={() => undefined}
+          onPositionsChange={onPositionsChange}
+          onSelect={() => undefined}
+          onViewportChange={onViewportChange}
+          selectedId={created.selectedFlowNodeId}
+          space={space}
+        />,
+      );
+    });
+
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    const content = container.querySelector<HTMLElement>(".flow-node__content")!;
+    await act(async () => {
+      dispatchPointer(content, "pointerdown", 200, 180);
+      dispatchPointer(canvas, "pointermove", 260, 220);
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 300,
+          clientY: 260,
+          ctrlKey: true,
+          deltaY: -120,
+        }),
+      );
+      dispatchPointer(canvas, "pointerup", 260, 220);
+      // The same wheel gesture after the gesture ends must zoom again.
+      canvas.dispatchEvent(
+        new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 300,
+          clientY: 260,
+          ctrlKey: true,
+          deltaY: -120,
+        }),
+      );
+    });
+    // Unmount flushes any scheduled viewport write, so both the gated and the
+    // allowed wheel events would have surfaced here had gating failed.
+    await act(async () => root.unmount());
+
+    expect(onPositionsChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        [created.selectedFlowNodeId]: { x: 200, y: 180 },
+      }),
+    );
+    expect(onViewportChange).toHaveBeenCalledOnce();
+    expect(onViewportChange.mock.calls[0][0].zoom).toBeGreaterThan(1);
+  });
+
   it("adds palette shapes by click or drag without forcing a terminal", async () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const space = {
@@ -931,6 +1064,58 @@ describe("FlowCanvas", () => {
       );
     });
     expect(onDeleteEdge).toHaveBeenCalledWith(added.space.edges[0].id);
+  });
+
+  it("keeps a directional arrow on a selected edge via the highlighted marker", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDeleteEdge={() => undefined}
+          onDraftChange={() => undefined}
+          onSelect={() => undefined}
+          onViewportChange={() => undefined}
+          selectedId={null}
+          space={added.space}
+        />,
+      );
+    });
+
+    const connector = container.querySelector<SVGPathElement>(
+      ".flow-connector",
+    )!;
+    expect(connector.getAttribute("marker-end")).toBe(
+      `url(#flow-arrow-${added.space.id})`,
+    );
+
+    await act(async () => {
+      container.querySelector<SVGPathElement>(".flow-connector__hit")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const selected = container.querySelector<SVGPathElement>(
+      ".flow-connector.is-selected",
+    )!;
+    expect(selected).not.toBeNull();
+    expect(selected.getAttribute("marker-end")).toBe(
+      `url(#flow-arrow-selected-${added.space.id})`,
+    );
+    expect(
+      container.querySelector(".flow-connectors marker.is-selected"),
+    ).not.toBeNull();
   });
 
   it("flushes the latest wheel viewport when the flow surface unmounts", async () => {

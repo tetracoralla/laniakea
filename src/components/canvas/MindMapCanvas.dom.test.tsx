@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, createRef } from "react";
 import { Profiler, StrictMode, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { App } from "../../App";
+import {
+  App,
+  resolveSurfaceAfterInvalidation,
+  type EditorSurface,
+  type SurfaceRestorePoint,
+} from "../../App";
 import { canvasContentBounds, computeLayout } from "../../model/layout";
 import { createMapSpace } from "../../model/spaces";
 import { createSelection, singleSelection } from "../../model/selection";
@@ -15,7 +20,7 @@ import type {
   Viewport,
 } from "../../types/mindmap";
 import { TopBar } from "../chrome/TopBar";
-import { MindMapCanvas } from "./MindMapCanvas";
+import { MindMapCanvas, type CanvasHandle } from "./MindMapCanvas";
 
 const now = "2026-07-28T00:00:00.000Z";
 
@@ -243,6 +248,51 @@ describe("rendered interaction regressions", () => {
     editor.remove();
   });
 
+  it("marks unsaved changes next to the title and clears them on save", async () => {
+    const sharedProps = {
+      currentDocumentPath: null,
+      onCopyMarkdown: () => undefined,
+      onCopyRecentPath: () => undefined,
+      onForgetRecent: () => undefined,
+      onImport: () => undefined,
+      onMoveRecent: () => undefined,
+      onNew: () => undefined,
+      onOpenRecent: () => undefined,
+      onRevealRecent: () => undefined,
+      onSave: () => undefined,
+      onSaveAs: () => undefined,
+      onSearch: () => undefined,
+      onShortcutSettings: () => undefined,
+      onTitleChange: () => undefined,
+      recentDocuments: [],
+      title: "测试",
+    };
+
+    await act(async () => {
+      root.render(<TopBar {...sharedProps} saveState="saving" />);
+    });
+    const dot = container.querySelector<HTMLElement>(
+      ".document-title__dirty",
+    )!;
+    expect(dot).not.toBeNull();
+    expect(dot.getAttribute("aria-label")).toBe("有未保存的更改");
+    expect(dot.classList.contains("document-title__dirty--error")).toBe(false);
+
+    await act(async () => {
+      root.render(<TopBar {...sharedProps} saveState="error" />);
+    });
+    expect(
+      container
+        .querySelector<HTMLElement>(".document-title__dirty")
+        ?.classList.contains("document-title__dirty--error"),
+    ).toBe(true);
+
+    await act(async () => {
+      root.render(<TopBar {...sharedProps} saveState="saved" />);
+    });
+    expect(container.querySelector(".document-title__dirty")).toBeNull();
+  });
+
   it("uses the shared Armorial icon component for returning from a subspace", async () => {
     const onNavigateBack = vi.fn();
     await act(async () => {
@@ -453,6 +503,111 @@ describe("rendered interaction regressions", () => {
     expect(onSelectionChange).not.toHaveBeenCalled();
   });
 
+  it("anchors reset-zoom on the selected node instead of a fixed origin", async () => {
+    const mindMap = largeDocument(2);
+    mindMap.viewport = { x: 3000, y: 2000, zoom: 0.7 };
+    const onViewportChange = vi.fn();
+    const canvasRef = createRef<CanvasHandle>();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          ref={canvasRef}
+          document={mindMap}
+          draft=""
+          editingId={null}
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={onViewportChange}
+          selection={singleSelection("node-1")}
+        />,
+      );
+    });
+
+    const node = computeLayout(mindMap).nodes["node-1"];
+    await act(async () => canvasRef.current?.resetZoom());
+    // The reset eases over a few frames before the final viewport commit.
+    for (let flush = 0; flush < 24 && animationFrames.length > 0; flush += 1) {
+      await act(async () => {
+        animationFrames.splice(0).forEach((callback) => callback(16 * (flush + 1)));
+      });
+    }
+
+    expect(onViewportChange).toHaveBeenCalledWith({
+      zoom: 1,
+      x: 600 - (node.x + node.width / 2),
+      y: 450 - (node.y + node.height / 2),
+    });
+  });
+
+  it("auto-pans the viewport while a dragged node is held at the canvas edge", async () => {
+    const mindMap = largeDocument(2);
+    mindMap.viewport = { x: 0, y: 0, zoom: 1 };
+    const onViewportChange = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={mindMap}
+          draft=""
+          editingId={null}
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onPasteStructured={() => false}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={onViewportChange}
+          selection={singleSelection("node-1")}
+        />,
+      );
+    });
+
+    const canvas = container.querySelector<HTMLElement>(".mindmap-canvas")!;
+    const content = container.querySelector<HTMLElement>(
+      "[data-node-id='node-1'] .mind-node__content",
+    )!;
+    await act(async () => {
+      dispatchPointer(content, "pointerdown", 300, 300);
+      dispatchPointer(canvas, "pointermove", 1199, 300);
+    });
+    const initialTransform = (
+      container.querySelector<HTMLElement>(".mindmap-canvas__content")!
+    ).style.transform;
+    expect(initialTransform).toBe("translate3d(0px, 0px, 0) scale(1)");
+
+    // Run the auto-pan frames: the pointer is held past the right inset.
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(16));
+      animationFrames.splice(0).forEach((callback) => callback(48));
+    });
+
+    const pannedTransform = (
+      container.querySelector<HTMLElement>(".mindmap-canvas__content")!
+    ).style.transform;
+    expect(pannedTransform).not.toBe(initialTransform);
+    expect(pannedTransform).toContain("translate3d(-");
+
+    await act(async () => {
+      dispatchPointer(canvas, "pointerup", 1199, 300);
+    });
+    expect(onViewportChange).toHaveBeenCalledTimes(1);
+    expect(onViewportChange.mock.calls[0][0]).toMatchObject({
+      zoom: 1,
+    });
+    expect(onViewportChange.mock.calls[0][0].x).toBeLessThan(0);
+  });
+
   it("renders an anchored subspace as a separate selectable child instead of a parent badge", async () => {
     const mindMap = createMapSpace(largeDocument(2), "node-1").document;
     const onOpenSubspace = vi.fn();
@@ -623,6 +778,165 @@ describe("rendered interaction regressions", () => {
     expect(container.querySelector(".mind-node__content")?.textContent).toBe(
       "拼音与编辑",
     );
+  });
+
+  it("keeps Tab-in-edit text and the new child in a single undo step", async () => {
+    const mindMap = largeDocument(2);
+    mindMap.nodes["node-1"].text = "原始文本";
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+    expect(container.querySelectorAll(".mind-node")).toHaveLength(2);
+
+    const content = container.querySelector<HTMLElement>(
+      "[data-node-id='node-1'] .mind-node__content",
+    )!;
+    await act(async () => {
+      content.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "[data-node-id='node-1'] .mind-node__editor",
+    )!;
+    expect(editor).not.toBeNull();
+
+    await act(async () => {
+      editor.value = "修改后的文本";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Tab" }),
+      );
+    });
+    // The child is created and focused for editing immediately.
+    expect(
+      container.querySelector("[data-node-id='node-1'] .mind-node__content")
+        ?.textContent,
+    ).toBe("修改后的文本");
+    expect(container.querySelectorAll(".mind-node")).toHaveLength(3);
+    expect(container.querySelector(".mind-node__editor")).not.toBeNull();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLTextAreaElement>(".mind-node__editor")!
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+        );
+    });
+    expect(container.querySelector(".mind-node__editor")).toBeNull();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "z",
+          metaKey: true,
+        }),
+      );
+    });
+    // One undo reverts both the text edit and the inserted child.
+    expect(
+      container.querySelector("[data-node-id='node-1'] .mind-node__content")
+        ?.textContent,
+    ).toBe("原始文本");
+    expect(container.querySelectorAll(".mind-node")).toHaveLength(2);
+  });
+
+  it("commits and selects the parent on Shift+Tab without structural change", async () => {
+    const mindMap = largeDocument(2);
+    mindMap.nodes["node-1"].text = "原始文本";
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    const content = container.querySelector<HTMLElement>(
+      "[data-node-id='node-1'] .mind-node__content",
+    )!;
+    await act(async () => {
+      content.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "[data-node-id='node-1'] .mind-node__editor",
+    )!;
+    await act(async () => {
+      editor.value = "更新文本";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "Tab",
+          shiftKey: true,
+        }),
+      );
+    });
+
+    expect(container.querySelector(".mind-node__editor")).toBeNull();
+    expect(
+      container.querySelector("[data-node-id='node-1'] .mind-node__content")
+        ?.textContent,
+    ).toBe("更新文本");
+    expect(container.querySelectorAll(".mind-node")).toHaveLength(2);
+    // The root becomes the primary selection.
+    expect(
+      container.querySelector(".mind-node--root.is-primary"),
+    ).not.toBeNull();
+  });
+
+  it("creates a floating node in edit mode on blank-canvas double click", async () => {
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    const canvas = container.querySelector<HTMLElement>(".mindmap-canvas")!;
+    await act(async () => {
+      canvas.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+
+    const editingNode = container
+      .querySelector(".mind-node__editor")
+      ?.closest(".mind-node");
+    expect(editingNode).not.toBeNull();
+    // The new floating root owns the editor, not the main root.
+    expect(editingNode?.classList.contains("mind-node--root")).toBe(false);
+    expect(
+      editingNode?.classList.contains("mind-node--floating"),
+    ).toBe(true);
+    expect(container.querySelectorAll(".mind-node")).toHaveLength(2);
+
+    await act(async () => {
+      container
+        .querySelector<HTMLTextAreaElement>(".mind-node__editor")!
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+        );
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "z",
+          metaKey: true,
+        }),
+      );
+    });
+    // One undo removes the created floating node.
+    expect(container.querySelectorAll(".mind-node")).toHaveLength(1);
   });
 
   it("mounts only the visible window of a 5,000-node document", async () => {
@@ -2474,5 +2788,81 @@ describe("rendered interaction regressions", () => {
     expect(
       container.querySelector<HTMLDivElement>(".node-drag-preview")?.hidden,
     ).toBe(true);
+  });
+});
+
+describe("surface invalidation after undo", () => {
+  const surfaceValid =
+    (surviving: Set<string>) => (candidate: EditorSurface) =>
+      candidate.kind === "flow"
+        ? surviving.has(candidate.spaceId)
+        : !candidate.spaceId || surviving.has(candidate.spaceId);
+
+  it("keeps the current surface untouched while its space exists", () => {
+    const surface: EditorSurface = { kind: "map", spaceId: "space-a" };
+    expect(
+      resolveSurfaceAfterInvalidation(surface, [], surfaceValid(new Set(["space-a"]))),
+    ).toBeNull();
+  });
+
+  it("pops to the deepest surviving ancestor and keeps the outer return path", () => {
+    const outer: SurfaceRestorePoint = {
+      surface: { kind: "map", spaceId: "space-outer" },
+      selection: singleSelection("outer-node"),
+    };
+    const middle: SurfaceRestorePoint = {
+      surface: {
+        kind: "flow",
+        spaceId: "flow-inner",
+        anchorNodeId: "n",
+        entryRequest: 1,
+        fitOnMount: false,
+        initialEditing: false,
+        initialSelectedId: null,
+      },
+      selection: singleSelection("middle-node"),
+    };
+    const result = resolveSurfaceAfterInvalidation(
+      { kind: "map", spaceId: "space-inner" },
+      [outer, middle],
+      surfaceValid(new Set(["space-outer", "flow-inner"])),
+    );
+    expect(result).not.toBeNull();
+    expect(result?.surface).toEqual(middle.surface);
+    expect(result?.restoreSelection).toEqual(singleSelection("middle-node"));
+    expect(result?.surfaceStack).toEqual([outer]);
+  });
+
+  it("skips invalidated ancestors instead of stopping at the first one", () => {
+    const outer: SurfaceRestorePoint = {
+      surface: { kind: "map", spaceId: "space-outer" },
+      selection: singleSelection("outer-node"),
+    };
+    const middle: SurfaceRestorePoint = {
+      surface: { kind: "map", spaceId: "space-middle" },
+      selection: singleSelection("middle-node"),
+    };
+    const result = resolveSurfaceAfterInvalidation(
+      { kind: "map", spaceId: "space-inner" },
+      [outer, middle],
+      surfaceValid(new Set(["space-outer"])),
+    );
+    expect(result?.surface).toEqual(outer.surface);
+    expect(result?.surfaceStack).toEqual([]);
+  });
+
+  it("falls back to the root map when every layer was undone", () => {
+    const entry: SurfaceRestorePoint = {
+      surface: { kind: "map", spaceId: "space-a" },
+      selection: singleSelection("node"),
+    };
+    const result = resolveSurfaceAfterInvalidation(
+      { kind: "map", spaceId: "space-b" },
+      [entry],
+      surfaceValid(new Set()),
+    );
+    expect(result?.surface).toEqual({ kind: "map", spaceId: null });
+    expect(result?.restoreSelection).toBeNull();
+    expect(result?.surfaceStack).toEqual([]);
   });
 });

@@ -81,7 +81,10 @@ interface CanvasGestureResult {
   bindings: CanvasGestureBindings;
 }
 
-export function ignoresSpaceShortcut(target: EventTarget | null): boolean {
+export function ignoresSpaceShortcut(
+  target: EventTarget | null,
+  canvasSelector = ".mindmap-canvas",
+): boolean {
   const element = target as HTMLElement | null;
   if (!element) return false;
   if (
@@ -90,7 +93,7 @@ export function ignoresSpaceShortcut(target: EventTarget | null): boolean {
   ) {
     return true;
   }
-  if (element.closest(".mindmap-canvas")) return false;
+  if (element.closest(canvasSelector)) return false;
   return Boolean(
     element.matches("button, a, summary") ||
       element.closest(
@@ -304,15 +307,18 @@ export function useCanvasGestures({
         x: event.clientX - bounds.left,
         y: event.clientY - bounds.top,
       };
+      const additiveModifier = event.shiftKey || event.metaKey;
       setGesture({
         kind: "select",
         pointerId: event.pointerId,
         start: point,
         anchor: canvasPointToContent(point, liveViewport.current),
         current: point,
-        additive: event.shiftKey,
+        additive: additiveModifier,
         baseSelection: selection,
-        clickSelection: emptySelection(),
+        // A modifier click on empty canvas keeps the current selection
+        // instead of acting as an accidental clear.
+        clickSelection: additiveModifier ? selection : emptySelection(),
         previewSelection: selection,
         viewportMoved: false,
         canvasSize: { width: bounds.width, height: bounds.height },

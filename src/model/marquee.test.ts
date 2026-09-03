@@ -52,13 +52,24 @@ describe("marquee geometry", () => {
     expect(passedDragThreshold({ x: 0, y: 0 }, { x: 3, y: 4 })).toBe(true);
   });
 
-  it("selects by node center after viewport pan and zoom", () => {
+  it("selects nodes whose center is inside after pan and zoom", () => {
     const selected = nodesInsideMarquee(
       layout,
       { x: 40, y: -10, zoom: 0.5 },
       { left: 115, top: 20, width: 20, height: 12 },
     );
     expect(selected).toEqual(["a"]);
+  });
+
+  it("does not select a node when the marquee only grazes its edge", () => {
+    // Rect ends at x=115 while node a spans 90-150 on screen; its center
+    // (120) is outside the rect, so the edge overlap must not select it.
+    const selected = nodesInsideMarquee(
+      layout,
+      { x: 40, y: -10, zoom: 0.5 },
+      { left: 60, top: 20, width: 55, height: 12 },
+    );
+    expect(selected).toEqual([]);
   });
 
   it("ramps marquee auto-pan near an edge and caps it outside the canvas", () => {

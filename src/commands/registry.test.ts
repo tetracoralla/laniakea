@@ -50,19 +50,34 @@ describe("command registry context isolation", () => {
     );
   });
 
-  it("matches shifted digit viewport shortcuts by physical key", () => {
+  it("matches viewport commands on Command plus physical digit", () => {
     expect(
       findCommandForEvent(
-        keyboardEvent("!", { shiftKey: true, code: "Digit1" }),
+        keyboardEvent("1", { metaKey: true, code: "Digit1" }),
         "selection",
       )?.id,
     ).toBe("viewport.fit");
     expect(
       findCommandForEvent(
-        keyboardEvent("@", { shiftKey: true, code: "Digit2" }),
+        keyboardEvent("2", { metaKey: true, code: "Digit2" }),
         "selection",
       )?.id,
     ).toBe("viewport.focus");
+  });
+
+  it("keeps shifted digits available for typing replacement", () => {
+    expect(
+      findCommandForEvent(
+        keyboardEvent("!", { shiftKey: true, code: "Digit1" }),
+        "selection",
+      ),
+    ).toBeUndefined();
+    expect(
+      findCommandForEvent(
+        keyboardEvent("@", { shiftKey: true, code: "Digit2" }),
+        "selection",
+      ),
+    ).toBeUndefined();
   });
 
   it("matches Command-plus without treating Shift as a separate command", () => {

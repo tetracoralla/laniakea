@@ -126,10 +126,6 @@ export function useFlowKeyboardCommands({
         event.preventDefault();
         event.stopPropagation();
         handlers.onDelete(currentId);
-      } else if (event.key === " ") {
-        event.preventDefault();
-        event.stopPropagation();
-        handlers.onBeginEdit(currentId);
       } else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
         event.preventDefault();
         event.stopPropagation();

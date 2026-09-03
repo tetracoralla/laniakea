@@ -83,6 +83,33 @@ function createNode(
   };
 }
 
+/**
+ * Creates a blank free-standing root at a canvas position (double-click or
+ * context menu on empty canvas) and selects it for immediate editing.
+ */
+export function createFloatingNode(
+  document: MindMapDocument,
+  x: number,
+  y: number,
+  nodeId = createNodeId(),
+): DocumentMutation {
+  const floatingRoot: FloatingRoot = {
+    id: nodeId,
+    x: Math.max(32, Math.round(x)),
+    y: Math.max(32, Math.round(y)),
+  };
+  return {
+    document: {
+      ...withTimestamp(document, {
+        ...document.nodes,
+        [nodeId]: createNode("", null, nodeId),
+      }),
+      floatingRoots: [...document.floatingRoots, floatingRoot],
+    },
+    selection: singleSelection(nodeId),
+  };
+}
+
 export function normalizeNodeText(text: string): string {
   return text.trim();
 }

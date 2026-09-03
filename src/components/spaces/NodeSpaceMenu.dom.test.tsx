@@ -47,13 +47,14 @@ describe("NodeSpaceMenu", () => {
     container.remove();
   });
 
-  it("offers one drill-down invocation before a Space exists", async () => {
+  it("offers only the drill-down invocation before a Space exists", async () => {
+    const onClose = vi.fn();
     const onDrillDown = vi.fn();
     await act(async () => {
       root.render(
         <NodeSpaceMenu
           nodeLabel="购买路径"
-          onClose={() => undefined}
+          onClose={onClose}
           onDelete={() => undefined}
           onDrillDown={onDrillDown}
           onEnter={() => undefined}
@@ -63,16 +64,16 @@ describe("NodeSpaceMenu", () => {
       );
     });
 
-    const items = container.querySelectorAll("[role='menuitem']");
-    expect(items).toHaveLength(1);
-    expect(items[0].textContent).toBe("下钻为…");
+    const items = [...container.querySelectorAll("[role='menuitem']")];
+    expect(items.map((item) => item.textContent)).toEqual(["下钻为…"]);
     await act(async () => (items[0] as HTMLButtonElement).click());
+    expect(onClose).toHaveBeenCalledWith(false);
     expect(onDrillDown).toHaveBeenCalledOnce();
     expect(container.querySelector<HTMLElement>("[role='menu']")!.style.left)
       .toBe("170px");
   });
 
-  it("offers enter or delete after the immutable Space type exists", async () => {
+  it("offers only enter or delete after the Space type exists", async () => {
     await act(async () => {
       root.render(
         <NodeSpaceMenu
@@ -81,17 +82,45 @@ describe("NodeSpaceMenu", () => {
           onDelete={() => undefined}
           onDrillDown={() => undefined}
           onEnter={() => undefined}
-          targetRect={{ left: 20, right: 160, top: 30, bottom: 74 }}
+          targetRect={{ left: 20, right: 160, top: 760, bottom: 804 }}
           space={mapSpace}
         />,
       );
     });
 
+    const labels = [...container.querySelectorAll("[role='menuitem']")].map(
+      (item) => item.textContent,
+    );
+    expect(labels).toEqual(["进入思维图", "删除下层图"]);
     expect(
-      [...container.querySelectorAll("[role='menuitem']")].map(
-        (item) => item.textContent,
-      ),
-    ).toEqual(["进入思维图", "删除下层图"]);
-    expect(container.textContent).not.toContain("下钻为");
+      Number(container.querySelector<HTMLElement>("[role='menu']")!.style.top.replace("px", "")),
+    ).toBeLessThanOrEqual(window.innerHeight - 93 - 12);
+  });
+
+  it("dismisses on outside pointer and restores focus only for Escape", async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      root.render(
+        <NodeSpaceMenu
+          nodeLabel="购买路径"
+          onClose={onClose}
+          onDelete={() => undefined}
+          onDrillDown={() => undefined}
+          onEnter={() => undefined}
+          targetRect={{ left: 20, right: 160, top: 30, bottom: 74 }}
+          space={null}
+        />,
+      );
+    });
+
+    await act(async () => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalledWith(false);
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    expect(onClose).toHaveBeenLastCalledWith(true);
   });
 });

@@ -17,6 +17,7 @@ import {
   type CanvasControlsHandle,
 } from "./components/chrome/CanvasControls";
 import { TopBar } from "./components/chrome/TopBar";
+import { CanvasBlankMenu } from "./components/canvas/CanvasBlankMenu";
 import type { OverlayMode } from "./components/commands/CommandOverlay";
 import { StatusBar } from "./components/feedback/StatusBar";
 import { DeleteSubspaceDialog } from "./components/overlays/DeleteSubspaceDialog";
@@ -45,7 +46,13 @@ import {
   isDesktopRuntime,
 } from "./persistence/localDocumentStore";
 import {
+  createChild,
+  createFloatingNode,
+  createNodeId,
+  normalizeNodeText,
+  parentOf,
   setDocumentTitle,
+  setNodeText,
   revealNode,
   type DocumentMutation,
 } from "./model/tree";
@@ -75,12 +82,12 @@ import type {
   Viewport,
 } from "./types/mindmap";
 
-interface MapSurface {
+export interface MapSurface {
   kind: "map";
   spaceId: string | null;
 }
 
-interface FlowSurface {
+export interface FlowSurface {
   kind: "flow";
   spaceId: string;
   anchorNodeId: string;
@@ -90,9 +97,9 @@ interface FlowSurface {
   initialSelectedId: string | null;
 }
 
-type EditorSurface = MapSurface | FlowSurface;
+export type EditorSurface = MapSurface | FlowSurface;
 
-interface SurfaceRestorePoint {
+export interface SurfaceRestorePoint {
   surface: EditorSurface;
   selection: SelectionState;
 }
@@ -101,6 +108,42 @@ const rootMapSurface: MapSurface = {
   kind: "map",
   spaceId: null,
 };
+
+export interface SurfaceInvalidationResult {
+  surface: EditorSurface;
+  surfaceStack: SurfaceRestorePoint[];
+  /** Saved selection of the restored entry; null means fall back to the root node. */
+  restoreSelection: SelectionState | null;
+}
+
+/**
+ * Picks where navigation lands after the current surface's space disappears
+ * (typically via undo): the deepest surviving ancestor keeps the rest of the
+ * return path alive instead of the whole stack collapsing to the root map.
+ */
+export function resolveSurfaceAfterInvalidation(
+  surface: EditorSurface,
+  surfaceStack: SurfaceRestorePoint[],
+  surfaceValid: (candidate: EditorSurface) => boolean,
+): SurfaceInvalidationResult | null {
+  if (surfaceValid(surface)) return null;
+  let index = surfaceStack.length - 1;
+  while (index >= 0 && !surfaceValid(surfaceStack[index].surface)) {
+    index -= 1;
+  }
+  if (index >= 0) {
+    return {
+      surface: surfaceStack[index].surface,
+      restoreSelection: surfaceStack[index].selection,
+      surfaceStack: surfaceStack.slice(0, index),
+    };
+  }
+  return {
+    surface: rootMapSurface,
+    restoreSelection: null,
+    surfaceStack: [],
+  };
+}
 
 let flowWorkspaceModule: Promise<
   typeof import("./components/spaces/FlowWorkspace")
@@ -249,6 +292,12 @@ export function App() {
     targetRect: { left: number; right: number; top: number; bottom: number };
     returnFocus: HTMLElement;
   } | null>(null);
+  const [canvasBlankMenu, setCanvasBlankMenu] = useState<{
+    clientX: number;
+    clientY: number;
+    contentX: number;
+    contentY: number;
+  } | null>(null);
   const [surface, setSurface] = useState<EditorSurface>(rootMapSurface);
   const [surfaceStack, setSurfaceStack] = useState<SurfaceRestorePoint[]>([]);
   const [shortcutSettingsOpen, setShortcutSettingsOpen] =
@@ -332,6 +381,44 @@ export function App() {
     notify,
     undo,
   });
+
+  // Tab while editing: commit the text and insert+edit a child in one
+  // mutation so a single undo removes both (mirrors outliner muscle memory).
+  const commitEditAndInsertChild = useCallback(
+    (id: string, value: string) => {
+      if (!activeMap.nodes[id]) return;
+      const nextText = normalizeNodeText(value);
+      const createdId = createNodeId();
+      flushSync(() => {
+        setEditingId(createdId);
+        setDraft("");
+        applyActiveMapMutation((current) => {
+          const withText =
+            current.document.nodes[id]?.text === nextText
+              ? current.document
+              : setNodeText(current.document, id, nextText).document;
+          return createChild(withText, id, "", createdId);
+        });
+      });
+    },
+    [activeMap, applyActiveMapMutation, setDraft, setEditingId],
+  );
+
+  const commitEditAndSelectParent = useCallback(
+    (id: string, value: string) => {
+      commitEdit(id, value);
+      selectNode(parentOf(activeMap, id) ?? id);
+    },
+    [activeMap, commitEdit, selectNode],
+  );
+
+  const handleEditTab = useCallback(
+    (id: string, value: string, shiftKey: boolean) => {
+      if (shiftKey) commitEditAndSelectParent(id, value);
+      else commitEditAndInsertChild(id, value);
+    },
+    [commitEditAndInsertChild, commitEditAndSelectParent],
+  );
   const finishDocumentSwitchWithRecovery = useCallback((fitContent: boolean) => {
     finishDocumentSwitch(fitContent);
     finishEditorDraft(true);
@@ -368,21 +455,22 @@ export function App() {
   }, [activeMap, selectedSubspaceAnchorId]);
 
   useEffect(() => {
-    if (
-      surface.kind === "map" &&
-      surface.spaceId &&
-      !mapSpaceDocument(mindMap, surface.spaceId)
-    ) {
-      setSurface(rootMapSurface);
-      setSurfaceStack([]);
-      setSelection(singleSelection(mindMap.rootId));
-    }
-    if (surface.kind === "flow" && !activeFlow) {
-      setSurface(rootMapSurface);
-      setSurfaceStack([]);
-      setSelection(singleSelection(mindMap.rootId));
-    }
-  }, [activeFlow, mindMap, mindMap.rootId, setSelection, surface]);
+    const invalidation = resolveSurfaceAfterInvalidation(
+      surface,
+      surfaceStack,
+      (candidate) =>
+        candidate.kind === "flow"
+          ? documentSpaces(mindMap)[candidate.spaceId]?.type === "flow"
+          : !candidate.spaceId ||
+            Boolean(mapSpaceDocument(mindMap, candidate.spaceId)),
+    );
+    if (!invalidation) return;
+    setSurfaceStack(invalidation.surfaceStack);
+    setSurface(invalidation.surface);
+    setSelection(
+      invalidation.restoreSelection ?? singleSelection(mindMap.rootId),
+    );
+  }, [mindMap, setSelection, surface, surfaceStack]);
 
   const pushCurrentSurface = useCallback(() => {
     const restorableSurface = surface.kind === "flow"
@@ -636,10 +724,12 @@ export function App() {
     setNodeSpaceMenu({ nodeId, targetRect, returnFocus });
   }, [activeMap.nodes, selection.selectedIds, setSelection]);
 
-  const closeNodeSpaceMenu = useCallback(() => {
+  const closeNodeSpaceMenu = useCallback((shouldRestoreFocus: boolean) => {
     const returnFocus = nodeSpaceMenu?.returnFocus ?? null;
     setNodeSpaceMenu(null);
-    restoreFocus(returnFocus, () => canvasRef.current?.focusCanvas());
+    if (shouldRestoreFocus) {
+      restoreFocus(returnFocus, () => canvasRef.current?.focusCanvas());
+    }
   }, [nodeSpaceMenu]);
 
   const drillDownFromNodeMenu = useCallback(() => {
@@ -915,6 +1005,11 @@ export function App() {
       case "node.drill-down":
         enterSubspaceForNode(portalId);
         return;
+      case "node.create-sibling":
+        // Enter on a portal enters the anchored space instead of inserting
+        // a sibling node next to the anchor.
+        enterSubspaceForNode(portalId);
+        return;
       case "node.parent":
       case "selection.clear":
         setSelectedSubspaceAnchorId(null);
@@ -928,7 +1023,6 @@ export function App() {
         setSelectedSubspaceAnchorId(null);
         executeCommand(command);
         return;
-      case "node.create-sibling":
       case "node.create-above":
       case "node.create-child":
       case "node.insert-parent":
@@ -959,6 +1053,33 @@ export function App() {
     selectedSubspaceAnchorId,
     setSelection,
   ]);
+
+  const closeCanvasBlankMenu = useCallback((shouldRestoreFocus: boolean) => {
+    setCanvasBlankMenu(null);
+    if (shouldRestoreFocus) canvasRef.current?.focusCanvas();
+  }, []);
+
+  // Double-click or menu on empty canvas: a blank floating root is created
+  // and immediately opened for editing.
+  const createFloatingAtPoint = useCallback(
+    (contentX: number, contentY: number) => {
+      const createdId = createNodeId();
+      flushSync(() => {
+        applyActiveMapMutation((current) =>
+          createFloatingNode(current.document, contentX, contentY, createdId),
+        );
+      });
+      beginEdit(createdId);
+    },
+    [applyActiveMapMutation, beginEdit],
+  );
+
+  const createFloatingFromBlankMenu = useCallback(() => {
+    if (!canvasBlankMenu) return;
+    const { contentX, contentY } = canvasBlankMenu;
+    setCanvasBlankMenu(null);
+    createFloatingAtPoint(contentX, contentY);
+  }, [canvasBlankMenu, createFloatingAtPoint]);
 
   useKeyboardCommands({
     enabled:
@@ -1065,6 +1186,7 @@ export function App() {
         showDesktopActions={desktopRuntime}
         spacePath={spacePath}
         onNavigateBack={spacePath.length > 0 ? navigateBack : undefined}
+        saveState={saveState}
         title={mindMap.title}
       />
 
@@ -1094,8 +1216,14 @@ export function App() {
                 surface: surface.spaceId ? "map" : "root-map",
               }, value);
             }}
+            onEditTab={handleEditTab}
             onAttachNode={attachNodeToParent}
             onDetachNode={detachNodeToCanvas}
+            onOpenCanvasContextMenu={(anchor) => {
+              setNodeSpaceMenu(null);
+              setCanvasBlankMenu(anchor);
+            }}
+            onCreateFloatingAt={createFloatingAtPoint}
             onMoveSubspace={moveSubspacePortal}
             onOpenNodeContextMenu={openNodeSpaceMenu}
             onOpenSubspace={enterSubspaceForNode}
@@ -1262,6 +1390,23 @@ export function App() {
           onEnter={enterFromNodeMenu}
           targetRect={nodeSpaceMenu.targetRect}
           space={spaceForNode(activeMap, nodeSpaceMenu.nodeId)}
+        />
+      )}
+
+      {canvasBlankMenu && (
+        <CanvasBlankMenu
+          clientX={canvasBlankMenu.clientX}
+          clientY={canvasBlankMenu.clientY}
+          onClose={closeCanvasBlankMenu}
+          onCreateNode={createFloatingFromBlankMenu}
+          onFit={() => {
+            setCanvasBlankMenu(null);
+            canvasRef.current?.fit();
+          }}
+          onPaste={() => {
+            setCanvasBlankMenu(null);
+            executeAppCommand("node.paste");
+          }}
         />
       )}
 

@@ -45,11 +45,11 @@ describe("CanvasControls", () => {
     });
     expect(container.querySelector(".canvas-controls__feedback")).toBeNull();
 
-    act(() => ref.current?.showZoom(0.52));
+    act(() => ref.current?.showZoom(0.4));
     let feedback = container.querySelector<HTMLOutputElement>(
       ".canvas-controls__feedback",
     )!;
-    expect(feedback.textContent).toBe("52% · 最小");
+    expect(feedback.textContent).toBe("40% · 最小");
     expect(feedback.getAttribute("aria-hidden")).toBe("false");
     expect(
       container
@@ -80,7 +80,12 @@ describe("CanvasControls", () => {
     feedback = container.querySelector<HTMLOutputElement>(
       ".canvas-controls__feedback",
     )!;
-    expect(feedback.textContent).toBe("180% · 最大");
+    expect(feedback.textContent).toBe("180%");
+    act(() => ref.current?.showZoom(2.5));
+    feedback = container.querySelector<HTMLOutputElement>(
+      ".canvas-controls__feedback",
+    )!;
+    expect(feedback.textContent).toBe("250% · 最大");
   });
 
   it("keeps coarse-pointer fallback actions wired to canvas commands", () => {

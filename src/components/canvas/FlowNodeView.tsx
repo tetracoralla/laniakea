@@ -178,7 +178,7 @@ export const FlowNodeView = memo(function FlowNodeView({
       ) : (
         <button
           aria-pressed={selected}
-          className="flow-node__content"
+          className={`flow-node__content ${node.text ? "" : "is-placeholder"}`}
           onClick={() => onSelect(node.id)}
           onDoubleClick={() => onBeginEdit(node.id)}
           onPointerDown={(event) => onNodePointerDown(node.id, event)}
