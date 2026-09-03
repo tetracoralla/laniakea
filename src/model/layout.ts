@@ -5,6 +5,7 @@ import type {
   MindMapDocument,
 } from "../types/mindmap";
 import { nodePlaceholder } from "./canvasRender";
+import { sizeForSubspacePreview } from "./subspacePreview";
 
 const tones: BranchTone[] = ["violet", "blue", "emerald", "amber"];
 const emphasizedNodeHeight = 48;
@@ -166,12 +167,18 @@ export function computeLayout(
   measureTextWidth?: TextWidthMeasurer,
 ): LayoutResult {
   const result: Record<string, LayoutNode> = {};
+  const portals: Record<string, LayoutNode> = {};
   const visibleIds: string[] = [];
   const root = document.nodes[document.rootId];
   if (!root) return { nodes: {}, visibleIds: [], width: 0, height: 0 };
 
   const subtreeHeights = new Map<string, number>();
   const nodeSizes = new Map<string, { width: number; height: number }>();
+  const portalSizes = new Map<string, { width: number; height: number }>();
+  const portalForNode = (id: string) => {
+    const subspaceId = document.nodes[id]?.subspaceId;
+    return subspaceId ? document.spaces?.[subspaceId] : undefined;
+  };
   const textForNode = (id: string, text: string) =>
     textOverride?.id === id ? textOverride.text : text;
   interface MeasureFrame {
@@ -200,7 +207,14 @@ export function computeLayout(
           measureTextWidth,
         );
         nodeSizes.set(frame.id, size);
-        if (current.collapsed || current.children.length === 0) {
+        const portal = portalForNode(frame.id);
+        if (portal) {
+          portalSizes.set(frame.id, sizeForSubspacePreview(portal));
+        }
+        if (
+          current.collapsed ||
+          (current.children.length === 0 && !portal)
+        ) {
           subtreeHeights.set(frame.id, size.height);
           continue;
         }
@@ -219,12 +233,16 @@ export function computeLayout(
       const size = nodeSizes.get(frame.id);
       if (!size) continue;
       const gap = frame.depth === 0 ? branchGap : siblingGap;
+      const portalSize = portalSizes.get(frame.id);
+      const visibleChildCount =
+        current.children.length + (portalSize ? 1 : 0);
       const childrenHeight =
         current.children.reduce(
           (sum, childId) => sum + (subtreeHeights.get(childId) ?? 0),
           0,
         ) +
-        gap * Math.max(0, current.children.length - 1);
+        (portalSize?.height ?? 0) +
+        gap * Math.max(0, visibleChildCount - 1);
       subtreeHeights.set(
         frame.id,
         Math.max(size.height, childrenHeight),
@@ -302,6 +320,22 @@ export function computeLayout(
             (mainTree ? emphasizedNodeHeight : leafNodeHeight)) +
           gap;
       });
+      const portalSize = portalSizes.get(frame.id);
+      if (portalSize) {
+        portals[frame.id] = {
+          id: `subspace:${frame.id}`,
+          x: childX,
+          y: childTop,
+          width: portalSize.width,
+          height: portalSize.height,
+          depth: frame.depth + 1,
+          tone:
+            mainTree && frame.depth === 0
+              ? tones[current.children.length % tones.length]
+              : tone,
+          rootKind: null,
+        };
+      }
       for (let index = children.length - 1; index >= 0; index -= 1) {
         pending.push(children[index]);
       }
@@ -363,15 +397,28 @@ export function computeLayout(
         (subtreeHeights.get(childId) ?? emphasizedNodeHeight) +
         siblingGap;
     });
+    const portalSize = portalSizes.get(floatingRoot.id);
+    if (portalSize) {
+      portals[floatingRoot.id] = {
+        id: `subspace:${floatingRoot.id}`,
+        x: childX,
+        y: childTop,
+        width: portalSize.width,
+        height: portalSize.height,
+        depth: 1,
+        tone,
+        rootKind: null,
+      };
+    }
   });
 
   let width = 1200;
   let height = Math.max(900, mainHeight + top * 2);
-  Object.values(result).forEach((node) => {
+  [...Object.values(result), ...Object.values(portals)].forEach((node) => {
     width = Math.max(width, node.x + node.width + 120);
     height = Math.max(height, node.y + node.height + 120);
   });
-  return { nodes: result, visibleIds, width, height };
+  return { nodes: result, portals, visibleIds, width, height };
 }
 
 export interface CanvasContentBounds {
@@ -390,7 +437,10 @@ export function canvasContentBounds(
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
-  Object.values(layout.nodes).forEach((node) => {
+  [
+    ...Object.values(layout.nodes),
+    ...Object.values(layout.portals ?? {}),
+  ].forEach((node) => {
     minX = Math.min(minX, node.x);
     minY = Math.min(minY, node.y);
     maxX = Math.max(maxX, node.x + node.width);
@@ -473,6 +523,7 @@ export function mainBranchAnchorForCollapseTransition(
 
 interface BranchBounds {
   ids: string[];
+  portalAnchorIds: string[];
   minY: number;
   maxY: number;
 }
@@ -483,6 +534,7 @@ function visibleBranchBounds(
   branchId: string,
 ): BranchBounds | null {
   const ids: string[] = [];
+  const portalAnchorIds: string[] = [];
   const pending = [branchId];
   let minY = Number.POSITIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
@@ -495,9 +547,15 @@ function visibleBranchBounds(
     ids.push(id);
     minY = Math.min(minY, node.y);
     maxY = Math.max(maxY, node.y + node.height);
+    const portal = layout.portals?.[id];
+    if (!current.collapsed && portal) {
+      portalAnchorIds.push(id);
+      minY = Math.min(minY, portal.y);
+      maxY = Math.max(maxY, portal.y + portal.height);
+    }
     if (!current.collapsed) pending.push(...current.children);
   }
-  return ids.length > 0 ? { ids, minY, maxY } : null;
+  return ids.length > 0 ? { ids, portalAnchorIds, minY, maxY } : null;
 }
 
 /**
@@ -570,6 +628,7 @@ export function stabilizeMainBranchAnchor(
   }
 
   let nodes = next.nodes;
+  let portals = next.portals;
   groups.forEach((group, index) => {
     const shift = shifts.get(index) ?? 0;
     if (shift === 0) return;
@@ -577,19 +636,29 @@ export function stabilizeMainBranchAnchor(
     group.ids.forEach((id) => {
       nodes[id] = { ...nodes[id], y: nodes[id].y + shift };
     });
+    group.portalAnchorIds.forEach((id) => {
+      const portal = portals?.[id];
+      if (!portal) return;
+      if (portals === next.portals) portals = { ...next.portals };
+      portals![id] = { ...portal, y: portal.y + shift };
+    });
   });
   if (afterRoot.y !== beforeRoot.y) {
     if (nodes === next.nodes) nodes = { ...next.nodes };
     nodes[document.rootId] = { ...afterRoot, y: beforeRoot.y };
   }
-  if (nodes === next.nodes) return next;
+  if (nodes === next.nodes && portals === next.portals) return next;
   let height = 900;
-  Object.values(nodes).forEach((node) => {
+  [
+    ...Object.values(nodes),
+    ...Object.values(portals ?? {}),
+  ].forEach((node) => {
     height = Math.max(height, node.y + node.height + 120);
   });
   return {
     ...next,
     nodes,
+    portals,
     height,
   };
 }
@@ -633,9 +702,16 @@ export function applyDraftWidth(
       x: descendant.x + delta,
     };
   });
+  let portals = layout.portals;
+  Object.entries(layout.portals ?? {}).forEach(([anchorId, portal]) => {
+    if (anchorId !== editingId && !descendantIds.has(anchorId)) return;
+    if (portals === layout.portals) portals = { ...layout.portals };
+    portals![anchorId] = { ...portal, x: portal.x + delta };
+  });
   return {
     ...layout,
     nodes,
+    portals,
     width: Math.max(layout.width, current.x + width + 120),
   };
 }
@@ -672,11 +748,30 @@ export function shareStableLayout(
       allNodesStable = false;
     }
   });
+  let allPortalsStable = true;
+  const portals: Record<string, LayoutNode> = {};
+  const nextPortals = next.portals ?? {};
+  const previousPortals = previous.portals ?? {};
+  const nextPortalIds = Object.keys(nextPortals);
+  if (nextPortalIds.length !== Object.keys(previousPortals).length) {
+    allPortalsStable = false;
+  }
+  nextPortalIds.forEach((id) => {
+    const previousPortal = previousPortals[id];
+    const nextPortal = nextPortals[id];
+    if (previousPortal && sameLayoutNode(previousPortal, nextPortal)) {
+      portals[id] = previousPortal;
+    } else {
+      portals[id] = nextPortal;
+      allPortalsStable = false;
+    }
+  });
   const sameOrder =
     previous.visibleIds.length === next.visibleIds.length &&
     previous.visibleIds.every((id, index) => id === next.visibleIds[index]);
   if (
     allNodesStable &&
+    allPortalsStable &&
     sameOrder &&
     previous.width === next.width &&
     previous.height === next.height
@@ -686,6 +781,7 @@ export function shareStableLayout(
 
   return {
     nodes,
+    portals,
     visibleIds: sameOrder ? previous.visibleIds : next.visibleIds,
     width: next.width,
     height: next.height,

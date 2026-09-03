@@ -122,3 +122,31 @@ export function visibleLayoutNodeIds(
     );
   });
 }
+
+export function visibleLayoutPortalAnchorIds(
+  layout: LayoutResult,
+  viewport: Viewport,
+  viewportSize: ViewportSize,
+  pinnedAnchorId: string | null = null,
+  overscan = viewportOverscan(viewportSize),
+): string[] {
+  const portals = layout.portals ?? {};
+  const ids = Object.keys(portals);
+  if (viewportSize.width <= 0 || viewportSize.height <= 0) return ids;
+
+  const zoom = Math.max(viewport.zoom, 0.01);
+  const left = (-viewport.x - overscan) / zoom;
+  const top = (-viewport.y - overscan) / zoom;
+  const right = (viewportSize.width - viewport.x + overscan) / zoom;
+  const bottom = (viewportSize.height - viewport.y + overscan) / zoom;
+  return ids.filter((anchorId) => {
+    if (anchorId === pinnedAnchorId) return true;
+    const portal = portals[anchorId];
+    return (
+      portal.x + portal.width >= left &&
+      portal.x <= right &&
+      portal.y + portal.height >= top &&
+      portal.y <= bottom
+    );
+  });
+}

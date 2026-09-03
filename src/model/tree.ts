@@ -800,7 +800,10 @@ export function toggleCollapsed(
   id: string,
 ): DocumentMutation {
   const current = document.nodes[id];
-  if (!current || current.children.length === 0) {
+  const hasSubspace = Boolean(
+    current?.subspaceId && document.spaces?.[current.subspaceId],
+  );
+  if (!current || (current.children.length === 0 && !hasSubspace)) {
     return { document, selection: singleSelection(id) };
   }
   const nodes = updateNode(document.nodes, id, {
@@ -852,7 +855,14 @@ export function toggleCollapsedMany(
   selection: SelectionState,
 ): DocumentMutation {
   const branchIds = selection.selectedIds.filter(
-    (id) => document.nodes[id]?.children.length,
+    (id) => {
+      const node = document.nodes[id];
+      return Boolean(
+        node &&
+          (node.children.length > 0 ||
+            (node.subspaceId && document.spaces?.[node.subspaceId])),
+      );
+    },
   );
   if (branchIds.length === 0) return { document, selection };
 
@@ -881,20 +891,24 @@ export function setAllCollapsed(
 ): DocumentMutation {
   const now = new Date().toISOString();
   const nodes = Object.fromEntries(
-    Object.entries(document.nodes).map(([id, current]) => [
-      id,
-      {
-        ...current,
-        collapsed:
-          id === document.rootId || current.children.length === 0
-            ? false
-            : collapsed,
-        updatedAt:
-          current.children.length > 0 && id !== document.rootId
-            ? now
-            : current.updatedAt,
-      },
-    ]),
+    Object.entries(document.nodes).map(([id, current]) => {
+      const collapsible = Boolean(
+        current.children.length > 0 ||
+          (current.subspaceId && document.spaces?.[current.subspaceId]),
+      );
+      return [
+        id,
+        {
+          ...current,
+          collapsed:
+            id === document.rootId || !collapsible ? false : collapsed,
+          updatedAt:
+            collapsible && id !== document.rootId
+              ? now
+              : current.updatedAt,
+        },
+      ];
+    }),
   );
   const nextDocument = withTimestamp(document, nodes);
   const visible = visibleNodeIds(nextDocument);

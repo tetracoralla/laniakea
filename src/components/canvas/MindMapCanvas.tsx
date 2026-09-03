@@ -38,6 +38,7 @@ import {
   shareStableVisibleIds,
   viewportNeedsRenderWindowRefresh,
   visibleLayoutNodeIds,
+  visibleLayoutPortalAnchorIds,
 } from "../../model/viewportCulling";
 import {
   canvasZoomToFit,
@@ -48,6 +49,7 @@ import {
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
 import { SelectionMarquee } from "./SelectionMarquee";
+import { SubspacePortalNode } from "./SubspacePortalNode";
 import { createCanvasTextWidthMeasurer } from "./textMeasure";
 
 export interface CanvasHandle {
@@ -79,6 +81,9 @@ interface MindMapCanvasProps {
     returnFocus: HTMLElement,
   ) => void;
   onOpenSubspace?: (id: string) => void;
+  onMoveSubspace?: (sourceNodeId: string, targetNodeId: string) => void;
+  onSelectSubspace?: (anchorId: string) => void;
+  selectedSubspaceAnchorId?: string | null;
   onAttachNode: (
     ids: readonly string[],
     parentId: string,
@@ -109,6 +114,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onToggle,
       onOpenNodeContextMenu = () => undefined,
       onOpenSubspace = () => undefined,
+      onMoveSubspace = () => undefined,
+      onSelectSubspace = () => undefined,
+      selectedSubspaceAnchorId = null,
       onAttachNode,
       onDetachNode,
       onViewportChange,
@@ -192,6 +200,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         document.floatingRoots,
         document.nodes,
         document.rootId,
+        document.spaces,
         measureTextWidth,
       ],
     );
@@ -432,6 +441,21 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       renderedIdsRef.current = stable;
       return stable;
     }, [containerSize, layout, pinnedIds, renderViewportState]);
+    const renderedPortalAnchorIds = useMemo(
+      () =>
+        visibleLayoutPortalAnchorIds(
+          layout,
+          renderViewportState,
+          containerSize,
+          selectedSubspaceAnchorId,
+        ),
+      [
+        containerSize,
+        layout,
+        renderViewportState,
+        selectedSubspaceAnchorId,
+      ],
+    );
     const handleNodeSelect = useCallback(
       (id: string, additive: boolean) => {
         onSelectionChange(
@@ -500,7 +524,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const focusSelected = () => {
       const bounds = containerRef.current?.getBoundingClientRect();
       const node = selection.primaryId
-        ? layout.nodes[selection.primaryId]
+        ? selectedSubspaceAnchorId === selection.primaryId
+          ? layout.portals?.[selection.primaryId]
+          : layout.nodes[selection.primaryId]
         : null;
       if (!bounds || !node) return;
       const current = liveViewport.current;
@@ -533,7 +559,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           });
         },
       }),
-      [commitViewportImmediately, fit, layout, onZoomPreview, selection.primaryId, viewport],
+      [commitViewportImmediately, fit, layout, onZoomPreview, selectedSubspaceAnchorId, selection.primaryId, viewport],
     );
 
     useLayoutEffect(() => {
@@ -685,6 +711,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           <Connectors
             document={document}
             layout={layout}
+            renderedPortalAnchorIds={renderedPortalAnchorIds}
             renderedIds={renderedIds}
           />
           <svg
@@ -701,10 +728,8 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           </svg>
           {renderedIds.map((id) => {
             const node = document.nodes[id];
-            const selected = selectedIdSet.has(id);
-            const portalSpace = node.subspaceId
-              ? document.spaces?.[node.subspaceId]
-              : undefined;
+            const selected =
+              selectedIdSet.has(id) && selectedSubspaceAnchorId !== id;
             return (
               <MindMapNode
                 draft={draftForNode(id, editingId, draft)}
@@ -721,19 +746,38 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
                 onPasteStructured={onPasteStructured}
                 onSelect={handleNodeSelect}
                 onToggle={onToggle}
-                onOpenSubspace={onOpenSubspace}
-                portalSummary={
-                  portalSpace
-                    ? portalSpace.type === "map"
-                      ? `思维图 · ${Object.keys(portalSpace.nodes).length} 个节点`
-                      : `流程 · ${Object.values(portalSpace.nodes).filter(({ kind }) => kind !== "start" && kind !== "end").length} 步`
-                    : undefined
+                primary={
+                  activeSelection.primaryId === id &&
+                  selectedSubspaceAnchorId !== id
                 }
-                portalFlow={
-                  portalSpace?.type === "flow" ? portalSpace : undefined
-                }
-                primary={activeSelection.primaryId === id}
                 selected={selected}
+              />
+            );
+          })}
+          {renderedPortalAnchorIds.map((anchorId) => {
+            const subspaceId = document.nodes[anchorId]?.subspaceId;
+            const space = subspaceId
+              ? document.spaces?.[subspaceId]
+              : undefined;
+            const portalLayout = layout.portals?.[anchorId];
+            if (!space || !portalLayout) return null;
+            return (
+              <SubspacePortalNode
+                anchorId={anchorId}
+                canMoveTo={(targetId) =>
+                  targetId !== anchorId &&
+                  Boolean(document.nodes[targetId]) &&
+                  !document.nodes[targetId].subspaceId
+                }
+                key={`subspace:${anchorId}`}
+                layout={portalLayout}
+                onMove={onMoveSubspace}
+                onOpen={onOpenSubspace}
+                onOpenContextMenu={onOpenNodeContextMenu}
+                onSelect={onSelectSubspace}
+                selected={selectedSubspaceAnchorId === anchorId}
+                space={space}
+                zoom={document.viewport.zoom}
               />
             );
           })}

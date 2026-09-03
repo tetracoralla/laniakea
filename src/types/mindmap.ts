@@ -116,6 +116,8 @@ export interface LayoutNode {
 
 export interface LayoutResult {
   nodes: Record<string, LayoutNode>;
+  /** Visual proxies for anchored subspaces, keyed by their anchor node id. */
+  portals?: Record<string, LayoutNode>;
   visibleIds: string[];
   width: number;
   height: number;

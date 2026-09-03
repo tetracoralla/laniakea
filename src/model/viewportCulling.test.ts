@@ -5,6 +5,7 @@ import {
   viewportOverscan,
   viewportNeedsRenderWindowRefresh,
   visibleLayoutNodeIds,
+  visibleLayoutPortalAnchorIds,
 } from "./viewportCulling";
 
 function largeLayout(count: number): LayoutResult {
@@ -70,6 +71,38 @@ describe("viewport node culling", () => {
     );
 
     expect(ids).toContain("node-3200");
+  });
+
+  it("culls subspace previews independently and pins the selected preview", () => {
+    const layout = largeLayout(2);
+    layout.portals = {
+      "node-0": {
+        ...layout.nodes["node-0"],
+        id: "subspace:node-0",
+        x: 700,
+      },
+      "node-1": {
+        ...layout.nodes["node-1"],
+        id: "subspace:node-1",
+        x: 9_000,
+      },
+    };
+
+    expect(
+      visibleLayoutPortalAnchorIds(
+        layout,
+        { x: 0, y: 0, zoom: 1 },
+        { width: 1200, height: 900 },
+      ),
+    ).toEqual(["node-0"]);
+    expect(
+      visibleLayoutPortalAnchorIds(
+        layout,
+        { x: 0, y: 0, zoom: 1 },
+        { width: 1200, height: 900 },
+        "node-1",
+      ),
+    ).toEqual(["node-0", "node-1"]);
   });
 
   it("reuses the mounted window for small movements and refreshes before its buffer expires", () => {

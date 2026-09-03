@@ -19,6 +19,7 @@ import {
 import { TopBar } from "./components/chrome/TopBar";
 import type { OverlayMode } from "./components/commands/CommandOverlay";
 import { StatusBar } from "./components/feedback/StatusBar";
+import { DeleteSubspaceDialog } from "./components/overlays/DeleteSubspaceDialog";
 import { restoreFocus } from "./components/overlays/focus";
 import { NodeSpaceMenu } from "./components/spaces/NodeSpaceMenu";
 import { SpacePicker } from "./components/spaces/SpacePicker";
@@ -31,6 +32,8 @@ import {
 } from "./desktop/runtime";
 import { displayGlobalShortcut } from "./desktop/shortcut";
 import { prepareEditableFieldsForLifecycleSave } from "./desktop/prepareForLifecycleSave";
+import { writeTextClipboard } from "./desktop/clipboard";
+import type { CommandId } from "./commands/registry";
 import { useAppNotice } from "./hooks/useAppNotice";
 import { useBrowserStorageNotice } from "./hooks/useBrowserStorageNotice";
 import { useDocumentWorkflow } from "./hooks/useDocumentWorkflow";
@@ -55,9 +58,11 @@ import {
   flowSpaceForNode,
   mapSpaceDocument,
   mergeMapSpaceDocument,
+  moveSubspaceToNode,
   spaceForNode,
   updateFlowSpace,
 } from "./model/spaces";
+import { subspacePreview } from "./model/subspacePreview";
 import {
   selectionForContextTarget,
   singleSelection,
@@ -233,6 +238,12 @@ export function App() {
   const initialEditStarted = useRef(false);
   const [overlay, setOverlay] = useState<OverlayMode | null>(null);
   const [drillDownNodeId, setDrillDownNodeId] = useState<string | null>(null);
+  const [selectedSubspaceAnchorId, setSelectedSubspaceAnchorId] =
+    useState<string | null>(null);
+  const [deleteSubspaceRequest, setDeleteSubspaceRequest] = useState<{
+    nodeId: string;
+    returnFocus: HTMLElement | null;
+  } | null>(null);
   const [nodeSpaceMenu, setNodeSpaceMenu] = useState<{
     nodeId: string;
     targetRect: { left: number; right: number; top: number; bottom: number };
@@ -341,9 +352,20 @@ export function App() {
     setSurface(rootMapSurface);
     setSurfaceStack([]);
     setDrillDownNodeId(null);
+    setSelectedSubspaceAnchorId(null);
+    setDeleteSubspaceRequest(null);
     setNodeSpaceMenu(null);
     drillDownReturnFocusRef.current = null;
   }, [documentSessionId]);
+
+  useEffect(() => {
+    if (
+      selectedSubspaceAnchorId &&
+      !spaceForNode(activeMap, selectedSubspaceAnchorId)
+    ) {
+      setSelectedSubspaceAnchorId(null);
+    }
+  }, [activeMap, selectedSubspaceAnchorId]);
 
   useEffect(() => {
     if (
@@ -504,6 +526,97 @@ export function App() {
     if (space?.type === "flow") enterFlowForNode(nodeId);
   }, [activeMap, enterFlowForNode, enterMapForNode]);
 
+  const selectSubspacePortal = useCallback((nodeId: string) => {
+    if (!spaceForNode(activeMap, nodeId)) return;
+    setEditingId(null);
+    setSelectedSubspaceAnchorId(nodeId);
+    setSelection(singleSelection(nodeId));
+  }, [activeMap, setEditingId, setSelection]);
+
+  const selectMapNodes = useCallback((nextSelection: SelectionState) => {
+    setSelectedSubspaceAnchorId(null);
+    setSelection(nextSelection);
+  }, [setSelection]);
+
+  const moveSubspacePortal = useCallback((
+    sourceNodeId: string,
+    targetNodeId: string,
+  ) => {
+    if (
+      !spaceForNode(activeMap, sourceNodeId) ||
+      !activeMap.nodes[targetNodeId] ||
+      activeMap.nodes[targetNodeId].subspaceId
+    ) {
+      return;
+    }
+    applyActiveMapMutation((current) => ({
+      document: moveSubspaceToNode(
+        current.document,
+        sourceNodeId,
+        targetNodeId,
+      ),
+      selection: singleSelection(targetNodeId),
+    }));
+    setSelectedSubspaceAnchorId(targetNodeId);
+    notify({
+      message: "已移动下层图",
+      actionLabel: "撤销",
+      onAction: undo,
+    });
+  }, [activeMap, applyActiveMapMutation, notify, undo]);
+
+  const requestDeleteSubspace = useCallback((
+    nodeId: string,
+    returnFocus?: HTMLElement | null,
+  ) => {
+    if (!spaceForNode(activeMap, nodeId)) return;
+    const activeElement = document.activeElement;
+    setDeleteSubspaceRequest({
+      nodeId,
+      returnFocus:
+        returnFocus ??
+        (activeElement instanceof HTMLElement && activeElement !== document.body
+          ? activeElement
+          : null),
+    });
+  }, [activeMap]);
+
+  const cancelDeleteSubspace = useCallback(() => {
+    const returnFocus = deleteSubspaceRequest?.returnFocus ?? null;
+    setDeleteSubspaceRequest(null);
+    restoreFocus(returnFocus, () => canvasRef.current?.focusCanvas());
+  }, [deleteSubspaceRequest]);
+
+  const confirmDeleteSubspace = useCallback(() => {
+    if (!deleteSubspaceRequest) return;
+    const { nodeId } = deleteSubspaceRequest;
+    setDeleteSubspaceRequest(null);
+    setSelectedSubspaceAnchorId(null);
+    applyActiveMapMutation((current) => ({
+      document: deleteSubspaceForNode(current.document, nodeId),
+      selection: singleSelection(nodeId),
+    }));
+    notify({
+      message: "已删除下层图",
+      actionLabel: "撤销",
+      onAction: undo,
+    });
+    window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
+  }, [applyActiveMapMutation, deleteSubspaceRequest, notify, undo]);
+
+  const copySubspacePortal = useCallback(async (
+    nodeId: string,
+  ): Promise<boolean> => {
+    const space = spaceForNode(activeMap, nodeId);
+    if (!space) return false;
+    if (!(await writeTextClipboard(subspacePreview(space).text))) {
+      notify({ message: "无法写入系统剪贴板", tone: "error" });
+      return false;
+    }
+    notify({ message: "已复制下层图概要" });
+    return true;
+  }, [activeMap, notify]);
+
   const invokeNodeDrillDown = useCallback((nodeId: string) => {
     if (spaceForNode(activeMap, nodeId)) {
       enterSubspaceForNode(nodeId);
@@ -545,18 +658,11 @@ export function App() {
 
   const deleteFromNodeMenu = useCallback(() => {
     if (!nodeSpaceMenu) return;
-    const { nodeId } = nodeSpaceMenu;
+    const { nodeId, returnFocus } = nodeSpaceMenu;
     setNodeSpaceMenu(null);
-    applyActiveMapMutation((current) => ({
-      document: deleteSubspaceForNode(current.document, nodeId),
-      selection: current.selection,
-    }));
-    notify({
-      message: "已删除下层图",
-      actionLabel: "撤销",
-      onAction: undo,
-    });
-  }, [applyActiveMapMutation, nodeSpaceMenu, notify, undo]);
+    setSelectedSubspaceAnchorId(nodeId);
+    requestDeleteSubspace(nodeId, returnFocus);
+  }, [nodeSpaceMenu, requestDeleteSubspace]);
 
   const navigateBack = useCallback(() => {
     if (surface.kind === "map") finishMindEditForNavigation();
@@ -783,11 +889,83 @@ export function App() {
       redo,
     });
 
+  const executeAppCommand = useCallback((command: CommandId) => {
+    const portalId = selectedSubspaceAnchorId;
+    const portalSelected = Boolean(
+      portalId && spaceForNode(activeMap, portalId),
+    );
+    if (!portalSelected || !portalId) {
+      executeCommand(command);
+      return;
+    }
+
+    switch (command) {
+      case "node.copy":
+        void copySubspacePortal(portalId);
+        return;
+      case "node.cut":
+        void copySubspacePortal(portalId).then((copied) => {
+          if (copied) requestDeleteSubspace(portalId);
+        });
+        return;
+      case "node.delete":
+      case "node.delete-preserve":
+        requestDeleteSubspace(portalId);
+        return;
+      case "node.drill-down":
+        enterSubspaceForNode(portalId);
+        return;
+      case "node.parent":
+      case "selection.clear":
+        setSelectedSubspaceAnchorId(null);
+        if (command === "node.parent") {
+          setSelection(singleSelection(portalId));
+        } else {
+          executeCommand(command);
+        }
+        return;
+      case "selection.select-all":
+        setSelectedSubspaceAnchorId(null);
+        executeCommand(command);
+        return;
+      case "node.create-sibling":
+      case "node.create-above":
+      case "node.create-child":
+      case "node.insert-parent":
+      case "node.outdent":
+      case "node.paste":
+      case "node.move-up":
+      case "node.move-down":
+      case "node.toggle":
+      case "node.child":
+      case "node.previous":
+      case "node.next":
+      case "selection.extend-parent":
+      case "selection.extend-child":
+      case "selection.extend-previous":
+      case "selection.extend-next":
+        notify({ message: "概要节点可进入、拖动、复制或删除" });
+        return;
+      default:
+        executeCommand(command);
+    }
+  }, [
+    activeMap,
+    copySubspacePortal,
+    enterSubspaceForNode,
+    executeCommand,
+    notify,
+    requestDeleteSubspace,
+    selectedSubspaceAnchorId,
+    setSelection,
+  ]);
+
   useKeyboardCommands({
     enabled:
       startupMode !== "loading" &&
       overlay === null &&
       drillDownNodeId === null &&
+      deleteSubspaceRequest === null &&
       nodeSpaceMenu === null &&
       !shortcutSettingsOpen &&
       surface.kind === "map",
@@ -801,11 +979,21 @@ export function App() {
         navigateBack();
         return;
       }
-      executeCommand(command);
+      executeAppCommand(command);
     },
-    onPasteText: pasteText,
+    onPasteText: (value) => {
+      if (selectedSubspaceAnchorId) {
+        notify({ message: "概要节点不能粘贴内容" });
+        return;
+      }
+      pasteText(value);
+    },
     onBeginTyping: (character) => {
-      if (hasSingleSelection && selectedId) {
+      if (
+        !selectedSubspaceAnchorId &&
+        hasSingleSelection &&
+        selectedId
+      ) {
         beginEdit(selectedId, character);
       }
     },
@@ -908,12 +1096,21 @@ export function App() {
             }}
             onAttachNode={attachNodeToParent}
             onDetachNode={detachNodeToCanvas}
+            onMoveSubspace={moveSubspacePortal}
             onOpenNodeContextMenu={openNodeSpaceMenu}
             onOpenSubspace={enterSubspaceForNode}
             onPasteStructured={pasteStructuredIntoBlankRoot}
-            onSelectionChange={setSelection}
-            onSpaceTap={editSelectedFromSpace}
-            onToggle={toggleNode}
+            onSelectSubspace={selectSubspacePortal}
+            onSelectionChange={selectMapNodes}
+            onSpaceTap={() => {
+              if (!selectedSubspaceAnchorId) editSelectedFromSpace();
+            }}
+            onToggle={(id) => {
+              if (selectedSubspaceAnchorId === id) {
+                setSelectedSubspaceAnchorId(null);
+              }
+              toggleNode(id);
+            }}
             onViewportChange={(viewport) => {
               if (!surface.spaceId) {
                 setViewport(viewport);
@@ -924,6 +1121,7 @@ export function App() {
             onZoomPreview={showZoomPreview}
             ref={canvasRef}
             selection={selection}
+            selectedSubspaceAnchorId={selectedSubspaceAnchorId}
           />
 
           <CanvasControls
@@ -1006,7 +1204,7 @@ export function App() {
             key={overlay}
             mode={overlay}
             onClose={closeOverlay}
-            onExecute={executeCommand}
+            onExecute={executeAppCommand}
             onSelectNode={(id, spaceId) => {
             if (spaceId) {
               const space = documentSpaces(mindMap)[spaceId];
@@ -1076,6 +1274,20 @@ export function App() {
           }}
         />
       )}
+
+      {deleteSubspaceRequest && (() => {
+        const space = spaceForNode(activeMap, deleteSubspaceRequest.nodeId);
+        const node = activeMap.nodes[deleteSubspaceRequest.nodeId];
+        if (!space || !node) return null;
+        return (
+          <DeleteSubspaceDialog
+            nodeLabel={node.text}
+            onCancel={cancelDeleteSubspace}
+            onConfirm={confirmDeleteSubspace}
+            typeLabel={space.type === "map" ? "思维图" : "流程"}
+          />
+        );
+      })()}
 
       {shortcutSettingsOpen && (
         <Suspense

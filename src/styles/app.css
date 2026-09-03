@@ -846,20 +846,93 @@
   transform: rotate(180deg);
 }
 
-.mind-node__portal-cluster {
+.subspace-portal {
+  position: absolute;
+  z-index: 2;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  will-change: transform;
+}
+
+.subspace-portal__content {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  align-items: center;
+  padding: 12px 18px;
+  overflow: hidden;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 94%, var(--violet-soft));
+  border: 1px solid color-mix(in srgb, var(--violet) 23%, var(--line));
+  border-radius: var(--radius-node);
+  box-shadow: var(--shadow-hairline);
+  cursor: grab;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-node-leaf);
+  line-height: 1.45;
+  text-align: left;
+}
+
+.subspace-portal:hover .subspace-portal__content,
+.subspace-portal:focus-within .subspace-portal__content {
+  border-color: color-mix(in srgb, var(--violet) 42%, var(--line));
+  box-shadow: var(--shadow-hover);
+}
+
+.subspace-portal.is-selected .subspace-portal__content {
+  border-color: var(--violet);
+  box-shadow: var(--shadow-selection);
+}
+
+.subspace-portal.is-dragging {
+  z-index: 12;
+  cursor: grabbing;
+  opacity: 0.82;
+}
+
+.subspace-portal.is-dragging .subspace-portal__content {
+  cursor: grabbing;
+  box-shadow: var(--shadow-raised);
+}
+
+.mind-node.is-portal-drop-target {
+  z-index: 4;
+}
+
+.mind-node.is-portal-drop-target .mind-node__content {
+  border-color: var(--blue);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--blue) 13%, transparent),
+    var(--shadow-hover);
+}
+
+.subspace-portal__map-summary {
+  display: grid;
+  width: 100%;
+  gap: 1px;
+}
+
+.subspace-portal__map-summary > span,
+.subspace-portal__flow-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subspace-portal__flow-summary {
+  width: 100%;
+  color: color-mix(in srgb, var(--ink) 84%, var(--muted));
+}
+
+.subspace-portal__open {
   position: absolute;
   top: -9px;
   right: -9px;
-  z-index: 3;
-  width: 24px;
-  height: 24px;
-  pointer-events: auto;
-}
-
-.mind-node__portal {
   display: grid;
-  width: 24px;
-  height: 24px;
+  width: 25px;
+  height: 25px;
   padding: 0;
   color: color-mix(in srgb, var(--violet) 82%, var(--ink));
   background: var(--surface);
@@ -867,108 +940,27 @@
   border-radius: var(--radius-8);
   box-shadow: var(--shadow-hairline);
   cursor: pointer;
-  place-items: center;
-}
-
-.mind-node__portal:hover,
-.mind-node__portal:focus-visible {
-  color: white;
-  background: var(--violet);
-}
-
-.flow-portal-preview {
-  position: absolute;
-  right: 0;
-  bottom: 34px;
-  z-index: 4;
-  display: flex;
-  width: 282px;
-  height: 60px;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  visibility: hidden;
-  color: color-mix(in srgb, var(--ink) 78%, var(--muted));
-  background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--violet) 30%, var(--line));
-  border-radius: var(--radius-12);
-  box-shadow: var(--shadow-raised);
-  cursor: pointer;
   opacity: 0;
+  place-items: center;
   pointer-events: none;
-  transform: translateY(3px);
+  transform: scale(0.92);
   transition:
     opacity var(--motion-fast) ease,
-    transform var(--motion-fast) ease,
-    visibility 0s linear var(--motion-fast);
-  white-space: nowrap;
+    transform var(--motion-fast) ease;
 }
 
-.mind-node__portal-cluster:hover .flow-portal-preview,
-.mind-node__portal-cluster:focus-within .flow-portal-preview,
-.mind-node.is-selected .flow-portal-preview {
-  visibility: visible;
+.subspace-portal:hover .subspace-portal__open,
+.subspace-portal:focus-within .subspace-portal__open,
+.subspace-portal.is-selected .subspace-portal__open {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(0);
-  transition-delay: 0s;
+  transform: scale(1);
 }
 
-.flow-portal-preview:hover,
-.flow-portal-preview:focus-visible {
-  color: var(--ink);
-  border-color: color-mix(in srgb, var(--violet) 42%, var(--line));
-  box-shadow: var(--shadow-raised);
-}
-
-.flow-portal-preview__topology {
-  flex: none;
-  overflow: visible;
-}
-
-.flow-portal-preview__edge {
-  fill: none;
-  stroke: color-mix(in srgb, var(--violet) 38%, var(--muted-soft));
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.2;
-}
-
-.flow-portal-preview__node {
-  fill: color-mix(in srgb, var(--surface) 72%, var(--violet-soft));
-  stroke: color-mix(in srgb, var(--violet) 56%, var(--muted-soft));
-  stroke-width: 1;
-}
-
-.flow-portal-preview__node.is-decision {
-  fill: color-mix(in srgb, var(--surface) 58%, var(--violet-soft));
-}
-
-.flow-portal-preview__summary {
-  display: grid;
-  min-width: 0;
-  flex: 1;
-  gap: 3px;
-  text-align: left;
-}
-
-.flow-portal-preview__summary strong,
-.flow-portal-preview__summary span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.flow-portal-preview__summary strong {
-  color: var(--ink);
-  font-size: var(--fs-12);
-  font-weight: var(--fw-ui-strong);
-}
-
-.flow-portal-preview__summary span {
-  color: var(--muted);
-  font-size: var(--fs-10);
-  font-weight: var(--fw-ui-medium);
+.subspace-portal__open:hover,
+.subspace-portal__open:focus-visible {
+  color: white;
+  background: var(--violet);
 }
 
 .flow-canvas {
@@ -1904,6 +1896,63 @@
   padding-top: 92px;
   background: var(--veil-light);
   backdrop-filter: var(--blur-light);
+}
+
+.delete-subspace-backdrop {
+  position: absolute;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  background: var(--veil-strong);
+  backdrop-filter: var(--blur-strong);
+  place-items: center;
+}
+
+.delete-subspace-dialog {
+  width: min(392px, calc(100vw - 40px));
+  padding: 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-16);
+  box-shadow: var(--shadow-overlay);
+}
+
+.delete-subspace-dialog h2 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--fs-17);
+  font-weight: var(--fw-heading);
+}
+
+.delete-subspace-dialog p {
+  margin: 9px 0 20px;
+  color: var(--muted);
+  font-size: var(--fs-13);
+  line-height: 1.6;
+}
+
+.delete-subspace-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.delete-subspace-dialog__actions button {
+  height: 36px;
+  padding: 0 14px;
+  color: var(--ink);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-8);
+  cursor: pointer;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-ui-strong);
+}
+
+.delete-subspace-dialog__actions .delete-subspace-dialog__confirm {
+  color: white;
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 .command-overlay {

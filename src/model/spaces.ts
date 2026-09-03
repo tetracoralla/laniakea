@@ -350,6 +350,36 @@ export function deleteSubspaceForNode(
   };
 }
 
+export function moveSubspaceToNode(
+  document: MindMapDocument,
+  sourceNodeId: string,
+  targetNodeId: string,
+): MindMapDocument {
+  if (sourceNodeId === targetNodeId) return document;
+  const source = document.nodes[sourceNodeId];
+  const target = document.nodes[targetNodeId];
+  const spaceId = source?.subspaceId;
+  const space = spaceId ? documentSpaces(document)[spaceId] : undefined;
+  if (!source || !target || !spaceId || !space || target.subspaceId) {
+    return document;
+  }
+  const now = new Date().toISOString();
+  const { subspaceId: _removedSubspaceId, ...sourceWithoutSubspace } = source;
+  return {
+    ...document,
+    nodes: {
+      ...document.nodes,
+      [sourceNodeId]: { ...sourceWithoutSubspace, updatedAt: now },
+      [targetNodeId]: { ...target, subspaceId: spaceId, updatedAt: now },
+    },
+    spaces: {
+      ...documentSpaces(document),
+      [spaceId]: { ...space, anchorNodeId: targetNodeId, updatedAt: now },
+    },
+    updatedAt: now,
+  };
+}
+
 export function updateFlowSpace(
   document: MindMapDocument,
   space: FlowSpace,

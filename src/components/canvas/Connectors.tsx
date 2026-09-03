@@ -9,6 +9,7 @@ import type {
 interface ConnectorsProps {
   document: MindMapDocument;
   layout: LayoutResult;
+  renderedPortalAnchorIds?: readonly string[];
   renderedIds: readonly string[];
 }
 
@@ -30,6 +31,7 @@ const ConnectorPath = memo(function ConnectorPath({
 export const Connectors = memo(function Connectors({
   document,
   layout,
+  renderedPortalAnchorIds = [],
   renderedIds,
 }: ConnectorsProps) {
   return (
@@ -51,6 +53,18 @@ export const Connectors = memo(function Connectors({
             child={childLayout}
             key={`${child.parentId}-${id}`}
             parent={parentLayout}
+          />
+        );
+      })}
+      {renderedPortalAnchorIds.map((anchorId) => {
+        const parent = layout.nodes[anchorId];
+        const portal = layout.portals?.[anchorId];
+        if (!parent || !portal) return null;
+        return (
+          <ConnectorPath
+            child={portal}
+            key={`${anchorId}-subspace`}
+            parent={parent}
           />
         );
       })}

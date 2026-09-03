@@ -8,6 +8,7 @@ import {
   sizeForNode,
   stabilizeMainBranchAnchor,
 } from "./layout";
+import { createMapSpace, mapSpaceForNode } from "./spaces";
 
 function largeDocument(count: number): MindMapDocument {
   const now = "2026-07-23T00:00:00.000Z";
@@ -61,6 +62,63 @@ function deepDocument(count: number): MindMapDocument {
 }
 
 describe("automatic layout", () => {
+  it("lays out a subspace preview as a real visual child without overlapping siblings", () => {
+    const created = createMapSpace(largeDocument(3), "node-1");
+    const space = mapSpaceForNode(created.document, "node-1")!;
+    const child: MindNode = {
+      id: "map-child",
+      text: "下层主题",
+      parentId: space.rootId,
+      children: [],
+      collapsed: false,
+      createdAt: space.updatedAt,
+      updatedAt: space.updatedAt,
+    };
+    const document = {
+      ...created.document,
+      spaces: {
+        ...created.document.spaces,
+        [space.id]: {
+          ...space,
+          nodes: {
+            ...space.nodes,
+            [space.rootId]: {
+              ...space.nodes[space.rootId],
+              children: [child.id],
+            },
+            [child.id]: child,
+          },
+        },
+      },
+    };
+
+    const layout = computeLayout(document);
+    const portal = layout.portals?.["node-1"];
+
+    expect(portal).toBeDefined();
+    expect(portal!.x).toBeGreaterThan(
+      layout.nodes["node-1"].x + layout.nodes["node-1"].width,
+    );
+    expect(portal!.y + portal!.height).toBeLessThanOrEqual(
+      layout.nodes["node-2"].y,
+    );
+  });
+
+  it("hides the subspace preview with its collapsed anchor branch", () => {
+    const created = createMapSpace(largeDocument(2), "node-1");
+    const expanded = computeLayout(created.document);
+    const collapsed = computeLayout({
+      ...created.document,
+      nodes: {
+        ...created.document.nodes,
+        "node-1": { ...created.document.nodes["node-1"], collapsed: true },
+      },
+    });
+
+    expect(expanded.portals?.["node-1"]).toBeDefined();
+    expect(collapsed.portals?.["node-1"]).toBeUndefined();
+  });
+
   it("lays out all visible nodes with increasing depth coordinates", () => {
     const layout = computeLayout(largeDocument(20));
     expect(layout.visibleIds).toHaveLength(20);

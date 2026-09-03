@@ -9,13 +9,12 @@ import {
   isMarkdownThematicBreak,
   nodePlaceholder,
 } from "../../model/canvasRender";
-import type { FlowSpace, LayoutNode, MindNode } from "../../types/mindmap";
+import type { LayoutNode, MindNode } from "../../types/mindmap";
 import {
   isInputMethodKey,
   markInputMethodComposition,
 } from "../../model/inputMethod";
 import { Icon } from "../icons/Icon";
-import { FlowPortalPreview } from "./FlowPortalPreview";
 
 interface MindMapNodeProps {
   node: MindNode;
@@ -36,9 +35,6 @@ interface MindMapNodeProps {
     targetRect: { left: number; right: number; top: number; bottom: number },
     returnFocus: HTMLElement,
   ) => void;
-  onOpenSubspace?: (id: string) => void;
-  portalSummary?: string;
-  portalFlow?: FlowSpace;
   onDragPointerDown: PointerEventHandler<HTMLDivElement>;
 }
 
@@ -57,9 +53,6 @@ export const MindMapNode = memo(function MindMapNode({
   onCancelEdit,
   onToggle,
   onOpenContextMenu = () => undefined,
-  onOpenSubspace = () => undefined,
-  portalSummary,
-  portalFlow,
   onDragPointerDown,
 }: MindMapNodeProps) {
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -276,7 +269,7 @@ export const MindMapNode = memo(function MindMapNode({
           )}
         </button>
       )}
-      {node.children.length > 0 && (
+      {(node.children.length > 0 || node.subspaceId) && (
         <button
           aria-label={node.collapsed ? "展开分支" : "折叠分支"}
           className={`mind-node__disclosure ${node.collapsed ? "is-collapsed" : ""}`}
@@ -288,29 +281,6 @@ export const MindMapNode = memo(function MindMapNode({
         >
           <Icon name="chevron" size={13} />
         </button>
-      )}
-      {node.subspaceId && (
-        <div className="mind-node__portal-cluster">
-          <button
-            aria-label={`进入${portalSummary ?? "下层图"}`}
-            className="mind-node__portal"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenSubspace(node.id);
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-            title={portalSummary ?? "进入下层图"}
-            type="button"
-          >
-            <Icon name="layers" size={14} />
-          </button>
-          {portalFlow && (
-            <FlowPortalPreview
-              onOpen={() => onOpenSubspace(node.id)}
-              space={portalFlow}
-            />
-          )}
-        </div>
       )}
     </div>
   );

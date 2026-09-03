@@ -89,10 +89,13 @@ describe("node editor styles", () => {
     expect(appStyles).not.toContain('content: "松手设为上级";');
   });
 
-  it("keeps the portal as a non-sizing corner marker", () => {
-    expect(appStyles).toContain(".mind-node__portal {");
-    expect(appStyles).toContain("  top: -9px;");
-    expect(appStyles).not.toContain(":has(.mind-node__portal) .mind-node__content");
+  it("keeps the subspace preview as a separate node with a hover entry badge", () => {
+    expect(appStyles).toContain(".subspace-portal {");
+    expect(appStyles).toContain("  pointer-events: auto;");
+    expect(appStyles).toContain(".subspace-portal__open {");
+    expect(appStyles).toContain("  opacity: 0;");
+    expect(appStyles).toContain(".subspace-portal:hover .subspace-portal__open,");
+    expect(appStyles).not.toContain(".mind-node__portal {");
   });
 
   it("draws the decision outline separately from its text surface", () => {

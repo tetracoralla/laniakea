@@ -14,10 +14,12 @@ import {
   deleteSubspaceForNode,
   deleteFlowEdge,
   deleteFlowNode,
+  documentSpaces,
   flowSpaceForNode,
   mapSpaceDocument,
   mapSpaceForNode,
   mergeMapSpaceDocument,
+  moveSubspaceToNode,
   positionFlowNode,
   preserveDocumentViewports,
   reconnectFlowEdge,
@@ -89,6 +91,25 @@ describe("typed Laniakea spaces", () => {
     expect(deleted.nodes.path.subspaceId).toBeUndefined();
     expect(Object.keys(deleted.spaces ?? {})).toHaveLength(0);
     expect(isMindMapDocument(deleted)).toBe(true);
+  });
+
+  it("moves one complete space proxy to an unoccupied map node", () => {
+    const created = createMapSpace(createSeedDocument(), "path");
+    const moved = moveSubspaceToNode(created.document, "path", "boundary");
+    const space = documentSpaces(moved)[created.spaceId];
+
+    expect(moved.nodes.path.subspaceId).toBeUndefined();
+    expect(moved.nodes.boundary.subspaceId).toBe(created.spaceId);
+    expect(space.anchorNodeId).toBe("boundary");
+    expect(mapSpaceForNode(moved, "boundary")?.id).toBe(created.spaceId);
+  });
+
+  it("does not overwrite a target node that already owns a space", () => {
+    const first = createMapSpace(createSeedDocument(), "path");
+    const second = createFlowSpace(first.document, "boundary");
+
+    expect(moveSubspaceToNode(second.document, "path", "boundary"))
+      .toBe(second.document);
   });
 
   it("keeps keyboard next and branch operations semantic before manual placement", () => {

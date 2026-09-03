@@ -20,8 +20,10 @@ import {
   pasteSubtrees,
   revealNode,
   setNodeText,
+  toggleCollapsed,
   toggleCollapsedMany,
 } from "./tree";
+import { createMapSpace } from "./spaces";
 
 function deepDocument(count: number) {
   const document = createBlankDocument();
@@ -423,6 +425,14 @@ describe("tree mutations", () => {
 
     expect(result.document.nodes.experience.collapsed).toBe(true);
     expect(result.selection).toEqual(singleSelection("experience"));
+  });
+
+  it("collapses a node whose only visible child is its subspace preview", () => {
+    const created = createMapSpace(createSeedDocument(), "path-1");
+    const result = toggleCollapsed(created.document, "path-1");
+
+    expect(result.document.nodes["path-1"].collapsed).toBe(true);
+    expect(result.selection).toEqual(singleSelection("path-1"));
   });
 
   it("detaches and reattaches selected roots as one ordered group", () => {

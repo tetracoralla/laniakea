@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../../App";
 import { canvasContentBounds, computeLayout } from "../../model/layout";
+import { createMapSpace } from "../../model/spaces";
 import { createSelection, singleSelection } from "../../model/selection";
 import { canvasZoomToFit, minCanvasZoom } from "../../model/zoom";
 import type {
@@ -450,6 +451,114 @@ describe("rendered interaction regressions", () => {
       expect.any(HTMLElement),
     );
     expect(onSelectionChange).not.toHaveBeenCalled();
+  });
+
+  it("renders an anchored subspace as a separate selectable child instead of a parent badge", async () => {
+    const mindMap = createMapSpace(largeDocument(2), "node-1").document;
+    const onOpenSubspace = vi.fn();
+    const onSelectSubspace = vi.fn();
+    await act(async () => {
+      root.render(
+        <MindMapCanvas
+          document={mindMap}
+          draft=""
+          editingId={null}
+          onAttachNode={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={() => undefined}
+          onDetachNode={() => undefined}
+          onDraftChange={() => undefined}
+          onOpenSubspace={onOpenSubspace}
+          onPasteStructured={() => false}
+          onSelectSubspace={onSelectSubspace}
+          onSelectionChange={() => undefined}
+          onSpaceTap={() => undefined}
+          onToggle={() => undefined}
+          onViewportChange={() => undefined}
+          selection={singleSelection("node-1")}
+          selectedSubspaceAnchorId="node-1"
+        />,
+      );
+    });
+
+    const parent = container.querySelector<HTMLElement>(
+      ".mind-node[data-node-id='node-1']",
+    )!;
+    const portal = container.querySelector<HTMLElement>(
+      ".subspace-portal[data-subspace-anchor-id='node-1']",
+    )!;
+    expect(parent.querySelector(".mind-node__portal")).toBeNull();
+    expect(parent.classList.contains("is-selected")).toBe(false);
+    expect(portal.classList.contains("is-selected")).toBe(true);
+    expect(portal.textContent).toContain("暂无下级节点");
+    expect(
+      container.querySelectorAll(".connectors .connector"),
+    ).toHaveLength(2);
+
+    await act(async () =>
+      portal
+        .querySelector<HTMLButtonElement>(".subspace-portal__content")!
+        .click(),
+    );
+    expect(onSelectSubspace).toHaveBeenCalledWith("node-1");
+  });
+
+  it("keeps a selected subspace intact until its delete dialog is confirmed", async () => {
+    const mindMap = createMapSpace(largeDocument(2), "node-1").document;
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    let portal = container.querySelector<HTMLElement>(
+      ".subspace-portal[data-subspace-anchor-id='node-1']",
+    )!;
+    expect(portal).not.toBeNull();
+    const summary = portal.querySelector<HTMLButtonElement>(
+      ".subspace-portal__content",
+    )!;
+    await act(async () => summary.click());
+    await act(async () =>
+      summary.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Backspace" }),
+      ),
+    );
+
+    expect(container.querySelector("[role='dialog']")?.textContent)
+      .toContain("原节点会保留");
+    expect(container.querySelector(".subspace-portal")).not.toBeNull();
+    await act(async () =>
+      [...container.querySelectorAll<HTMLButtonElement>("[role='dialog'] button")]
+        .find((button) => button.textContent === "取消")!
+        .click(),
+    );
+    expect(container.querySelector("[role='dialog']")).toBeNull();
+    expect(container.querySelector(".subspace-portal")).not.toBeNull();
+
+    portal = container.querySelector<HTMLElement>(".subspace-portal")!;
+    const selectedSummary = portal.querySelector<HTMLButtonElement>(
+      ".subspace-portal__content",
+    )!;
+    await act(async () =>
+      selectedSummary.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Backspace" }),
+      ),
+    );
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(".delete-subspace-dialog__confirm")!
+        .click(),
+    );
+
+    expect(container.querySelector(".subspace-portal")).toBeNull();
+    expect(container.querySelector("[data-node-id='node-1']")).not.toBeNull();
   });
 
   it("exits editing but keeps selection when the page becomes hidden", async () => {
