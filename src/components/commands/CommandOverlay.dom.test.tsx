@@ -125,6 +125,29 @@ describe("CommandOverlay result limits", () => {
     expect(events).toEqual(["close", "execute:map.search"]);
   });
 
+  it("shows only commands supported by the selected interaction target", async () => {
+    await act(async () => {
+      root.render(
+        <CommandOverlay
+          commandTarget="subspace-portal"
+          document={createSeedDocument()}
+          mode="commands"
+          onClose={() => undefined}
+          onExecute={() => undefined}
+          onSelectNode={() => undefined}
+        />,
+      );
+    });
+    const labels = [
+      ...container.querySelectorAll<HTMLButtonElement>("[role='option']"),
+    ].map((item) => item.textContent);
+
+    expect(labels.some((label) => label?.includes("进入下层图"))).toBe(true);
+    expect(labels.some((label) => label?.includes("删除下层图"))).toBe(true);
+    expect(labels.some((label) => label?.includes("创建子节点"))).toBe(false);
+    expect(labels.some((label) => label?.includes("创建父节点"))).toBe(false);
+  });
+
   it("starts a replacement overlay with an empty query", async () => {
     const document = createSeedDocument();
     const render = (mode: "commands" | "search") => (

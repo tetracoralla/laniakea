@@ -1,12 +1,16 @@
 import {
   memo,
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { subspacePreview } from "../../model/subspacePreview";
+import { passedDragThreshold } from "../../model/marquee";
+import {
+  releaseOwnedPointerCapture,
+  useDragInterruption,
+} from "../../hooks/useDragInterruption";
 import type { LaniakeaSpace, LayoutNode } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
 
@@ -33,6 +37,7 @@ interface PortalDragState {
   startX: number;
   startY: number;
   targetId: string | null;
+  captureElement: HTMLElement;
 }
 
 const dragThreshold = 5;
@@ -62,7 +67,11 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
 
   const resetDrag = useCallback(() => {
     clearDropTarget();
+    const drag = dragRef.current;
     dragRef.current = null;
+    if (drag) {
+      releaseOwnedPointerCapture(drag.captureElement, drag.pointerId);
+    }
     const container = containerRef.current;
     if (!container) return;
     container.classList.remove("is-dragging");
@@ -70,27 +79,10 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
     container.style.removeProperty("pointer-events");
   }, [clearDropTarget]);
 
-  useEffect(() => {
-    const cancel = () => resetDrag();
-    const cancelOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !dragRef.current) return;
-      event.preventDefault();
-      event.stopPropagation();
-      resetDrag();
-    };
-    const cancelWhenHidden = () => {
-      if (document.visibilityState !== "visible") resetDrag();
-    };
-    window.addEventListener("blur", cancel);
-    window.addEventListener("keydown", cancelOnEscape, true);
-    document.addEventListener("visibilitychange", cancelWhenHidden);
-    return () => {
-      window.removeEventListener("blur", cancel);
-      window.removeEventListener("keydown", cancelOnEscape, true);
-      document.removeEventListener("visibilitychange", cancelWhenHidden);
-      resetDrag();
-    };
-  }, [resetDrag]);
+  useDragInterruption({
+    hasActiveDrag: () => Boolean(dragRef.current),
+    onCancel: resetDrag,
+  });
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
@@ -102,6 +94,7 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
       startX: event.clientX,
       startY: event.clientY,
       targetId: null,
+      captureElement: event.currentTarget,
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
@@ -112,7 +105,16 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
     event.stopPropagation();
     const deltaX = event.clientX - drag.startX;
     const deltaY = event.clientY - drag.startY;
-    if (!drag.dragged && Math.hypot(deltaX, deltaY) < dragThreshold) return;
+    if (
+      !drag.dragged &&
+      !passedDragThreshold(
+        { x: drag.startX, y: drag.startY },
+        { x: event.clientX, y: event.clientY },
+        dragThreshold,
+      )
+    ) {
+      return;
+    }
     drag.dragged = true;
     suppressClickRef.current = true;
     const container = containerRef.current;

@@ -1,7 +1,6 @@
 import {
   startTransition,
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -30,6 +29,10 @@ import {
   normalizeSelectedRoots,
   selectionEquals,
 } from "../model/selection";
+import {
+  releaseOwnedPointerCapture,
+  useDragInterruption,
+} from "./useDragInterruption";
 
 export type NodeDropIntent = "attach" | "detach" | "retain";
 
@@ -532,11 +535,8 @@ export function useNodeDrag({
   const clearGesture = useCallback((suppressClick = false) => {
     const gesture = gestureRef.current;
     gestureRef.current = null;
-    if (
-      gesture &&
-      gesture.captureElement.hasPointerCapture(gesture.pointerId)
-    ) {
-      gesture.captureElement.releasePointerCapture(gesture.pointerId);
+    if (gesture) {
+      releaseOwnedPointerCapture(gesture.captureElement, gesture.pointerId);
     }
     if (suppressClick && gesture?.moved) {
       suppressNextClick.current = true;
@@ -594,36 +594,10 @@ export function useNodeDrag({
     }
   }, [announcementRef, clearGesture, document, editingId, selection]);
 
-  useEffect(() => {
-    const cancelForInterruption = () => clearGesture(true);
-    const handleVisibilityChange = () => {
-      if (globalThis.document.visibilityState === "hidden") {
-        cancelForInterruption();
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !gestureRef.current) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      cancelForInterruption();
-    };
-
-    globalThis.window.addEventListener("blur", cancelForInterruption);
-    globalThis.window.addEventListener("keydown", handleKeyDown, true);
-    globalThis.document.addEventListener(
-      "visibilitychange",
-      handleVisibilityChange,
-    );
-    return () => {
-      globalThis.window.removeEventListener("blur", cancelForInterruption);
-      globalThis.window.removeEventListener("keydown", handleKeyDown, true);
-      globalThis.document.removeEventListener(
-        "visibilitychange",
-        handleVisibilityChange,
-      );
-      clearGesture();
-    };
-  }, [clearGesture]);
+  useDragInterruption({
+    hasActiveDrag: () => Boolean(gestureRef.current),
+    onCancel: () => clearGesture(true),
+  });
 
   const beginNodeDrag: PointerEventHandler<HTMLDivElement> = useCallback(
     (event) => {

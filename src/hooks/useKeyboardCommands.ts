@@ -3,11 +3,13 @@ import {
   findCommandForEvent,
   isPrintableKey,
   type CommandId,
+  type CommandTarget,
 } from "../commands/registry";
 
 interface KeyboardCommandOptions {
   enabled: boolean;
   selectionEnabled: boolean;
+  commandTarget?: CommandTarget;
   onCommand: (id: CommandId) => void;
   onBeginTyping: (character: string) => void;
   onPasteText: (value: string) => void;
@@ -62,6 +64,7 @@ export function isCanvasCommandTarget(target: EventTarget | null): boolean {
 export function useKeyboardCommands({
   enabled,
   selectionEnabled,
+  commandTarget = "mind-node",
   onCommand,
   onBeginTyping,
   onPasteText,
@@ -105,7 +108,7 @@ export function useKeyboardCommands({
         return;
       }
 
-      const command = findCommandForEvent(event, "selection");
+      const command = findCommandForEvent(event, "selection", commandTarget);
       if (command) {
         if (command.id === "node.paste") {
           // Keep the platform paste gesture native. Its ClipboardEvent carries
@@ -139,7 +142,7 @@ export function useKeyboardCommands({
       if (!value.trim()) return;
       event.preventDefault();
       window.getSelection()?.removeAllRanges();
-      onPasteTextRef.current(value);
+      if (commandTarget === "mind-node") onPasteTextRef.current(value);
     };
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
@@ -152,5 +155,5 @@ export function useKeyboardCommands({
         capture: true,
       });
     };
-  }, [enabled, selectionEnabled]);
+  }, [commandTarget, enabled, selectionEnabled]);
 }

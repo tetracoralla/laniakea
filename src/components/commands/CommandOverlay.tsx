@@ -6,9 +6,11 @@ import {
   useState,
 } from "react";
 import {
+  commandSupportsTarget,
   commandRegistry,
   type CommandDefinition,
   type CommandId,
+  type CommandTarget,
 } from "../../commands/registry";
 import type { MindMapDocument } from "../../types/mindmap";
 import { findMindNode } from "../../model/spaces";
@@ -21,6 +23,7 @@ export type OverlayMode = "commands" | "search";
 interface CommandOverlayProps {
   mode: OverlayMode;
   document: MindMapDocument;
+  commandTarget?: CommandTarget;
   onClose: () => void;
   onExecute: (id: CommandId) => void;
   onSelectNode: (id: string, spaceId?: string) => void;
@@ -56,6 +59,7 @@ export function moveOverlayIndex(
 export function CommandOverlay({
   mode,
   document,
+  commandTarget = "mind-node",
   onClose,
   onExecute,
   onSelectNode,
@@ -123,6 +127,7 @@ export function CommandOverlay({
     const normalized = query.trim().toLocaleLowerCase();
     if (mode === "commands") {
       const matches = commandRegistry
+        .filter((command) => commandSupportsTarget(command, commandTarget))
         .filter(
           (command) =>
             !normalized ||
@@ -150,7 +155,7 @@ export function CommandOverlay({
       if (items.length < overlayItemLimit) items.push(entry);
     });
     return { items, total };
-  }, [mode, query, searchEntries]);
+  }, [commandTarget, mode, query, searchEntries]);
   const renderedItems = result.items;
 
   useEffect(() => {

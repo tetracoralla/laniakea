@@ -11,6 +11,7 @@ import {
   type SurfaceRestorePoint,
 } from "../../App";
 import { canvasContentBounds, computeLayout } from "../../model/layout";
+import { mindNodeInteractionTarget } from "../../model/canvasInteraction";
 import { createMapSpace } from "../../model/spaces";
 import { createSelection, singleSelection } from "../../model/selection";
 import { canvasZoomToFit, minCanvasZoom } from "../../model/zoom";
@@ -20,6 +21,7 @@ import type {
   Viewport,
 } from "../../types/mindmap";
 import { TopBar } from "../chrome/TopBar";
+import "../commands/CommandOverlay";
 import { MindMapCanvas, type CanvasHandle } from "./MindMapCanvas";
 
 const now = "2026-07-28T00:00:00.000Z";
@@ -499,6 +501,7 @@ describe("rendered interaction regressions", () => {
         top: expect.any(Number),
       }),
       expect.any(HTMLElement),
+      "mind-node",
     );
     expect(onSelectionChange).not.toHaveBeenCalled();
   });
@@ -632,7 +635,11 @@ describe("rendered interaction regressions", () => {
           onToggle={() => undefined}
           onViewportChange={() => undefined}
           selection={singleSelection("node-1")}
-          selectedSubspaceAnchorId="node-1"
+          interactionTarget={{
+            kind: "subspace-portal",
+            anchorNodeId: "node-1",
+            spaceId: mindMap.nodes["node-1"].subspaceId!,
+          }}
         />,
       );
     });
@@ -714,6 +721,213 @@ describe("rendered interaction regressions", () => {
 
     expect(container.querySelector(".subspace-portal")).toBeNull();
     expect(container.querySelector("[data-node-id='node-1']")).not.toBeNull();
+  });
+
+  it("routes portal shortcuts through portal capabilities without creating map structure", async () => {
+    const mindMap = createMapSpace(largeDocument(2), "node-1").document;
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    const summary = container.querySelector<HTMLButtonElement>(
+      ".subspace-portal__content",
+    )!;
+    await act(async () => summary.click());
+    const initialNodeCount = container.querySelectorAll(".mind-node").length;
+
+    await act(async () => {
+      summary.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Tab" }),
+      );
+      summary.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "Enter",
+          metaKey: true,
+        }),
+      );
+    });
+    expect(container.querySelectorAll(".mind-node")).toHaveLength(
+      initialNodeCount,
+    );
+    expect(container.querySelector(".mind-node__editor")).toBeNull();
+    expect(container.querySelector(".subspace-portal")).not.toBeNull();
+
+    await act(async () => {
+      summary.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector("button[aria-label='返回上层图']"),
+    ).not.toBeNull();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>("button[aria-label='返回上层图']")!
+        .click();
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+    expect(
+      container.querySelector(".subspace-portal.is-selected"),
+    ).not.toBeNull();
+  });
+
+  it("switches from a portal to the normal node targeted by its context menu", async () => {
+    const mindMap = createMapSpace(largeDocument(3), "node-1").document;
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(".subspace-portal__content")!
+        .click(),
+    );
+    expect(container.querySelector(".subspace-portal.is-selected"))
+      .not.toBeNull();
+
+    await act(async () => {
+      container.querySelector<HTMLElement>("[data-node-id='node-2']")!
+        .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    });
+
+    expect(container.querySelector(".subspace-portal.is-selected")).toBeNull();
+    expect(container.querySelector("[data-node-id='node-2'].is-primary"))
+      .not.toBeNull();
+    expect(container.querySelector(".node-space-menu")).not.toBeNull();
+  });
+
+  it("switches from a portal to the normal node chosen from search", async () => {
+    const mindMap = createMapSpace(largeDocument(2), "node-1").document;
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    const summary = container.querySelector<HTMLButtonElement>(
+      ".subspace-portal__content",
+    )!;
+    await act(async () => summary.click());
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button[aria-label='搜索']")!
+        .click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("input[aria-label='搜索内容']"))
+      .not.toBeNull();
+
+    const search = container.querySelector<HTMLInputElement>(
+      "input[aria-label='搜索内容']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(search, "大图性能样本");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const rootResult = [
+      ...container.querySelectorAll<HTMLButtonElement>("[role='option']"),
+    ].find((option) => option.textContent?.includes("大图性能样本"))!;
+    await act(async () => rootResult.click());
+
+    expect(container.querySelector(".subspace-portal.is-selected")).toBeNull();
+    expect(container.querySelector(".mind-node--root.is-primary"))
+      .not.toBeNull();
+  });
+
+  it("reveals the new portal once when returning from a newly created space", async () => {
+    const mindMap = largeDocument(2);
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    const anchor = container.querySelector<HTMLButtonElement>(
+      "[data-node-id='node-1'] .mind-node__content",
+    )!;
+    await act(async () => anchor.click());
+    await act(async () => {
+      anchor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "F10",
+          shiftKey: true,
+        }),
+      );
+    });
+    await act(async () => {
+      [...container.querySelectorAll<HTMLButtonElement>("[role='dialog'] button")]
+        .find((button) => button.textContent === "创建思维图")!
+        .click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>("button[aria-label='返回上层图']")!
+        .click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    const portal = container.querySelector<HTMLElement>(
+      ".subspace-portal.is-selected",
+    )!;
+    const content = container.querySelector<HTMLElement>(
+      ".mindmap-canvas__content",
+    )!;
+    const transform = content.style.transform.match(
+      /translate3d\(([-\d.]+)px, ([-\d.]+)px, 0\) scale\(([-\d.]+)\)/,
+    );
+    expect(portal).not.toBeNull();
+    expect(transform).not.toBeNull();
+    const translateX = Number(transform?.[1]);
+    const zoom = Number(transform?.[3]);
+    const rootNode = container.querySelector<HTMLElement>(".mind-node--root")!;
+    const rootLeft = Number.parseFloat(rootNode.style.left) * zoom + translateX;
+    const portalRight =
+      (Number.parseFloat(portal.style.left) +
+        Number.parseFloat(portal.style.width)) * zoom +
+      translateX;
+    expect(rootLeft).toBeGreaterThanOrEqual(24);
+    expect(portalRight).toBeLessThanOrEqual(1176);
   });
 
   it("exits editing but keeps selection when the page becomes hidden", async () => {
@@ -2809,6 +3023,8 @@ describe("surface invalidation after undo", () => {
     const outer: SurfaceRestorePoint = {
       surface: { kind: "map", spaceId: "space-outer" },
       selection: singleSelection("outer-node"),
+      interactionTarget: mindNodeInteractionTarget,
+      fitContentOnRestore: false,
     };
     const middle: SurfaceRestorePoint = {
       surface: {
@@ -2821,6 +3037,12 @@ describe("surface invalidation after undo", () => {
         initialSelectedId: null,
       },
       selection: singleSelection("middle-node"),
+      interactionTarget: {
+        kind: "subspace-portal",
+        anchorNodeId: "middle-node",
+        spaceId: "child-space",
+      },
+      fitContentOnRestore: true,
     };
     const result = resolveSurfaceAfterInvalidation(
       { kind: "map", spaceId: "space-inner" },
@@ -2830,6 +3052,8 @@ describe("surface invalidation after undo", () => {
     expect(result).not.toBeNull();
     expect(result?.surface).toEqual(middle.surface);
     expect(result?.restoreSelection).toEqual(singleSelection("middle-node"));
+    expect(result?.restoreInteractionTarget).toEqual(middle.interactionTarget);
+    expect(result?.fitContentOnRestore).toBe(true);
     expect(result?.surfaceStack).toEqual([outer]);
   });
 
@@ -2837,10 +3061,14 @@ describe("surface invalidation after undo", () => {
     const outer: SurfaceRestorePoint = {
       surface: { kind: "map", spaceId: "space-outer" },
       selection: singleSelection("outer-node"),
+      interactionTarget: mindNodeInteractionTarget,
+      fitContentOnRestore: false,
     };
     const middle: SurfaceRestorePoint = {
       surface: { kind: "map", spaceId: "space-middle" },
       selection: singleSelection("middle-node"),
+      interactionTarget: mindNodeInteractionTarget,
+      fitContentOnRestore: false,
     };
     const result = resolveSurfaceAfterInvalidation(
       { kind: "map", spaceId: "space-inner" },
@@ -2855,6 +3083,8 @@ describe("surface invalidation after undo", () => {
     const entry: SurfaceRestorePoint = {
       surface: { kind: "map", spaceId: "space-a" },
       selection: singleSelection("node"),
+      interactionTarget: mindNodeInteractionTarget,
+      fitContentOnRestore: false,
     };
     const result = resolveSurfaceAfterInvalidation(
       { kind: "map", spaceId: "space-b" },

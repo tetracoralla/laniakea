@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   commandRegistry,
+  commandSupportsTarget,
   findCommandForEvent,
   isPrintableKey,
   type CommandContext,
@@ -27,6 +28,54 @@ describe("command registry context isolation", () => {
       "node.create-sibling",
     );
     expect(findCommandForEvent(event, "editing")).toBeUndefined();
+  });
+
+  it("keeps one command meaning while resolving shared shortcuts by target", () => {
+    const enter = keyboardEvent("Enter");
+    expect(findCommandForEvent(enter, "selection", "mind-node")?.id).toBe(
+      "node.create-sibling",
+    );
+    expect(
+      findCommandForEvent(enter, "selection", "subspace-portal")?.id,
+    ).toBe("space.enter");
+
+    expect(
+      findCommandForEvent(
+        keyboardEvent("Enter", { metaKey: true }),
+        "selection",
+        "subspace-portal",
+      ),
+    ).toBeUndefined();
+    expect(
+      findCommandForEvent(
+        keyboardEvent("Tab"),
+        "selection",
+        "subspace-portal",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("declares portal copy and confirmed deletion as portal capabilities", () => {
+    expect(
+      findCommandForEvent(
+        keyboardEvent("c", { metaKey: true }),
+        "selection",
+        "subspace-portal",
+      )?.id,
+    ).toBe("space.copy-summary");
+    expect(
+      findCommandForEvent(
+        keyboardEvent("Backspace"),
+        "selection",
+        "subspace-portal",
+      )?.id,
+    ).toBe("space.delete");
+    expect(
+      commandSupportsTarget(
+        commandRegistry.find(({ id }) => id === "node.create-child")!,
+        "subspace-portal",
+      ),
+    ).toBe(false);
   });
 
   it("keeps Shift+Enter distinct from Enter", () => {
@@ -158,14 +207,17 @@ describe("command registry context isolation", () => {
     ).toBe("map.save-as");
   });
 
-  it("does not register two commands for the same shortcut and context", () => {
+  it("does not register two commands for the same shortcut, context, and target", () => {
     const bindings = new Set<string>();
     commandRegistry.forEach((command) => {
       [command.shortcut, ...(command.aliases ?? [])].forEach((shortcut) => {
         command.contexts.forEach((context: CommandContext) => {
-          const binding = `${context}:${shortcut}`;
-          expect(bindings.has(binding), binding).toBe(false);
-          bindings.add(binding);
+          (["mind-node", "subspace-portal"] as const).forEach((target) => {
+            if (!commandSupportsTarget(command, target)) return;
+            const binding = `${context}:${target}:${shortcut}`;
+            expect(bindings.has(binding), binding).toBe(false);
+            bindings.add(binding);
+          });
         });
       });
     });

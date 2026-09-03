@@ -59,7 +59,6 @@ import {
 import {
   createMapSpace,
   createFlowSpace,
-  deleteSubspaceForNode,
   documentSpaces,
   findMindNode,
   flowSpaceForNode,
@@ -70,6 +69,14 @@ import {
   updateFlowSpace,
 } from "./model/spaces";
 import { subspacePreview } from "./model/subspacePreview";
+import {
+  deleteSubspaceForInteractionTarget,
+  isCurrentCanvasInteractionTarget,
+  mindNodeInteractionTarget,
+  subspacePortalInteractionTarget,
+  type CanvasInteractionTarget,
+  type SubspacePortalInteractionTarget,
+} from "./model/canvasInteraction";
 import {
   selectionForContextTarget,
   singleSelection,
@@ -102,6 +109,8 @@ export type EditorSurface = MapSurface | FlowSurface;
 export interface SurfaceRestorePoint {
   surface: EditorSurface;
   selection: SelectionState;
+  interactionTarget: CanvasInteractionTarget;
+  fitContentOnRestore: boolean;
 }
 
 const rootMapSurface: MapSurface = {
@@ -114,6 +123,8 @@ export interface SurfaceInvalidationResult {
   surfaceStack: SurfaceRestorePoint[];
   /** Saved selection of the restored entry; null means fall back to the root node. */
   restoreSelection: SelectionState | null;
+  restoreInteractionTarget: CanvasInteractionTarget;
+  fitContentOnRestore: boolean;
 }
 
 /**
@@ -135,12 +146,16 @@ export function resolveSurfaceAfterInvalidation(
     return {
       surface: surfaceStack[index].surface,
       restoreSelection: surfaceStack[index].selection,
+      restoreInteractionTarget: surfaceStack[index].interactionTarget,
+      fitContentOnRestore: surfaceStack[index].fitContentOnRestore,
       surfaceStack: surfaceStack.slice(0, index),
     };
   }
   return {
     surface: rootMapSurface,
     restoreSelection: null,
+    restoreInteractionTarget: mindNodeInteractionTarget,
+    fitContentOnRestore: false,
     surfaceStack: [],
   };
 }
@@ -281,10 +296,14 @@ export function App() {
   const initialEditStarted = useRef(false);
   const [overlay, setOverlay] = useState<OverlayMode | null>(null);
   const [drillDownNodeId, setDrillDownNodeId] = useState<string | null>(null);
-  const [selectedSubspaceAnchorId, setSelectedSubspaceAnchorId] =
-    useState<string | null>(null);
+  const [canvasInteractionTarget, setCanvasInteractionTarget] =
+    useState<CanvasInteractionTarget>(mindNodeInteractionTarget);
+  const selectedSubspaceAnchorId =
+    canvasInteractionTarget.kind === "subspace-portal"
+      ? canvasInteractionTarget.anchorNodeId
+      : null;
   const [deleteSubspaceRequest, setDeleteSubspaceRequest] = useState<{
-    nodeId: string;
+    target: SubspacePortalInteractionTarget;
     returnFocus: HTMLElement | null;
   } | null>(null);
   const [nodeSpaceMenu, setNodeSpaceMenu] = useState<{
@@ -439,7 +458,7 @@ export function App() {
     setSurface(rootMapSurface);
     setSurfaceStack([]);
     setDrillDownNodeId(null);
-    setSelectedSubspaceAnchorId(null);
+    setCanvasInteractionTarget(mindNodeInteractionTarget);
     setDeleteSubspaceRequest(null);
     setNodeSpaceMenu(null);
     drillDownReturnFocusRef.current = null;
@@ -447,12 +466,29 @@ export function App() {
 
   useEffect(() => {
     if (
-      selectedSubspaceAnchorId &&
-      !spaceForNode(activeMap, selectedSubspaceAnchorId)
+      canvasInteractionTarget.kind === "subspace-portal" &&
+      !isCurrentCanvasInteractionTarget(activeMap, canvasInteractionTarget)
     ) {
-      setSelectedSubspaceAnchorId(null);
+      setCanvasInteractionTarget(mindNodeInteractionTarget);
     }
-  }, [activeMap, selectedSubspaceAnchorId]);
+  }, [activeMap, canvasInteractionTarget]);
+
+  useEffect(() => {
+    if (
+      !deleteSubspaceRequest ||
+      isCurrentCanvasInteractionTarget(
+        activeMap,
+        deleteSubspaceRequest.target,
+      )
+    ) {
+      return;
+    }
+    setDeleteSubspaceRequest(null);
+    restoreFocus(
+      deleteSubspaceRequest.returnFocus,
+      () => canvasRef.current?.focusCanvas(),
+    );
+  }, [activeMap, deleteSubspaceRequest]);
 
   useEffect(() => {
     const invalidation = resolveSurfaceAfterInvalidation(
@@ -467,12 +503,16 @@ export function App() {
     if (!invalidation) return;
     setSurfaceStack(invalidation.surfaceStack);
     setSurface(invalidation.surface);
+    setCanvasInteractionTarget(invalidation.restoreInteractionTarget);
     setSelection(
       invalidation.restoreSelection ?? singleSelection(mindMap.rootId),
     );
   }, [mindMap, setSelection, surface, surfaceStack]);
 
-  const pushCurrentSurface = useCallback(() => {
+  const pushCurrentSurface = useCallback((
+    interactionTarget = canvasInteractionTarget,
+    fitContentOnRestore = false,
+  ) => {
     const restorableSurface = surface.kind === "flow"
       ? {
           ...surface,
@@ -488,9 +528,11 @@ export function App() {
       {
         surface: restorableSurface,
         selection,
+        interactionTarget,
+        fitContentOnRestore,
       },
     ]);
-  }, [selection, surface]);
+  }, [canvasInteractionTarget, selection, surface]);
 
   const enterMapForNode = useCallback((nodeId: string) => {
     const existing = spaceForNode(activeMap, nodeId);
@@ -510,7 +552,16 @@ export function App() {
       }));
     }
     finishMindEditForNavigation();
-    pushCurrentSurface();
+    pushCurrentSurface(
+      creating
+        ? {
+            kind: "subspace-portal",
+            anchorNodeId: nodeId,
+            spaceId: created.spaceId,
+          }
+        : undefined,
+      creating,
+    );
     setSurface({
       kind: "map",
       spaceId: created.spaceId,
@@ -552,7 +603,16 @@ export function App() {
       }));
     }
     finishMindEditForNavigation();
-    pushCurrentSurface();
+    pushCurrentSurface(
+      creating
+        ? {
+            kind: "subspace-portal",
+            anchorNodeId: nodeId,
+            spaceId: created.spaceId,
+          }
+        : undefined,
+      creating,
+    );
     setSurface({
       kind: "flow",
       spaceId: created.spaceId,
@@ -615,14 +675,15 @@ export function App() {
   }, [activeMap, enterFlowForNode, enterMapForNode]);
 
   const selectSubspacePortal = useCallback((nodeId: string) => {
-    if (!spaceForNode(activeMap, nodeId)) return;
+    const target = subspacePortalInteractionTarget(activeMap, nodeId);
+    if (!target) return;
     setEditingId(null);
-    setSelectedSubspaceAnchorId(nodeId);
+    setCanvasInteractionTarget(target);
     setSelection(singleSelection(nodeId));
   }, [activeMap, setEditingId, setSelection]);
 
   const selectMapNodes = useCallback((nextSelection: SelectionState) => {
-    setSelectedSubspaceAnchorId(null);
+    setCanvasInteractionTarget(mindNodeInteractionTarget);
     setSelection(nextSelection);
   }, [setSelection]);
 
@@ -630,8 +691,12 @@ export function App() {
     sourceNodeId: string,
     targetNodeId: string,
   ) => {
+    const sourceTarget = subspacePortalInteractionTarget(
+      activeMap,
+      sourceNodeId,
+    );
     if (
-      !spaceForNode(activeMap, sourceNodeId) ||
+      !sourceTarget ||
       !activeMap.nodes[targetNodeId] ||
       activeMap.nodes[targetNodeId].subspaceId
     ) {
@@ -645,7 +710,10 @@ export function App() {
       ),
       selection: singleSelection(targetNodeId),
     }));
-    setSelectedSubspaceAnchorId(targetNodeId);
+    setCanvasInteractionTarget({
+      ...sourceTarget,
+      anchorNodeId: targetNodeId,
+    });
     notify({
       message: "已移动下层图",
       actionLabel: "撤销",
@@ -654,13 +722,13 @@ export function App() {
   }, [activeMap, applyActiveMapMutation, notify, undo]);
 
   const requestDeleteSubspace = useCallback((
-    nodeId: string,
+    target: SubspacePortalInteractionTarget,
     returnFocus?: HTMLElement | null,
   ) => {
-    if (!spaceForNode(activeMap, nodeId)) return;
+    if (!isCurrentCanvasInteractionTarget(activeMap, target)) return;
     const activeElement = document.activeElement;
     setDeleteSubspaceRequest({
-      nodeId,
+      target,
       returnFocus:
         returnFocus ??
         (activeElement instanceof HTMLElement && activeElement !== document.body
@@ -677,12 +745,18 @@ export function App() {
 
   const confirmDeleteSubspace = useCallback(() => {
     if (!deleteSubspaceRequest) return;
-    const { nodeId } = deleteSubspaceRequest;
+    const { target } = deleteSubspaceRequest;
     setDeleteSubspaceRequest(null);
-    setSelectedSubspaceAnchorId(null);
+    if (!isCurrentCanvasInteractionTarget(activeMap, target)) {
+      setCanvasInteractionTarget(mindNodeInteractionTarget);
+      notify({ message: "下层图已发生变化，未执行删除", tone: "error" });
+      window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
+      return;
+    }
+    setCanvasInteractionTarget(mindNodeInteractionTarget);
     applyActiveMapMutation((current) => ({
-      document: deleteSubspaceForNode(current.document, nodeId),
-      selection: singleSelection(nodeId),
+      document: deleteSubspaceForInteractionTarget(current.document, target),
+      selection: singleSelection(target.anchorNodeId),
     }));
     notify({
       message: "已删除下层图",
@@ -690,12 +764,13 @@ export function App() {
       onAction: undo,
     });
     window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
-  }, [applyActiveMapMutation, deleteSubspaceRequest, notify, undo]);
+  }, [activeMap, applyActiveMapMutation, deleteSubspaceRequest, notify, undo]);
 
   const copySubspacePortal = useCallback(async (
-    nodeId: string,
+    target: SubspacePortalInteractionTarget,
   ): Promise<boolean> => {
-    const space = spaceForNode(activeMap, nodeId);
+    if (!isCurrentCanvasInteractionTarget(activeMap, target)) return false;
+    const space = documentSpaces(activeMap)[target.spaceId];
     if (!space) return false;
     if (!(await writeTextClipboard(subspacePreview(space).text))) {
       notify({ message: "无法写入系统剪贴板", tone: "error" });
@@ -717,12 +792,20 @@ export function App() {
     nodeId: string,
     targetRect: { left: number; right: number; top: number; bottom: number },
     returnFocus: HTMLElement,
+    targetKind: CanvasInteractionTarget["kind"],
   ) => {
     if (!activeMap.nodes[nodeId]) return;
+    if (targetKind === "subspace-portal") {
+      const target = subspacePortalInteractionTarget(activeMap, nodeId);
+      if (!target) return;
+      setCanvasInteractionTarget(target);
+    } else {
+      setCanvasInteractionTarget(mindNodeInteractionTarget);
+    }
     const nextSelection = selectionForContextTarget(selection, nodeId);
     if (nextSelection !== selection) setSelection(nextSelection);
     setNodeSpaceMenu({ nodeId, targetRect, returnFocus });
-  }, [activeMap.nodes, selection.selectedIds, setSelection]);
+  }, [activeMap, selection, setSelection]);
 
   const closeNodeSpaceMenu = useCallback((shouldRestoreFocus: boolean) => {
     const returnFocus = nodeSpaceMenu?.returnFocus ?? null;
@@ -750,9 +833,11 @@ export function App() {
     if (!nodeSpaceMenu) return;
     const { nodeId, returnFocus } = nodeSpaceMenu;
     setNodeSpaceMenu(null);
-    setSelectedSubspaceAnchorId(nodeId);
-    requestDeleteSubspace(nodeId, returnFocus);
-  }, [nodeSpaceMenu, requestDeleteSubspace]);
+    const target = subspacePortalInteractionTarget(activeMap, nodeId);
+    if (!target) return;
+    setCanvasInteractionTarget(target);
+    requestDeleteSubspace(target, returnFocus);
+  }, [activeMap, nodeSpaceMenu, requestDeleteSubspace]);
 
   const navigateBack = useCallback(() => {
     if (surface.kind === "map") finishMindEditForNavigation();
@@ -761,14 +846,22 @@ export function App() {
     const restore = surfaceStack[surfaceStack.length - 1];
     if (!restore) {
       setSurface(rootMapSurface);
+      setCanvasInteractionTarget(mindNodeInteractionTarget);
       setSelection(singleSelection(mindMap.rootId));
       return;
     }
     setSurfaceStack((current) => current.slice(0, -1));
     setSurface(restore.surface);
+    setCanvasInteractionTarget(restore.interactionTarget);
     setSelection(restore.selection);
     window.requestAnimationFrame(() => {
-      if (restore.surface.kind === "map") canvasRef.current?.focusCanvas();
+      if (restore.surface.kind === "map") {
+        if (restore.fitContentOnRestore) {
+          window.requestAnimationFrame(() => canvasRef.current?.fit());
+        } else {
+          canvasRef.current?.focusCanvas();
+        }
+      }
       else flowWorkspaceRef.current?.focusCanvas();
     });
   }, [
@@ -980,77 +1073,55 @@ export function App() {
     });
 
   const executeAppCommand = useCallback((command: CommandId) => {
-    const portalId = selectedSubspaceAnchorId;
-    const portalSelected = Boolean(
-      portalId && spaceForNode(activeMap, portalId),
-    );
-    if (!portalSelected || !portalId) {
-      executeCommand(command);
-      return;
-    }
-
     switch (command) {
-      case "node.copy":
-        void copySubspacePortal(portalId);
+      case "space.copy-summary": {
+        if (canvasInteractionTarget.kind !== "subspace-portal") return;
+        void copySubspacePortal(canvasInteractionTarget);
         return;
-      case "node.cut":
-        void copySubspacePortal(portalId).then((copied) => {
-          if (copied) requestDeleteSubspace(portalId);
+      }
+      case "space.cut": {
+        if (canvasInteractionTarget.kind !== "subspace-portal") return;
+        const target = canvasInteractionTarget;
+        void copySubspacePortal(target).then((copied) => {
+          if (copied) requestDeleteSubspace(target);
         });
         return;
-      case "node.delete":
-      case "node.delete-preserve":
-        requestDeleteSubspace(portalId);
+      }
+      case "space.delete":
+        if (canvasInteractionTarget.kind !== "subspace-portal") return;
+        requestDeleteSubspace(canvasInteractionTarget);
         return;
-      case "node.drill-down":
-        enterSubspaceForNode(portalId);
-        return;
-      case "node.create-sibling":
-        // Enter on a portal enters the anchored space instead of inserting
-        // a sibling node next to the anchor.
-        enterSubspaceForNode(portalId);
-        return;
-      case "node.parent":
-      case "selection.clear":
-        setSelectedSubspaceAnchorId(null);
-        if (command === "node.parent") {
-          setSelection(singleSelection(portalId));
-        } else {
-          executeCommand(command);
+      case "space.enter":
+        if (
+          canvasInteractionTarget.kind !== "subspace-portal" ||
+          !isCurrentCanvasInteractionTarget(activeMap, canvasInteractionTarget)
+        ) {
+          return;
         }
+        enterSubspaceForNode(canvasInteractionTarget.anchorNodeId);
         return;
+      case "space.select-anchor":
+        if (canvasInteractionTarget.kind !== "subspace-portal") return;
+        setSelection(
+          singleSelection(canvasInteractionTarget.anchorNodeId),
+        );
+        setCanvasInteractionTarget(mindNodeInteractionTarget);
+        return;
+      case "selection.clear":
       case "selection.select-all":
-        setSelectedSubspaceAnchorId(null);
+        setCanvasInteractionTarget(mindNodeInteractionTarget);
         executeCommand(command);
-        return;
-      case "node.create-above":
-      case "node.create-child":
-      case "node.insert-parent":
-      case "node.outdent":
-      case "node.paste":
-      case "node.move-up":
-      case "node.move-down":
-      case "node.toggle":
-      case "node.child":
-      case "node.previous":
-      case "node.next":
-      case "selection.extend-parent":
-      case "selection.extend-child":
-      case "selection.extend-previous":
-      case "selection.extend-next":
-        notify({ message: "概要节点可进入、拖动、复制或删除" });
         return;
       default:
         executeCommand(command);
     }
   }, [
     activeMap,
+    canvasInteractionTarget,
     copySubspacePortal,
     enterSubspaceForNode,
     executeCommand,
-    notify,
     requestDeleteSubspace,
-    selectedSubspaceAnchorId,
     setSelection,
   ]);
 
@@ -1091,6 +1162,7 @@ export function App() {
       !shortcutSettingsOpen &&
       surface.kind === "map",
     selectionEnabled: editingId === null,
+    commandTarget: canvasInteractionTarget.kind,
     onCommand: (command) => {
       if (
         command === "selection.clear" &&
@@ -1102,16 +1174,10 @@ export function App() {
       }
       executeAppCommand(command);
     },
-    onPasteText: (value) => {
-      if (selectedSubspaceAnchorId) {
-        notify({ message: "概要节点不能粘贴内容" });
-        return;
-      }
-      pasteText(value);
-    },
+    onPasteText: pasteText,
     onBeginTyping: (character) => {
       if (
-        !selectedSubspaceAnchorId &&
+        canvasInteractionTarget.kind === "mind-node" &&
         hasSingleSelection &&
         selectedId
       ) {
@@ -1231,11 +1297,13 @@ export function App() {
             onSelectSubspace={selectSubspacePortal}
             onSelectionChange={selectMapNodes}
             onSpaceTap={() => {
-              if (!selectedSubspaceAnchorId) editSelectedFromSpace();
+              if (canvasInteractionTarget.kind === "mind-node") {
+                editSelectedFromSpace();
+              }
             }}
             onToggle={(id) => {
               if (selectedSubspaceAnchorId === id) {
-                setSelectedSubspaceAnchorId(null);
+                setCanvasInteractionTarget(mindNodeInteractionTarget);
               }
               toggleNode(id);
             }}
@@ -1249,7 +1317,7 @@ export function App() {
             onZoomPreview={showZoomPreview}
             ref={canvasRef}
             selection={selection}
-            selectedSubspaceAnchorId={selectedSubspaceAnchorId}
+            interactionTarget={canvasInteractionTarget}
           />
 
           <CanvasControls
@@ -1328,54 +1396,56 @@ export function App() {
           )}
         >
           <LazyCommandOverlay
+            commandTarget={canvasInteractionTarget.kind}
             document={mindMap}
             key={overlay}
             mode={overlay}
             onClose={closeOverlay}
             onExecute={executeAppCommand}
             onSelectNode={(id, spaceId) => {
-            if (spaceId) {
-              const space = documentSpaces(mindMap)[spaceId];
-              if (!space?.nodes[id]) return;
-              if (space.type === "map") {
-                if (surface.kind !== "map" || surface.spaceId !== spaceId) {
-                  pushCurrentSurface();
-                }
-                setSurface({ kind: "map", spaceId });
-                setSelection(singleSelection(id));
-                window.requestAnimationFrame(() =>
+              setCanvasInteractionTarget(mindNodeInteractionTarget);
+              if (spaceId) {
+                const space = documentSpaces(mindMap)[spaceId];
+                if (!space?.nodes[id]) return;
+                if (space.type === "map") {
+                  if (surface.kind !== "map" || surface.spaceId !== spaceId) {
+                    pushCurrentSurface();
+                  }
+                  setSurface({ kind: "map", spaceId });
+                  setSelection(singleSelection(id));
                   window.requestAnimationFrame(() =>
-                    canvasRef.current?.focusSelected(),
-                  ),
-                );
-              } else {
-                preloadFlowWorkspace();
-                if (surface.kind !== "flow" || surface.spaceId !== spaceId) {
-                  pushCurrentSurface();
+                    window.requestAnimationFrame(() =>
+                      canvasRef.current?.focusSelected(),
+                    ),
+                  );
+                } else {
+                  preloadFlowWorkspace();
+                  if (surface.kind !== "flow" || surface.spaceId !== spaceId) {
+                    pushCurrentSurface();
+                  }
+                  setSurface({
+                    kind: "flow",
+                    spaceId,
+                    anchorNodeId: space.anchorNodeId,
+                    entryRequest: ++flowEntryRequestRef.current,
+                    fitOnMount: false,
+                    initialEditing: false,
+                    initialSelectedId: id,
+                  });
+                  setSelection(singleSelection(space.anchorNodeId));
                 }
-                setSurface({
-                  kind: "flow",
-                  spaceId,
-                  anchorNodeId: space.anchorNodeId,
-                  entryRequest: ++flowEntryRequestRef.current,
-                  fitOnMount: false,
-                  initialEditing: false,
-                  initialSelectedId: id,
-                });
-                setSelection(singleSelection(space.anchorNodeId));
+                return;
               }
-              return;
-            }
-            setSurface(rootMapSurface);
-            setSurfaceStack([]);
-            applyMutation((current) =>
-              revealNode(current.document, id),
-            );
-            window.requestAnimationFrame(() =>
+              setSurface(rootMapSurface);
+              setSurfaceStack([]);
+              applyMutation((current) =>
+                revealNode(current.document, id),
+              );
               window.requestAnimationFrame(() =>
-                canvasRef.current?.focusSelected(),
-              ),
-            );
+                window.requestAnimationFrame(() =>
+                  canvasRef.current?.focusSelected(),
+                ),
+              );
             }}
           />
         </Suspense>
@@ -1421,9 +1491,16 @@ export function App() {
       )}
 
       {deleteSubspaceRequest && (() => {
-        const space = spaceForNode(activeMap, deleteSubspaceRequest.nodeId);
-        const node = activeMap.nodes[deleteSubspaceRequest.nodeId];
-        if (!space || !node) return null;
+        const { target } = deleteSubspaceRequest;
+        const space = documentSpaces(activeMap)[target.spaceId];
+        const node = activeMap.nodes[target.anchorNodeId];
+        if (
+          !space ||
+          !node ||
+          !isCurrentCanvasInteractionTarget(activeMap, target)
+        ) {
+          return null;
+        }
         return (
           <DeleteSubspaceDialog
             nodeLabel={node.text}

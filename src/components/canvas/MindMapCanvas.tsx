@@ -49,6 +49,10 @@ import {
   wheelPanPixelDelta,
 } from "../../model/zoom";
 import { clientPointToCanvas } from "../../model/nodeDrag";
+import {
+  mindNodeInteractionTarget,
+  type CanvasInteractionTarget,
+} from "../../model/canvasInteraction";
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
 import { SelectionMarquee } from "./SelectionMarquee";
@@ -83,11 +87,12 @@ interface MindMapCanvasProps {
     id: string,
     targetRect: { left: number; right: number; top: number; bottom: number },
     returnFocus: HTMLElement,
+    targetKind: CanvasInteractionTarget["kind"],
   ) => void;
   onOpenSubspace?: (id: string) => void;
   onMoveSubspace?: (sourceNodeId: string, targetNodeId: string) => void;
   onSelectSubspace?: (anchorId: string) => void;
-  selectedSubspaceAnchorId?: string | null;
+  interactionTarget?: CanvasInteractionTarget;
   onAttachNode: (
     ids: readonly string[],
     parentId: string,
@@ -128,7 +133,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onOpenSubspace = () => undefined,
       onMoveSubspace = () => undefined,
       onSelectSubspace = () => undefined,
-      selectedSubspaceAnchorId = null,
+      interactionTarget = mindNodeInteractionTarget,
       onAttachNode,
       onDetachNode,
       onViewportChange,
@@ -138,6 +143,10 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     },
     ref,
   ) {
+    const selectedSubspaceAnchorId =
+      interactionTarget.kind === "subspace-portal"
+        ? interactionTarget.anchorNodeId
+        : null;
     const containerRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
     const dragPreviewRef = useRef<HTMLDivElement>(null);
@@ -824,7 +833,14 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
                 onCommitEdit={onCommitEdit}
                 onDraftChange={onDraftChange}
                 onEditTab={onEditTab}
-                onOpenContextMenu={onOpenNodeContextMenu}
+                onOpenContextMenu={(id, targetRect, returnFocus) =>
+                  onOpenNodeContextMenu(
+                    id,
+                    targetRect,
+                    returnFocus,
+                    "mind-node",
+                  )
+                }
                 onDragPointerDown={beginNodeDrag}
                 onPasteStructured={onPasteStructured}
                 onSelect={handleNodeSelect}
@@ -856,7 +872,14 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
                 layout={portalLayout}
                 onMove={onMoveSubspace}
                 onOpen={onOpenSubspace}
-                onOpenContextMenu={onOpenNodeContextMenu}
+                onOpenContextMenu={(id, targetRect, returnFocus) =>
+                  onOpenNodeContextMenu(
+                    id,
+                    targetRect,
+                    returnFocus,
+                    "subspace-portal",
+                  )
+                }
                 onSelect={onSelectSubspace}
                 selected={selectedSubspaceAnchorId === anchorId}
                 space={space}
