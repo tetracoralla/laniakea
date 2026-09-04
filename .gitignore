@@ -5,6 +5,8 @@ src-tauri/target/
 *.log
 
 # agent tool caches
+.codex-ppt-build/
+.codex-ppt-output/
 .v2c/
 .video_agent/
 .zcode/

@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 
 const version = "0.5.0";
 const dependency = version;
+const expectedResolved =
+  `https://registry.npmjs.org/@openadam/graph-view-compiler/-/graph-view-compiler-${version}.tgz`;
+const expectedIntegrity =
+  "sha512-WxZGoKbYh8EYnzYlx0oJ1qVQUKSwNVQU1TiodCmY1jkLYBg+rmdFpLykiiigaSLSeBlUgVqsrJ2/TWXv97Xucw==";
 const manifest = JSON.parse(await readFile("package.json", "utf8"));
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const locked = lock.packages["node_modules/@openadam/graph-view-compiler"];
@@ -14,8 +18,8 @@ const installed = JSON.parse(await readFile(
 assert.equal(manifest.dependencies["@openadam/graph-view-compiler"], dependency);
 assert.equal(lock.packages[""].dependencies["@openadam/graph-view-compiler"], dependency);
 assert.equal(locked.version, version);
-assert.match(locked.resolved, /^https:\/\/registry\.npmjs\.org\/@openadam\/graph-view-compiler\/-\//u);
-assert.match(locked.integrity, /^sha512-/u);
+assert.equal(locked.resolved, expectedResolved);
+assert.equal(locked.integrity, expectedIntegrity);
 assert.equal(installed.name, "@openadam/graph-view-compiler");
 assert.equal(installed.version, version);
 
