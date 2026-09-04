@@ -6,11 +6,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { useFlowKeyboardCommands } from "../../hooks/useFlowKeyboardCommands";
-import {
-  flowNavigationTarget,
-  type FlowNavigationDirection,
-} from "../../model/flowLayout";
 import {
   addFlowBranch,
   addFlowNodeAtPosition,
@@ -289,16 +284,6 @@ export const FlowWorkspace = forwardRef<
     if (reconnected !== appliedSpaceRef.current) applySpace(reconnected);
   }, [applySpace]);
 
-  const navigate = useCallback((direction: FlowNavigationDirection) => {
-    if (!selectedId) return;
-    const target = flowNavigationTarget(
-      appliedSpaceRef.current,
-      selectedId,
-      direction,
-    );
-    if (target) setSelectedId(target);
-  }, [selectedId]);
-
   const remove = useCallback((nodeId: string) => {
     const removed = deleteFlowNode(appliedSpaceRef.current, nodeId);
     if (removed.space === appliedSpaceRef.current) return;
@@ -325,27 +310,16 @@ export const FlowWorkspace = forwardRef<
     });
   }, [applySpace, notify, onUndo]);
 
-  useFlowKeyboardCommands({
-    enabled: keyboardEnabled,
-    selectedId,
-    onAddNext: addNext,
-    onAddBranch: addBranch,
-    onBeginEdit: beginEdit,
-    onDelete: remove,
-    onNavigate: navigate,
-    onBack,
-    onUndo,
-    onRedo,
-  });
-
   return (
     <FlowCanvas
       draft={draft}
       editingId={editingId}
+      keyboardEnabled={keyboardEnabled}
       onAddBranch={addBranch}
       onAddNode={addNode}
       onAddShape={addShape}
       onAddNext={addNext}
+      onBack={onBack}
       onBeginEdit={beginEdit}
       onSpaceTap={() => {
         // Mirrors the main map: a Space tap (no pan) edits the selection.
@@ -369,6 +343,8 @@ export const FlowWorkspace = forwardRef<
       onSelect={setSelectedId}
       onPositionsChange={onPositionsChange}
       onReconnectEdge={reconnectEdge}
+      onRedo={onRedo}
+      onUndo={onUndo}
       onViewportChange={onViewportChange}
       ref={canvasRef}
       selectedId={selectedId}

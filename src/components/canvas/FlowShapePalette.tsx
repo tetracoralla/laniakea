@@ -4,6 +4,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { useDragInterruption } from "../../hooks/useDragInterruption";
 import type { FlowNodeKind } from "../../types/mindmap";
 
 type PaletteKind = Extract<FlowNodeKind, "step" | "decision" | "start">;
@@ -88,24 +89,21 @@ export function FlowShapePalette({ onDrop, onInsert }: FlowShapePaletteProps) {
   };
 
   const cancel = () => replaceDrag(null);
+  useDragInterruption({
+    hasActiveDrag: () => dragRef.current !== null,
+    onCancel: cancel,
+  });
   useEffect(() => {
     if (!drag) return;
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") cancel();
-    };
     const handlePointerMove = (event: PointerEvent) => move(event);
     const handlePointerUp = (event: PointerEvent) => finish(event);
-    window.addEventListener("keydown", handleKey, { capture: true });
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", cancel);
-    window.addEventListener("blur", cancel);
     return () => {
-      window.removeEventListener("keydown", handleKey, { capture: true });
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", cancel);
-      window.removeEventListener("blur", cancel);
     };
   }, [drag]);
 

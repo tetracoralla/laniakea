@@ -677,10 +677,12 @@ export function App() {
   const selectSubspacePortal = useCallback((nodeId: string) => {
     const target = subspacePortalInteractionTarget(activeMap, nodeId);
     if (!target) return;
-    setEditingId(null);
+    // Clicking away from a node edit commits the draft everywhere else on
+    // the canvas; the portal target must not silently discard it.
+    finishMindEditForNavigation();
     setCanvasInteractionTarget(target);
     setSelection(singleSelection(nodeId));
-  }, [activeMap, setEditingId, setSelection]);
+  }, [activeMap, finishMindEditForNavigation, setSelection]);
 
   const selectMapNodes = useCallback((nextSelection: SelectionState) => {
     setCanvasInteractionTarget(mindNodeInteractionTarget);
@@ -1409,7 +1411,10 @@ export function App() {
                 if (!space?.nodes[id]) return;
                 if (space.type === "map") {
                   if (surface.kind !== "map" || surface.spaceId !== spaceId) {
-                    pushCurrentSurface();
+                    // The jump already resets the target above; the restore
+                    // point must record that same fresh node target instead
+                    // of the render-time closure value.
+                    pushCurrentSurface(mindNodeInteractionTarget);
                   }
                   setSurface({ kind: "map", spaceId });
                   setSelection(singleSelection(id));
@@ -1421,7 +1426,7 @@ export function App() {
                 } else {
                   preloadFlowWorkspace();
                   if (surface.kind !== "flow" || surface.spaceId !== spaceId) {
-                    pushCurrentSurface();
+                    pushCurrentSurface(mindNodeInteractionTarget);
                   }
                   setSurface({
                     kind: "flow",

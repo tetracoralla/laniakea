@@ -5,6 +5,7 @@ import {
   type CommandId,
   type CommandTarget,
 } from "../commands/registry";
+import { hasActiveCanvasDrag } from "./useDragInterruption";
 
 interface KeyboardCommandOptions {
   enabled: boolean;
@@ -78,6 +79,10 @@ export function useKeyboardCommands({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // An active drag gesture owns Escape and cancels itself through its
+      // own capture listener. Returning here keeps that true regardless of
+      // which window listener happened to register first.
+      if (event.key === "Escape" && hasActiveCanvasDrag()) return;
       if (!enabled || event.defaultPrevented) return;
       if (isDialogTarget(event.target)) return;
 

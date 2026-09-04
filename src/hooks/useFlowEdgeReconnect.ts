@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { connectableFlowNodeIds } from "../model/spaces";
+import { useDragInterruption } from "./useDragInterruption";
 import type {
   FlowEdge,
   FlowPlacementDirection,
@@ -240,23 +241,10 @@ export function useFlowEdgeReconnect({
     replaceState(null);
   }, [replaceState]);
 
-  useEffect(() => {
-    if (!state) return;
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") cancel();
-    };
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") cancel();
-    };
-    window.addEventListener("keydown", handleEscape, { capture: true });
-    window.addEventListener("blur", cancel);
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => {
-      window.removeEventListener("keydown", handleEscape, { capture: true });
-      window.removeEventListener("blur", cancel);
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
-  }, [cancel, state]);
+  useDragInterruption({
+    hasActiveDrag: () => stateRef.current !== null,
+    onCancel: cancel,
+  });
 
   useEffect(() => {
     if (spaceIdRef.current === space.id) return;
@@ -292,6 +280,7 @@ export function useFlowEdgeReconnect({
     : null;
 
   return {
+    active: () => stateRef.current !== null,
     begin,
     connectableIds,
     lostPointerCapture,

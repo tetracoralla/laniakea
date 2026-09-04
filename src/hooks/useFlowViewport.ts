@@ -8,6 +8,11 @@ import {
 import type { FlowLayoutResult } from "../model/flowLayout";
 import { ignoresSpaceShortcut } from "./useCanvasGestures";
 import {
+  hasActiveCanvasDrag,
+  releaseOwnedPointerCapture,
+  useDragInterruption,
+} from "./useDragInterruption";
+import {
   canvasZoomFromWheel,
   canvasZoomToFit,
   wheelPanPixelDelta,
@@ -22,11 +27,10 @@ interface FlowViewportOptions {
   onSpaceTap?: () => void;
   selectedId: string | null;
   viewport: Viewport;
-  /** True while a node drag, connection, or edge reconnect owns the pointer. */
-  interactionsActive?: () => boolean;
 }
 
 interface FlowViewportBindings {
+  onLostPointerCapture: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerCancel: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLDivElement>) => void;
@@ -45,7 +49,6 @@ interface FlowViewportController {
 }
 
 export function useFlowViewport({
-  interactionsActive,
   layout,
   onCanvasPointerDown,
   onViewportChange,
@@ -56,6 +59,7 @@ export function useFlowViewport({
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{
+    captureElement: HTMLElement;
     pointerId: number;
     x: number;
     y: number;
@@ -67,7 +71,6 @@ export function useFlowViewport({
   const viewportChangeRef = useRef(onViewportChange);
   const observedSize = useRef<{ width: number; height: number } | null>(null);
   const canvasPointerDownRef = useRef(onCanvasPointerDown);
-  const interactionsActiveRef = useRef(interactionsActive);
   const onSpaceTapRef = useRef(onSpaceTap);
   const spaceHeldRef = useRef(false);
   const spaceUsedForPanRef = useRef(false);
@@ -76,7 +79,6 @@ export function useFlowViewport({
 
   viewportChangeRef.current = onViewportChange;
   canvasPointerDownRef.current = onCanvasPointerDown;
-  interactionsActiveRef.current = interactionsActive;
   onSpaceTapRef.current = onSpaceTap;
   layoutRef.current = layout;
 
@@ -106,6 +108,21 @@ export function useFlowViewport({
     }
     persistTimer.current = window.setTimeout(flushViewport, 120);
   }, [flushViewport, renderViewport]);
+
+  const interruptPan = useCallback(() => {
+    const pan = panRef.current;
+    if (!pan) return;
+    panRef.current = null;
+    releaseOwnedPointerCapture(pan.captureElement, pan.pointerId);
+    spaceHeldRef.current = false;
+    spaceUsedForPanRef.current = false;
+    flushViewport();
+  }, [flushViewport]);
+
+  useDragInterruption({
+    hasActiveDrag: () => panRef.current !== null,
+    onCancel: interruptPan,
+  });
 
   const fit = useCallback(() => {
     const bounds = containerRef.current?.getBoundingClientRect();
@@ -168,7 +185,7 @@ export function useFlowViewport({
       // Drag math divides by the viewport captured at pointer-down; changing
       // the viewport mid-gesture would slide the dragged content away from
       // the cursor, so the wheel yields until the gesture ends.
-      if (panRef.current !== null || interactionsActiveRef.current?.()) {
+      if (panRef.current !== null || hasActiveCanvasDrag()) {
         return;
       }
       const current = liveViewport.current;
@@ -296,15 +313,19 @@ export function useFlowViewport({
     panBy,
     panModifierHeld: spaceHeldRef,
     bindings: {
+      onLostPointerCapture: (event) => {
+        if (panRef.current?.pointerId !== event.pointerId) return;
+        interruptPan();
+      },
       onPointerCancel: (event) => {
         if (panRef.current?.pointerId !== event.pointerId) return;
-        panRef.current = null;
-        flushViewport();
+        interruptPan();
       },
       onPointerDown: (event) => {
         // Left button only (middle button is reserved for panning by the
         // main map); right-click must never start a viewport drag.
         if (event.button !== 0 && event.button !== 1) return;
+        if (hasActiveCanvasDrag()) return;
         const spacePan = spaceHeldRef.current && event.button === 0;
         if (event.target !== event.currentTarget && !spacePan) return;
         if (spacePan) {
@@ -313,6 +334,7 @@ export function useFlowViewport({
           canvasPointerDownRef.current();
         }
         panRef.current = {
+          captureElement: event.currentTarget,
           pointerId: event.pointerId,
           x: event.clientX,
           y: event.clientY,
@@ -330,9 +352,10 @@ export function useFlowViewport({
         });
       },
       onPointerUp: (event) => {
-        if (panRef.current?.pointerId !== event.pointerId) return;
+        const pan = panRef.current;
+        if (pan?.pointerId !== event.pointerId) return;
         panRef.current = null;
-        event.currentTarget.releasePointerCapture(event.pointerId);
+        releaseOwnedPointerCapture(pan.captureElement, pan.pointerId);
         flushViewport();
       },
     },

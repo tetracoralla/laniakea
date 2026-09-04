@@ -782,6 +782,167 @@ describe("rendered interaction regressions", () => {
     ).not.toBeNull();
   });
 
+  it("commits a pending node edit when a subspace portal is clicked", async () => {
+    const mindMap = createMapSpace(largeDocument(3), "node-1").document;
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    const content = container.querySelector<HTMLElement>(
+      "[data-node-id='node-2'] .mind-node__content",
+    )!;
+    await act(async () => {
+      content.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      "[data-node-id='node-2'] .mind-node__editor",
+    )!;
+    expect(editor).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(editor, "概要跳转前提交");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const summary = container.querySelector<HTMLButtonElement>(
+      ".subspace-portal__content",
+    )!;
+    await act(async () => summary.click());
+
+    expect(container.querySelector(".mind-node__editor")).toBeNull();
+    expect(
+      container.querySelector("[data-node-id='node-2'] .mind-node__content")
+        ?.textContent,
+    ).toBe("概要跳转前提交");
+    expect(container.querySelector(".subspace-portal.is-selected"))
+      .not.toBeNull();
+  });
+
+  it("cancels a Map canvas gesture before Escape can leave the subspace", async () => {
+    const mindMap = createMapSpace(largeDocument(3), "node-1").document;
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+    const summary = container.querySelector<HTMLButtonElement>(
+      ".subspace-portal__content",
+    )!;
+    await act(async () => summary.dispatchEvent(
+      new MouseEvent("dblclick", { bubbles: true }),
+    ));
+    expect(
+      container.querySelector("button[aria-label='返回上层图']"),
+    ).not.toBeNull();
+
+    const canvas = container.querySelector<HTMLElement>(".mindmap-canvas")!;
+    await act(async () => dispatchPointer(canvas, "pointerdown", 100, 100, 31));
+    await act(async () => dispatchPointer(
+      canvas,
+      "lostpointercapture",
+      100,
+      100,
+      31,
+    ));
+    expect(
+      container.querySelector("button[aria-label='返回上层图']"),
+    ).not.toBeNull();
+    expect(canvas.hasPointerCapture(31)).toBe(false);
+
+    await act(async () => dispatchPointer(canvas, "pointerdown", 100, 100, 32));
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Escape",
+    })));
+
+    expect(
+      container.querySelector("button[aria-label='返回上层图']"),
+    ).not.toBeNull();
+    expect(canvas.hasPointerCapture(32)).toBe(false);
+
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "Escape",
+    })));
+    expect(
+      container.querySelector("button[aria-label='返回上层图']"),
+    ).toBeNull();
+  });
+
+  it("restores a fresh node target when returning from a search jump into a space", async () => {
+    const mindMap = createMapSpace(largeDocument(2), "node-1").document;
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));
+    await act(async () => {
+      root.render(<App />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    const summary = container.querySelector<HTMLButtonElement>(
+      ".subspace-portal__content",
+    )!;
+    await act(async () => summary.click());
+    expect(container.querySelector(".subspace-portal.is-selected"))
+      .not.toBeNull();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button[aria-label='搜索']")!
+        .click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const search = container.querySelector<HTMLInputElement>(
+      "input[aria-label='搜索内容']",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(search, "节点 1");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const spaceOption = [
+      ...container.querySelectorAll<HTMLButtonElement>("[role='option']"),
+    ].find((option) => option.textContent?.includes("思维图"))!;
+    await act(async () => spaceOption.click());
+    expect(
+      container.querySelector("button[aria-label='返回上层图']"),
+    ).not.toBeNull();
+
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>("button[aria-label='返回上层图']")!
+        .click();
+      animationFrames.splice(0).forEach((callback) => callback(0));
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector(".subspace-portal.is-selected")).toBeNull();
+    expect(
+      container.querySelector("[data-node-id='node-1'].is-primary"),
+    ).not.toBeNull();
+  });
+
   it("switches from a portal to the normal node targeted by its context menu", async () => {
     const mindMap = createMapSpace(largeDocument(3), "node-1").document;
     window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));

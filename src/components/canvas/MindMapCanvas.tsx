@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { useCanvasGestures } from "../../hooks/useCanvasGestures";
+import { hasActiveCanvasDrag } from "../../hooks/useDragInterruption";
 import { useNodeDrag } from "../../hooks/useNodeDrag";
 import {
   draftForNode,
@@ -398,6 +399,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         return;
       }
       event.preventDefault();
+      // Pointer-owned geometry is calculated from the viewport captured when
+      // the gesture begins. Wheel movement yields until that owner finishes.
+      if (hasActiveCanvasDrag()) return;
       if (event.metaKey || event.ctrlKey) {
         const bounds =
           containerBoundsRef.current ??
@@ -776,7 +780,10 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           bindings.onPointerCancel(event);
         }}
         onPointerDown={bindings.onPointerDown}
-        onLostPointerCapture={nodeDragBindings.onLostPointerCapture}
+        onLostPointerCapture={(event) => {
+          nodeDragBindings.onLostPointerCapture(event);
+          bindings.onLostPointerCapture(event);
+        }}
         onPointerMove={(event) => {
           nodeDragBindings.onPointerMove(event);
           bindings.onPointerMove(event);

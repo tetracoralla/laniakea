@@ -3,3 +3,8 @@ dist/
 src-tauri/target/
 .DS_Store
 *.log
+
+# agent tool caches
+.v2c/
+.video_agent/
+.zcode/

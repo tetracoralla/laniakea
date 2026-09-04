@@ -11,9 +11,15 @@ import {
 import { useFlowConnectionDrag } from "../../hooks/useFlowConnectionDrag";
 import { useFlowAutoPan } from "../../hooks/useFlowAutoPan";
 import { useFlowEdgeReconnect } from "../../hooks/useFlowEdgeReconnect";
+import { useFlowKeyboardCommands } from "../../hooks/useFlowKeyboardCommands";
 import { useFlowNodeDrag } from "../../hooks/useFlowNodeDrag";
 import { useFlowViewport } from "../../hooks/useFlowViewport";
-import { computeFlowLayout, flowNodeSize } from "../../model/flowLayout";
+import {
+  computeFlowLayout,
+  flowNavigationTarget,
+  flowNodeSize,
+  type FlowNavigationDirection,
+} from "../../model/flowLayout";
 import {
   connectableFlowNodeIds,
   positionFlowNode,
@@ -78,6 +84,10 @@ export interface FlowCanvasProps {
   ) => void;
   onDelete: (id: string) => void;
   onDeleteEdge?: (edgeId: string) => void;
+  keyboardEnabled?: boolean;
+  onBack?: () => void;
+  onRedo?: () => void;
+  onUndo?: () => void;
   onReconnectEdge?: (
     edgeId: string,
     endpoint: "from" | "to",
@@ -118,6 +128,10 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       onConnect,
       onDelete,
       onDeleteEdge = () => undefined,
+      keyboardEnabled = true,
+      onBack = () => undefined,
+      onRedo = () => undefined,
+      onUndo = () => undefined,
       onReconnectEdge = () => undefined,
       onPositionsChange = () => undefined,
       onViewportChange,
@@ -141,9 +155,6 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       setSelectedEdgeId(null);
       setNodeMenu(null);
     }, [onSelect]);
-    // Declared before the gesture hooks (which appear later in this body) and
-    // re-pointed at them below; the viewport hook only calls it on wheel.
-    const interactionsActiveRef = useRef<() => boolean>(() => false);
     const {
       bindings,
       containerRef,
@@ -153,7 +164,6 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       panBy,
       panModifierHeld,
     } = useFlowViewport({
-      interactionsActive: () => interactionsActiveRef.current(),
       layout,
       onCanvasPointerDown: clearCanvasSelection,
       onViewportChange,
@@ -240,20 +250,40 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       onSelect: selectNode,
       space,
     });
-    interactionsActiveRef.current = () =>
-      nodeDrag.active() ||
-      connection.state !== null ||
-      edgeReconnect.state !== null;
+    const navigateSelection = useCallback((direction: FlowNavigationDirection) => {
+      if (!selectedId) return;
+      const target = flowNavigationTarget(space, selectedId, direction);
+      if (target) selectNode(target);
+    }, [selectNode, selectedId, space]);
+    useFlowKeyboardCommands({
+      enabled: keyboardEnabled,
+      selectedEdgeId,
+      selectedId,
+      onAddNext,
+      onAddBranch,
+      onBeginEdit,
+      onClearEdgeSelection: () => setSelectedEdgeId(null),
+      onDelete,
+      onDeleteEdge: (edgeId) => {
+        onDeleteEdge(edgeId);
+        setSelectedEdgeId(null);
+      },
+      onNavigate: navigateSelection,
+      onBack,
+      onUndo,
+      onRedo,
+    });
     const autoPan = useFlowAutoPan(containerRef);
     const keepAutoPanning = useCallback((
       clientX: number,
       clientY: number,
       shiftViewport: (x: number, y: number) => void,
+      interactionActive: () => boolean,
     ) => {
       autoPan.update(clientX, clientY, (x, y) => {
         panBy(x, y);
         shiftViewport(x, y);
-      });
+      }, interactionActive);
     }, [autoPan, panBy]);
     const insertShapeAtClientPoint = useCallback((
       kind: Extract<FlowNodeKind, "step" | "decision" | "start">,
@@ -352,25 +382,12 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         data-flow-connecting={
           connection.state || edgeReconnect.state ? "true" : undefined
         }
-        data-flow-edge-selected={selectedEdgeId ? "true" : undefined}
-        onKeyDown={(event) => {
-          if (!selectedEdgeId) return;
-          if (event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            setSelectedEdgeId(null);
-          } else if (event.key === "Backspace" || event.key === "Delete") {
-            event.preventDefault();
-            event.stopPropagation();
-            onDeleteEdge(selectedEdgeId);
-            setSelectedEdgeId(null);
-          }
-        }}
         onLostPointerCapture={(event) => {
           autoPan.stop();
           edgeReconnect.lostPointerCapture(event);
           connection.lostPointerCapture(event);
           nodeDrag.lostPointerCapture(event);
+          bindings.onLostPointerCapture(event);
         }}
         onPointerCancel={(event) => {
           autoPan.stop();
@@ -382,15 +399,30 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         onPointerDown={bindings.onPointerDown}
         onPointerMove={(event) => {
           if (edgeReconnect.pointerMove(event)) {
-            keepAutoPanning(event.clientX, event.clientY, edgeReconnect.shiftViewport);
+            keepAutoPanning(
+              event.clientX,
+              event.clientY,
+              edgeReconnect.shiftViewport,
+              edgeReconnect.active,
+            );
             return;
           }
           if (connection.pointerMove(event)) {
-            keepAutoPanning(event.clientX, event.clientY, connection.shiftViewport);
+            keepAutoPanning(
+              event.clientX,
+              event.clientY,
+              connection.shiftViewport,
+              connection.active,
+            );
             return;
           }
           if (nodeDrag.pointerMove(event)) {
-            keepAutoPanning(event.clientX, event.clientY, nodeDrag.shiftViewport);
+            keepAutoPanning(
+              event.clientX,
+              event.clientY,
+              nodeDrag.shiftViewport,
+              nodeDrag.active,
+            );
             return;
           }
           autoPan.stop();

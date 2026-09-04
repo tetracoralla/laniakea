@@ -5,6 +5,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
+import { useDragInterruption } from "./useDragInterruption";
 import type { FlowLayoutResult } from "../model/flowLayout";
 import type { FlowNodePosition, FlowSpace } from "../types/mindmap";
 
@@ -141,34 +142,16 @@ export function useFlowNodeDrag({
     if (activeRef.current?.pointerId === event.pointerId) clear();
   }, [clear]);
 
-  useEffect(() => {
-    const cancel = () => clear();
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || !activeRef.current) return;
-      event.preventDefault();
-      event.stopPropagation();
-      clear();
-    };
-    const visibility = () => {
-      if (document.visibilityState === "hidden") clear(false);
-    };
-    window.addEventListener("keydown", escape, { capture: true });
-    window.addEventListener("blur", cancel);
-    document.addEventListener("visibilitychange", visibility);
-    return () => {
-      window.removeEventListener("keydown", escape, { capture: true });
-      window.removeEventListener("blur", cancel);
-      document.removeEventListener("visibilitychange", visibility);
-    };
-  }, [clear]);
+  useDragInterruption({
+    hasActiveDrag: () => activeRef.current !== null,
+    onCancel: () => clear(),
+  });
 
   useEffect(() => {
     if (spaceIdRef.current === space.id) return;
     spaceIdRef.current = space.id;
     clear(false);
   }, [clear, space.id]);
-
-  useEffect(() => () => clear(false), [clear]);
 
   return {
     begin,

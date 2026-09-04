@@ -26,8 +26,13 @@ import type {
   SelectionState,
   Viewport,
 } from "../types/mindmap";
+import {
+  releaseOwnedPointerCapture,
+  useDragInterruption,
+} from "./useDragInterruption";
 
 interface SelectGesture {
+  captureElement: HTMLElement;
   kind: "select";
   pointerId: number;
   start: CanvasPoint;
@@ -42,6 +47,7 @@ interface SelectGesture {
 }
 
 interface PanGesture {
+  captureElement: HTMLElement;
   kind: "pan";
   pointerId: number;
   originX: number;
@@ -66,6 +72,7 @@ interface CanvasGestureOptions {
 
 interface CanvasGestureBindings {
   onClickCapture: MouseEventHandler<HTMLDivElement>;
+  onLostPointerCapture: PointerEventHandler<HTMLDivElement>;
   onPointerDown: PointerEventHandler<HTMLDivElement>;
   onPointerMove: PointerEventHandler<HTMLDivElement>;
   onPointerUp: PointerEventHandler<HTMLDivElement>;
@@ -212,6 +219,34 @@ export function useCanvasGestures({
     marqueeAutoPanFrame.current = window.requestAnimationFrame(step);
   };
 
+  const interruptGesture = () => {
+    const currentGesture = gestureRef.current;
+    if (!currentGesture) return;
+    if (
+      currentGesture.kind === "pan" ||
+      currentGesture.viewportMoved
+    ) {
+      onViewportChange(liveViewport.current);
+    }
+    if (currentGesture.kind === "pan" && currentGesture.moved) {
+      suppressNextClick.current = true;
+    }
+    releaseOwnedPointerCapture(
+      currentGesture.captureElement,
+      currentGesture.pointerId,
+    );
+    stopMarqueeAutoPan();
+    spaceHeld.current = false;
+    spaceUsedForPan.current = false;
+    setSpaceMode(false);
+    setGesture(null);
+  };
+
+  useDragInterruption({
+    hasActiveDrag: () => gestureRef.current !== null,
+    onCancel: interruptGesture,
+  });
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
@@ -240,18 +275,9 @@ export function useCanvasGestures({
       if (shouldEdit) onSpaceTap();
     };
     const handleBlur = () => {
-      if (
-        gestureRef.current?.kind === "pan" ||
-        (gestureRef.current?.kind === "select" &&
-          gestureRef.current.viewportMoved)
-      ) {
-        onViewportChange(liveViewport.current);
-      }
-      stopMarqueeAutoPan();
       spaceHeld.current = false;
       spaceUsedForPan.current = false;
       setSpaceMode(false);
-      setGesture(null);
     };
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
@@ -277,6 +303,10 @@ export function useCanvasGestures({
       event.stopPropagation();
       suppressNextClick.current = false;
     },
+    onLostPointerCapture: (event) => {
+      if (gestureRef.current?.pointerId !== event.pointerId) return;
+      interruptGesture();
+    },
     onPointerDown: (event) => {
       const wantsPan =
         event.button === 1 ||
@@ -291,6 +321,7 @@ export function useCanvasGestures({
       if (wantsPan) {
         if (spaceHeld.current) spaceUsedForPan.current = true;
         setGesture({
+          captureElement: event.currentTarget,
           kind: "pan",
           pointerId: event.pointerId,
           originX: event.clientX,
@@ -309,6 +340,7 @@ export function useCanvasGestures({
       };
       const additiveModifier = event.shiftKey || event.metaKey;
       setGesture({
+        captureElement: event.currentTarget,
         kind: "select",
         pointerId: event.pointerId,
         start: point,
@@ -396,9 +428,10 @@ export function useCanvasGestures({
       ) {
         return;
       }
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
+      releaseOwnedPointerCapture(
+        currentGesture.captureElement,
+        currentGesture.pointerId,
+      );
       stopMarqueeAutoPan();
       if (currentGesture.kind === "pan") {
         suppressNextClick.current = currentGesture.moved;
@@ -426,13 +459,7 @@ export function useCanvasGestures({
       ) {
         return;
       }
-      if (currentGesture.kind === "pan") {
-        onViewportChange(liveViewport.current);
-      } else if (currentGesture.viewportMoved) {
-        onViewportChange(liveViewport.current);
-      }
-      stopMarqueeAutoPan();
-      setGesture(null);
+      interruptGesture();
     },
   };
 

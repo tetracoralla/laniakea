@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { useDragInterruption } from "./useDragInterruption";
 
 interface AutoPanBounds {
   bottom: number;
@@ -37,11 +38,13 @@ export function useFlowAutoPan(
   const frameRef = useRef(0);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const panRef = useRef<((x: number, y: number) => void) | null>(null);
+  const interactionActiveRef = useRef<(() => boolean) | null>(null);
   const timestampRef = useRef<number | null>(null);
 
   const stop = useCallback(() => {
     pointerRef.current = null;
     panRef.current = null;
+    interactionActiveRef.current = null;
     timestampRef.current = null;
     if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
     frameRef.current = 0;
@@ -53,7 +56,16 @@ export function useFlowAutoPan(
     const pointer = pointerRef.current;
     const container = containerRef.current;
     const pan = panRef.current;
-    if (!pointer || !container || !pan) return;
+    const interactionActive = interactionActiveRef.current;
+    if (
+      !pointer ||
+      !container ||
+      !pan ||
+      !interactionActive?.()
+    ) {
+      stop();
+      return;
+    }
     const velocity = flowAutoPanDelta(
       container.getBoundingClientRect(),
       pointer.x,
@@ -76,13 +88,20 @@ export function useFlowAutoPan(
     clientX: number,
     clientY: number,
     onPan: (x: number, y: number) => void,
+    interactionActive: () => boolean = () => true,
   ) => {
     pointerRef.current = { x: clientX, y: clientY };
     panRef.current = onPan;
+    interactionActiveRef.current = interactionActive;
     if (!frameRef.current) {
       frameRef.current = window.requestAnimationFrame(tickRef.current);
     }
   }, []);
+
+  useDragInterruption({
+    hasActiveDrag: () => pointerRef.current !== null,
+    onCancel: stop,
+  });
 
   useEffect(() => stop, [stop]);
   return { stop, update };

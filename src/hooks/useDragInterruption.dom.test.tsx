@@ -7,6 +7,7 @@ import {
   releaseOwnedPointerCapture,
   useDragInterruption,
 } from "./useDragInterruption";
+import { useKeyboardCommands } from "./useKeyboardCommands";
 
 function Harness({
   active,
@@ -16,6 +17,22 @@ function Harness({
   onCancel: () => void;
 }) {
   useDragInterruption({ hasActiveDrag: () => active, onCancel });
+  return null;
+}
+
+function KeyboardCommandsHarness({
+  onCommand,
+}: {
+  onCommand: (id: string) => void;
+}) {
+  useKeyboardCommands({
+    enabled: true,
+    selectionEnabled: true,
+    commandTarget: "mind-node",
+    onCommand,
+    onBeginTyping: () => undefined,
+    onPasteText: () => undefined,
+  });
   return null;
 }
 
@@ -59,6 +76,70 @@ describe("shared drag interruption lifecycle", () => {
 
     expect(escape.defaultPrevented).toBe(true);
     expect(onCancel).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps Escape owned by an active drag even when the drag listener mounted later", async () => {
+    const onCommand = vi.fn();
+    const onCancel = vi.fn();
+    const keyboardContainer = document.createElement("div");
+    const dragContainer = document.createElement("div");
+    document.body.append(keyboardContainer, dragContainer);
+    const keyboardRoot = createRoot(keyboardContainer);
+    const dragRoot = createRoot(dragContainer);
+    try {
+      // Keyboard commands register first; the drag interruption mounts in a
+      // second root afterwards, mirroring a subspace portal that appears
+      // after the keyboard listener's last re-registration. Registration
+      // order must not decide who wins Escape.
+      await act(async () =>
+        keyboardRoot.render(
+          <KeyboardCommandsHarness onCommand={onCommand} />,
+        ),
+      );
+      await act(async () =>
+        dragRoot.render(<Harness active onCancel={onCancel} />),
+      );
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { cancelable: true, key: "Escape" }),
+      );
+
+      expect(onCancel).toHaveBeenCalledTimes(1);
+      expect(onCommand).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        keyboardRoot.unmount();
+        dragRoot.unmount();
+      });
+      keyboardContainer.remove();
+      dragContainer.remove();
+    }
+  });
+
+  it("cancels every active direct-manipulation owner with one Escape", async () => {
+    const firstCancel = vi.fn();
+    const secondCancel = vi.fn();
+    const secondContainer = document.createElement("div");
+    document.body.append(secondContainer);
+    const secondRoot = createRoot(secondContainer);
+    try {
+      await act(async () => root.render(
+        <Harness active onCancel={firstCancel} />,
+      ));
+      await act(async () => secondRoot.render(
+        <Harness active onCancel={secondCancel} />,
+      ));
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { cancelable: true, key: "Escape" }),
+      );
+
+      expect(firstCancel).toHaveBeenCalledOnce();
+      expect(secondCancel).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => secondRoot.unmount());
+      secondContainer.remove();
+    }
   });
 
   it("releases capture only when the gesture still owns it", () => {

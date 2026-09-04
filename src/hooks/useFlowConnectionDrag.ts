@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { connectableFlowNodeIds } from "../model/spaces";
+import { useDragInterruption } from "./useDragInterruption";
 import type {
   FlowPlacementDirection,
   FlowSpace,
@@ -301,27 +302,10 @@ export function useFlowConnectionDrag({
     focusCanvas();
   }, [focusCanvas, replaceState]);
 
-  const active = state !== null;
-  useEffect(() => {
-    if (!active) return;
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      cancel();
-    };
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") cancel();
-    };
-    window.addEventListener("keydown", handleEscape, { capture: true });
-    window.addEventListener("blur", cancel);
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => {
-      window.removeEventListener("keydown", handleEscape, { capture: true });
-      window.removeEventListener("blur", cancel);
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
-  }, [active, cancel]);
+  useDragInterruption({
+    hasActiveDrag: () => stateRef.current !== null,
+    onCancel: cancel,
+  });
 
   useEffect(() => () => {
     if (frameRef.current) window.cancelAnimationFrame(frameRef.current);
@@ -346,6 +330,7 @@ export function useFlowConnectionDrag({
     : "";
 
   return {
+    active: () => stateRef.current !== null,
     begin,
     cancel,
     connectableIds,
