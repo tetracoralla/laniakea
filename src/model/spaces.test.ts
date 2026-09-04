@@ -25,6 +25,8 @@ import {
   reconnectFlowEdge,
   setFlowNodeText,
   setFlowEdgeLabel,
+  setFlowEdgeRoute,
+  setFlowEdgeStyle,
   setFlowViewport,
 } from "./spaces";
 import { isMindMapDocument } from "./document";
@@ -249,6 +251,113 @@ describe("typed Laniakea spaces", () => {
       to: placed.nodeId,
       toPort: "right",
     }));
+  });
+
+  it("keeps an occupied quick-create direction and chooses the nearest open lane", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const originId = created.selectedFlowNodeId;
+    const first = addFlowNodeInDirection(
+      initial,
+      originId,
+      "step",
+      "right",
+      { [originId]: { x: 140, y: 140 } },
+    );
+    const second = addFlowNodeInDirection(
+      first.space,
+      originId,
+      "step",
+      "right",
+      first.space.positions ?? {},
+    );
+    const firstPosition = second.space.positions?.[first.nodeId];
+    const secondPosition = second.space.positions?.[second.nodeId];
+
+    expect(second.space.edges.filter(({ from }) => from === originId)).toHaveLength(2);
+    expect(secondPosition?.x).toBe(firstPosition?.x);
+    expect(secondPosition?.y).not.toBe(firstPosition?.y);
+    expect(Math.abs((secondPosition?.y ?? 0) - (firstPosition?.y ?? 0)))
+      .toBeGreaterThanOrEqual(102);
+  });
+
+  it("edits one edge authority for styles and manual routing and cleans it up", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
+    const edgeId = added.space.edges[0].id;
+    const styled = setFlowEdgeStyle(added.space, edgeId, {
+      kind: "curved",
+      sourceEndpoint: "ring",
+      targetEndpoint: "dot",
+      dash: "dashed",
+      weight: "bold",
+      tone: "blue",
+    });
+    const routed = setFlowEdgeRoute(styled, edgeId, {
+      axis: "y",
+      coordinate: 312,
+    });
+
+    expect(routed.edges[0].style).toEqual({
+      kind: "curved",
+      sourceEndpoint: "ring",
+      targetEndpoint: "dot",
+      dash: "dashed",
+      weight: "bold",
+      tone: "blue",
+    });
+    expect(routed.edgeRoutes?.[edgeId]).toEqual({ axis: "y", coordinate: 312 });
+    expect(setFlowEdgeRoute(routed, edgeId, null).edgeRoutes).toBeUndefined();
+    expect(deleteFlowEdge(routed, edgeId).edgeRoutes).toBeUndefined();
+  });
+
+  it("drops a manual route whenever an insertion changes that edge's endpoint", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const continuation = addFlowStepAfter(initial, created.selectedFlowNodeId);
+    const edgeId = continuation.space.edges[0].id;
+    const routed = setFlowEdgeRoute(continuation.space, edgeId, {
+      axis: "y",
+      coordinate: 240,
+    });
+
+    const inserted = addFlowStepAfter(routed, created.selectedFlowNodeId);
+    expect(inserted.space.edges.find(({ id }) => id === edgeId)?.from)
+      .toBe(inserted.nodeId);
+    expect(inserted.space.edgeRoutes?.[edgeId]).toBeUndefined();
+  });
+
+  it("reuses directional placement when keyboard insertion meets an occupied lane", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const sourceId = created.selectedFlowNodeId;
+    const first = addFlowNodeInDirection(
+      initial,
+      sourceId,
+      "step",
+      "right",
+      { [sourceId]: { x: 140, y: 140 } },
+    );
+    const inserted = addFlowStepAfter(first.space, sourceId);
+    const firstPosition = inserted.space.positions?.[first.nodeId];
+    const insertedPosition = inserted.space.positions?.[inserted.nodeId];
+
+    expect(insertedPosition?.x).toBe(firstPosition?.x);
+    expect(Math.abs((insertedPosition?.y ?? 0) - (firstPosition?.y ?? 0)))
+      .toBeGreaterThanOrEqual(102);
+  });
+
+  it("does not create a mutation for unchanged node text or an invalid route", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const node = initial.nodes[created.selectedFlowNodeId];
+    const added = addFlowStepAfter(initial, node.id);
+    expect(setFlowNodeText(initial, node.id, `  ${node.text}  `)).toBe(initial);
+    expect(setFlowEdgeRoute(added.space, added.space.edges[0].id, {
+      axis: "x",
+      coordinate: Number.NaN,
+    })).toBe(added.space);
   });
 
   it("adds a free-standing palette shape and lets a terminal participate like any node", () => {

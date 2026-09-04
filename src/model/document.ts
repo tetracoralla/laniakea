@@ -1,5 +1,6 @@
 import type {
   FlowEdge,
+  FlowEdgeRouteOverride,
   FlowNode,
   FlowSpace,
   FloatingRoot,
@@ -64,6 +65,7 @@ function isFlowNode(value: unknown, id: string): value is FlowNode {
 }
 
 function isFlowEdge(value: unknown): value is FlowEdge {
+  const style = isRecord(value) ? value.style : undefined;
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
@@ -73,7 +75,32 @@ function isFlowEdge(value: unknown): value is FlowEdge {
     (value.fromPort === undefined ||
       ["up", "right", "down", "left"].includes(String(value.fromPort))) &&
     (value.toPort === undefined ||
-      ["up", "right", "down", "left"].includes(String(value.toPort)))
+      ["up", "right", "down", "left"].includes(String(value.toPort))) &&
+    (style === undefined || (
+      isRecord(style) &&
+      (style.kind === undefined || ["rounded", "orthogonal", "straight", "curved"].includes(String(style.kind))) &&
+      (style.dash === undefined || ["solid", "dashed", "dotted"].includes(String(style.dash))) &&
+      (style.weight === undefined || ["thin", "regular", "bold"].includes(String(style.weight))) &&
+      (style.sourceEndpoint === undefined || ["none", "arrow", "dot", "ring"].includes(String(style.sourceEndpoint))) &&
+      (style.targetEndpoint === undefined || ["none", "arrow", "dot", "ring"].includes(String(style.targetEndpoint))) &&
+      (style.tone === undefined || ["neutral", "violet", "blue", "emerald", "amber"].includes(String(style.tone)))
+    ))
+  );
+}
+
+function isFlowEdgeRoutes(
+  value: unknown,
+  edges: readonly FlowEdge[],
+): value is Record<string, FlowEdgeRouteOverride> | undefined {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  const edgeIds = new Set(edges.map(({ id }) => id));
+  return Object.entries(value).every(([edgeId, route]) =>
+    edgeIds.has(edgeId) &&
+    isRecord(route) &&
+    (route.axis === "x" || route.axis === "y") &&
+    typeof route.coordinate === "number" &&
+    Number.isFinite(route.coordinate)
   );
 }
 
@@ -117,6 +144,7 @@ function isFlowSpace(value: unknown, id: string): value is FlowSpace {
     !Array.isArray(value.edges) ||
     !value.edges.every(isFlowEdge) ||
     !isFlowPositions(value.positions, value.nodes) ||
+    !isFlowEdgeRoutes(value.edgeRoutes, value.edges as FlowEdge[]) ||
     !isViewport(value.viewport) ||
     typeof value.updatedAt !== "string"
   ) {

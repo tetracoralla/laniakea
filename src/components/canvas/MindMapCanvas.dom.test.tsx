@@ -185,6 +185,7 @@ describe("rendered interaction regressions", () => {
     delete (
       HTMLElement.prototype as Partial<HTMLElement>
     ).setPointerCapture;
+    Reflect.deleteProperty(document, "visibilityState");
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1091,7 +1092,7 @@ describe("rendered interaction regressions", () => {
     expect(portalRight).toBeLessThanOrEqual(1176);
   });
 
-  it("exits editing but keeps selection when the page becomes hidden", async () => {
+  it("keeps the latest mounted edit intact when the page becomes hidden", async () => {
     await act(async () => {
       root.render(<App />);
       await Promise.resolve();
@@ -1113,14 +1114,12 @@ describe("rendered interaction regressions", () => {
       document.dispatchEvent(new Event("visibilitychange"));
     });
 
-    expect(container.querySelector(".mind-node__editor")).toBeNull();
-    expect(container.querySelector(".mind-node__content")?.textContent).toBe(
-      "切换前的最终文本",
-    );
+    expect(container.querySelector(".mind-node__editor")).toBe(editor);
+    expect(container.querySelector(".mind-node__content")).toBeNull();
+    expect(editor.value).toBe("切换前的最终文本");
     expect(
       container.querySelector(".mind-node")?.classList.contains("is-selected"),
     ).toBe(true);
-    Reflect.deleteProperty(document, "visibilityState");
   });
 
   it("does not commit an unfinished IME preedit when the window loses focus", async () => {
@@ -2937,6 +2936,11 @@ describe("rendered interaction regressions", () => {
     });
 
     expect(container.querySelectorAll(".node-drag-preview__item")).toHaveLength(2);
+    expect(
+      container
+        .querySelector<HTMLElement>(".node-drag-preview__item")
+        ?.style.getPropertyValue("--node-padding-inline"),
+    ).toBe("20px");
     expect(
       container.querySelector<HTMLElement>("[data-node-id='node-1']")
         ?.dataset.nodeDragging,

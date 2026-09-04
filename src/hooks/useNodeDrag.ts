@@ -29,6 +29,7 @@ import {
   normalizeSelectedRoots,
   selectionEquals,
 } from "../model/selection";
+import { nodeInlinePadding } from "../model/layout";
 import {
   releaseOwnedPointerCapture,
   useDragInterruption,
@@ -211,6 +212,10 @@ function populatePreview(
     }`;
     item.style.height = `${root.height}px`;
     item.style.left = `${root.x - bounds.minX}px`;
+    item.style.setProperty(
+      "--node-padding-inline",
+      `${nodeInlinePadding(root.depth, root.rootKind)}px`,
+    );
     item.style.top = `${root.y - bounds.minY}px`;
     item.style.width = `${root.width}px`;
     item.style.fontSize = `${

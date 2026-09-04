@@ -24,6 +24,20 @@ open_app() {
   return 1
 }
 
+open_verify_app() {
+  local bundle="$1"
+  local attempt
+  for attempt in 1 2 3 4 5; do
+    # Verification must not take keyboard focus from an owner editing in the
+    # live client. Launch the separately identified app hidden and in back.
+    if /usr/bin/open -gj -n "$bundle"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 if [[ "$MODE" == "--verify" || "$MODE" == "verify" ]]; then
   # Runtime verification must never terminate or reuse the owner's installed
   # client. The separate identifier also gives it an independent app-data
@@ -36,7 +50,7 @@ if [[ "$MODE" == "--verify" || "$MODE" == "verify" ]]; then
     echo "isolated app is missing its executable: $VERIFY_APP_BINARY" >&2
     exit 1
   fi
-  open_app "$VERIFY_APP_BUNDLE"
+  open_verify_app "$VERIFY_APP_BUNDLE"
   for _ in 1 2 3 4 5; do
     if pgrep -f "$VERIFY_APP_BINARY" >/dev/null; then
       echo "isolated desktop runtime verified: $VERIFY_APP_BUNDLE"

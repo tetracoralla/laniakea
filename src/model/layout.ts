@@ -19,6 +19,22 @@ const descendantConnectorGap = 150;
 
 type NodeRootKind = LayoutNode["rootKind"];
 
+/**
+ * Horizontal node padding is geometry, not merely decoration: layout sizing,
+ * rendered nodes, and drag previews must agree on it. Keep the value here so
+ * left-aligned text does not expose sizing slack on only its right side.
+ */
+export function nodeInlinePadding(
+  depth: number,
+  rootKind: NodeRootKind = null,
+): number {
+  if (rootKind === "main") return 25;
+  if (rootKind === "floating") return 22;
+  if (depth === 1) return 20;
+  if (depth === 2) return 18;
+  return 14;
+}
+
 export interface LayoutTextOverride {
   id: string;
   text: string;
@@ -86,16 +102,7 @@ export function sizeForNode(
         : isSecondary
           ? 15
           : 13;
-  const horizontalPadding = isMainRoot
-    ? 50
-    : isFloatingRoot
-      ? 44
-      : depth === 1
-        ? 40
-        : isSecondary
-          ? 36
-          : 28;
-  const horizontalChrome = horizontalPadding + 4;
+  const horizontalChrome = nodeInlinePadding(depth, rootKind) * 2 + 2;
   const maximumWidth = isMainRoot
     ? Number.POSITIVE_INFINITY
     : isFloatingRoot
@@ -128,9 +135,7 @@ export function sizeForNode(
   );
   const width = Math.min(
     maximumWidth,
-    Math.ceil(
-      longestLineWidth + horizontalChrome + (measureTextWidth ? 4 : 0),
-    ),
+    Math.ceil(longestLineWidth + horizontalChrome),
   );
   const lineCount = isMainRoot
     ? explicitLines.length

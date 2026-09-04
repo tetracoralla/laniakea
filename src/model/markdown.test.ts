@@ -11,12 +11,15 @@ import {
 } from "./markdown";
 import { createChild, deleteSubtree, setNodeText } from "./tree";
 import {
+  addFlowStepAfter,
   createFlowSpace,
   createMapSpace,
   flowSpaceForNode,
   mapSpaceDocument,
   mapSpaceForNode,
   mergeMapSpaceDocument,
+  setFlowEdgeRoute,
+  setFlowEdgeStyle,
 } from "./spaces";
 
 describe("Markdown import and export", () => {
@@ -101,6 +104,40 @@ describe("Markdown import and export", () => {
     expect(Object.values(flow?.nodes ?? {}).map((node) => node.text)).toEqual([
       "实现路径",
     ]);
+  });
+
+  it("round-trips connector appearance while omitting local manual routing", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const flow = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowStepAfter(flow, created.selectedFlowNodeId);
+    const edgeId = added.space.edges[0].id;
+    const styled = setFlowEdgeStyle(added.space, edgeId, {
+      kind: "curved",
+      targetEndpoint: "ring",
+      tone: "emerald",
+    });
+    const routed = setFlowEdgeRoute(styled, edgeId, {
+      axis: "x",
+      coordinate: 440,
+    });
+    const document = {
+      ...created.document,
+      spaces: { ...created.document.spaces, [created.spaceId]: routed },
+    };
+    const markdown = documentToMarkdown(document);
+    const reopened = parseMarkdownDocument(markdown, "ignored filename");
+    const anchor = Object.values(reopened.document.nodes).find(
+      (node) => node.text === "实现路径",
+    )!;
+    const reopenedFlow = flowSpaceForNode(reopened.document, anchor.id)!;
+
+    expect(reopenedFlow.edges[0].style).toMatchObject({
+      kind: "curved",
+      targetEndpoint: "ring",
+      tone: "emerald",
+    });
+    expect(reopenedFlow.edgeRoutes).toBeUndefined();
+    expect(markdown).not.toContain('"edgeRoutes"');
   });
 
   it("round-trips a permanent map space with a nested flow", () => {

@@ -1,4 +1,6 @@
 import type {
+  FlowConnectorKind,
+  FlowEdgeRouteOverride,
   FlowPlacementDirection,
   FlowSpace,
 } from "../types/mindmap";
@@ -19,6 +21,18 @@ import {
   type TextWidthMeasurer,
 } from "./layout";
 import { flowSpaceToSemanticGraph } from "./flowGraphAdapter";
+import {
+  FLOW_CANVAS_PADDING as canvasPadding,
+  FLOW_STEP_NODE_HEIGHT as stepNodeHeight,
+  FLOW_STEP_NODE_WIDTH as stepNodeWidth,
+  flowNodeSize,
+  type FlowDirectionalPlacement,
+} from "./flowPlacement";
+export {
+  flowNodeSize,
+  resolveFlowDirectionalPlacement,
+  type FlowDirectionalPlacement,
+} from "./flowPlacement";
 
 export interface FlowLayoutNode {
   id: string;
@@ -39,98 +53,14 @@ export interface FlowLayoutResult {
 
 export type FlowNavigationDirection = "up" | "down" | "left" | "right";
 
-const stepNodeWidth = 196;
-const stepNodeHeight = 54;
-const stepContentWidth = 160;
-const decisionNodeWidth = 172;
-const decisionNodeHeight = 76;
-const decisionContentWidth = 116;
-const decisionVerticalInset = 24;
-const terminalNodeWidth = 152;
-const terminalNodeHeight = 46;
 const columnGap = 72;
 const rowGap = 92;
-const canvasPadding = 140;
-const flowLineHeight = 20;
-const flowVerticalPadding = 20;
-const emptyStepPlaceholder = "输入步骤";
-
-const flowFontStyle: NodeTextStyle = {
-  fontSize: 14,
-  fontWeight: 570,
-  letterSpacing: 0,
-};
 
 const flowEdgeLabelFontStyle: NodeTextStyle = {
   fontSize: 10,
   fontWeight: 570,
   letterSpacing: 0,
 };
-
-function measureLine(
-  line: string,
-  measureTextWidth?: TextWidthMeasurer,
-): number {
-  return measureTextWidth
-    ? measureTextWidth(line, flowFontStyle)
-    : estimateTextWidth(line, flowFontStyle);
-}
-
-function wrappedTextBlock(
-  text: string,
-  maxWidth: number,
-  measureTextWidth?: TextWidthMeasurer,
-): { width: number; height: number } {
-  const visible = text.trim() ? text : emptyStepPlaceholder;
-  const explicitLines = visible.split("\n");
-  let longestLine = 0;
-  const lineCount = explicitLines.reduce((total, line) => {
-    const lineWidth = measureLine(line, measureTextWidth);
-    longestLine = Math.max(longestLine, lineWidth);
-    return total + Math.max(1, Math.ceil(lineWidth / maxWidth));
-  }, 0);
-  return {
-    width: Math.min(maxWidth, Math.ceil(longestLine)),
-    height: lineCount * flowLineHeight,
-  };
-}
-
-export function flowNodeSize(
-  kind: string,
-  text: string,
-  measureTextWidth?: TextWidthMeasurer,
-): { width: number; height: number } {
-  if (kind === "start" || kind === "end") {
-    return { width: terminalNodeWidth, height: terminalNodeHeight };
-  }
-  if (kind !== "decision") {
-    const block = wrappedTextBlock(text, stepContentWidth, measureTextWidth);
-    return {
-      width: stepNodeWidth,
-      height: Math.max(
-        stepNodeHeight,
-        block.height + flowVerticalPadding,
-      ),
-    };
-  }
-  const block = wrappedTextBlock(
-    text,
-    decisionContentWidth,
-    measureTextWidth,
-  );
-  const halfTextHeight = block.height / 2;
-  const halfHeight = Math.max(
-    decisionNodeHeight / 2,
-    halfTextHeight + decisionVerticalInset,
-  );
-  const halfWidth = Math.max(
-    decisionNodeWidth / 2,
-    Math.ceil(
-      (block.width / 2) * (halfHeight / (halfHeight - halfTextHeight)) + 8,
-    ),
-  );
-  return { width: halfWidth * 2, height: Math.ceil(halfHeight * 2) };
-}
 
 export function computeFlowLayout(
   space: FlowSpace,
@@ -296,12 +226,19 @@ export interface FlowPoint extends ProjectionPoint {}
 export interface FlowConnectorRoute {
   end: FlowPoint;
   fromPort: FlowPlacementDirection;
+  jumps?: readonly FlowConnectorJump[];
   points: FlowPoint[];
   start: FlowPoint;
   toPort: FlowPlacementDirection;
 }
 
 export interface FlowConnectorJump extends FlowPoint {
+  segmentIndex: number;
+}
+
+export interface FlowRouteAdjustmentHandle extends FlowPoint {
+  axis: FlowEdgeRouteOverride["axis"];
+  coordinate: number;
   segmentIndex: number;
 }
 
@@ -338,6 +275,9 @@ function fromProjectionRoute(route: OrthogonalRoute): FlowConnectorRoute {
     fromPort: fromProjectionPort(route.sourcePort),
     toPort: fromProjectionPort(route.targetPort),
     points: route.points,
+    ...(route.jumps === undefined
+      ? {}
+      : { jumps: route.jumps.map((jump) => ({ ...jump })) }),
   };
 }
 
@@ -349,7 +289,7 @@ export interface CompiledFlowConnector {
 }
 
 export function compileFlowConnectors(
-  space: Pick<FlowSpace, "nodes" | "edges">,
+  space: Pick<FlowSpace, "nodes" | "edges" | "edgeRoutes">,
   layout: FlowLayoutResult,
   measureTextWidth?: TextWidthMeasurer,
 ): CompiledFlowConnector[] {
@@ -386,6 +326,13 @@ export function compileFlowConnectors(
         }]),
       ),
     },
+    edgeRouteConstraints: Object.fromEntries(
+      Object.entries(space.edgeRoutes ?? {}).map(([edgeId, route]) => [edgeId, {
+        type: "orthogonal-corridor" as const,
+        axis: route.axis,
+        coordinate: route.coordinate,
+      }]),
+    ),
   });
   return plan.edges.map((edge) => ({
     edgeId: edge.id,
@@ -393,6 +340,154 @@ export function compileFlowConnectors(
     route: fromProjectionRoute(edge.route),
     toId: edge.target,
   }));
+}
+
+function portVector(direction: FlowPlacementDirection): FlowPoint {
+  if (direction === "left") return { x: -1, y: 0 };
+  if (direction === "right") return { x: 1, y: 0 };
+  if (direction === "up") return { x: 0, y: -1 };
+  return { x: 0, y: 1 };
+}
+
+export function includeFlowConnectorBounds(
+  space: Pick<FlowSpace, "nodes" | "edges" | "edgeRoutes">,
+  layout: FlowLayoutResult,
+  measureTextWidth?: TextWidthMeasurer,
+  compiled = compileFlowConnectors(space, layout, measureTextWidth),
+): FlowLayoutResult {
+  const edgeById = new Map(space.edges.map((edge) => [edge.id, edge]));
+  const points = compiled.flatMap((connector) => {
+    const kind = edgeById.get(connector.edgeId)?.style?.kind ?? "rounded";
+    if (kind !== "curved") return connector.route.points;
+    const curve = flowCurvedConnectorGeometry(connector.route);
+    // A cubic Bézier stays inside the convex hull of these four points, so
+    // including both controls keeps fit bounds honest without sampling.
+    return [
+      connector.route.start,
+      curve.control1,
+      curve.control2,
+      connector.route.end,
+    ];
+  });
+  if (points.length === 0) return layout;
+  const minX = Math.min(layout.minX, ...points.map((point) => point.x - canvasPadding));
+  const minY = Math.min(layout.minY, ...points.map((point) => point.y - canvasPadding));
+  const maxX = Math.max(
+    layout.minX + layout.width,
+    ...points.map((point) => point.x + canvasPadding),
+  );
+  const maxY = Math.max(
+    layout.minY + layout.height,
+    ...points.map((point) => point.y + canvasPadding),
+  );
+  return { ...layout, minX, minY, width: maxX - minX, height: maxY - minY };
+}
+
+function oppositeFlowPort(
+  direction: FlowPlacementDirection,
+): FlowPlacementDirection {
+  if (direction === "left") return "right";
+  if (direction === "right") return "left";
+  if (direction === "up") return "down";
+  return "up";
+}
+
+export function compileFlowQuickCreateRoute(
+  space: Pick<FlowSpace, "nodes" | "edges" | "edgeRoutes">,
+  layout: FlowLayoutResult,
+  sourceId: string,
+  direction: FlowPlacementDirection,
+  placement: FlowDirectionalPlacement,
+  measureTextWidth?: TextWidthMeasurer,
+): FlowConnectorRoute | null {
+  const source = space.nodes[sourceId];
+  if (!source) return null;
+  let suffix = 0;
+  let previewNodeId = "__quick-create-preview__";
+  while (space.nodes[previewNodeId]) {
+    suffix += 1;
+    previewNodeId = `__quick-create-preview-${suffix}__`;
+  }
+  let previewEdgeId = "__quick-create-edge__";
+  while (space.edges.some((edge) => edge.id === previewEdgeId)) {
+    suffix += 1;
+    previewEdgeId = `__quick-create-edge-${suffix}__`;
+  }
+  const previewSpace = {
+    nodes: {
+      ...space.nodes,
+      [previewNodeId]: {
+        id: previewNodeId,
+        text: "",
+        kind: "step" as const,
+        createdAt: source.updatedAt,
+        updatedAt: source.updatedAt,
+      },
+    },
+    edges: [
+      ...space.edges,
+      {
+        id: previewEdgeId,
+        from: sourceId,
+        to: previewNodeId,
+        label: "",
+        fromPort: direction,
+        toPort: oppositeFlowPort(direction),
+      },
+    ],
+    edgeRoutes: space.edgeRoutes,
+  };
+  const previewLayout: FlowLayoutResult = {
+    ...layout,
+    nodes: {
+      ...layout.nodes,
+      [previewNodeId]: {
+        id: previewNodeId,
+        level: layout.nodes[sourceId]?.level ?? 0,
+        ...placement,
+      },
+    },
+  };
+  return compileFlowConnectors(previewSpace, previewLayout, measureTextWidth)
+    .find((connector) => connector.edgeId === previewEdgeId)?.route ?? null;
+}
+
+export function flowRouteAdjustmentHandle(
+  route: FlowConnectorRoute,
+  preferred?: FlowEdgeRouteOverride,
+): FlowRouteAdjustmentHandle | null {
+  const segments = route.points.slice(0, -1).flatMap((start, segmentIndex) => {
+    const end = route.points[segmentIndex + 1];
+    if (!end) return [];
+    const horizontal = Math.abs(end.y - start.y) < 0.01;
+    const vertical = Math.abs(end.x - start.x) < 0.01;
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    if ((!horizontal && !vertical) || length < 2) return [];
+    return [{
+      axis: horizontal ? "y" as const : "x" as const,
+      coordinate: horizontal ? start.y : start.x,
+      length,
+      segmentIndex,
+      x: (start.x + end.x) / 2,
+      y: (start.y + end.y) / 2,
+    }];
+  });
+  if (preferred) {
+    const preferredSegments = segments.filter((segment) =>
+      segment.axis === preferred.axis &&
+      Math.abs(segment.coordinate - preferred.coordinate) < 0.01
+    );
+    const preferredSegment = preferredSegments.sort((left, right) =>
+      right.length - left.length
+    )[0];
+    if (preferredSegment) return preferredSegment;
+  }
+  const candidates = segments.filter(({ length }) => length >= 28);
+  return candidates.sort((left, right) =>
+    Number(left.segmentIndex === 0 || left.segmentIndex === route.points.length - 2) -
+      Number(right.segmentIndex === 0 || right.segmentIndex === route.points.length - 2) ||
+    right.length - left.length
+  )[0] ?? null;
 }
 
 export function flowConnectorRoute(
@@ -415,8 +510,21 @@ export function flowConnectorRoute(
 
 export function flowConnectorPathFromRoute(
   route: FlowConnectorRoute,
-  jumps: readonly FlowConnectorJump[] = [],
+  jumps: readonly FlowConnectorJump[] = route.jumps ?? [],
+  kind: FlowConnectorKind = "rounded",
 ): string {
+  if (kind === "straight") {
+    return `M ${route.start.x} ${route.start.y} L ${route.end.x} ${route.end.y}`;
+  }
+  if (kind === "curved") {
+    const { control1, control2 } = flowCurvedConnectorGeometry(route);
+    return `M ${route.start.x} ${route.start.y} C ${control1.x} ${control1.y} ${control2.x} ${control2.y} ${route.end.x} ${route.end.y}`;
+  }
+  if (kind === "orthogonal") {
+    return route.points.map((point, index) =>
+      `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`,
+    ).join(" ");
+  }
   return projectionRoundedOrthogonalPath(
     route.points,
     jumps.map((jump): RouteJump => ({ ...jump })),
@@ -424,10 +532,57 @@ export function flowConnectorPathFromRoute(
   );
 }
 
+function flowCurvedConnectorGeometry(route: FlowConnectorRoute): {
+  control1: FlowPoint;
+  control2: FlowPoint;
+} {
+  const sourceVector = portVector(route.fromPort);
+  const targetVector = portVector(route.toPort);
+  const distance = Math.max(
+    48,
+    Math.min(180, Math.hypot(
+      route.end.x - route.start.x,
+      route.end.y - route.start.y,
+    ) * 0.42),
+  );
+  return {
+    control1: {
+      x: route.start.x + sourceVector.x * distance,
+      y: route.start.y + sourceVector.y * distance,
+    },
+    control2: {
+      x: route.end.x + targetVector.x * distance,
+      y: route.end.y + targetVector.y * distance,
+    },
+  };
+}
+
 export function flowConnectorPointOnRoute(
   route: FlowConnectorRoute,
   progress = 0.34,
+  kind: FlowConnectorKind = "rounded",
 ): FlowPoint {
+  const t = Math.max(0, Math.min(1, progress));
+  if (kind === "straight") {
+    return {
+      x: route.start.x + (route.end.x - route.start.x) * t,
+      y: route.start.y + (route.end.y - route.start.y) * t,
+    };
+  }
+  if (kind === "curved") {
+    const { control1, control2 } = flowCurvedConnectorGeometry(route);
+    const inverse = 1 - t;
+    return {
+      x: inverse ** 3 * route.start.x +
+        3 * inverse ** 2 * t * control1.x +
+        3 * inverse * t ** 2 * control2.x +
+        t ** 3 * route.end.x,
+      y: inverse ** 3 * route.start.y +
+        3 * inverse ** 2 * t * control1.y +
+        3 * inverse * t ** 2 * control2.y +
+        t ** 3 * route.end.y,
+    };
+  }
   return projectionPointOnRoute(toProjectionRoute(route), progress);
 }
 
@@ -437,8 +592,28 @@ export function flowConnectorDeleteAnchor(
   route: FlowConnectorRoute,
   obstacles: readonly FlowLayoutNode[],
   offset = 24,
+  kind: FlowConnectorKind = "rounded",
 ): FlowPoint {
-  const point = flowConnectorPointOnRoute(route, 0.5);
+  const point = flowConnectorPointOnRoute(route, 0.5, kind);
+  let normal: FlowPoint | undefined;
+  if (kind === "straight") {
+    const dx = route.end.x - route.start.x;
+    const dy = route.end.y - route.start.y;
+    const length = Math.hypot(dx, dy);
+    if (length > 0) normal = { x: -dy / length, y: dx / length };
+  } else if (kind === "curved") {
+    const { control1, control2 } = flowCurvedConnectorGeometry(route);
+    // Cubic derivative at t=.5; its perpendicular follows the visible curve
+    // instead of the hidden orthogonal route.
+    const dx = 0.75 * (control1.x - route.start.x) +
+      1.5 * (control2.x - control1.x) +
+      0.75 * (route.end.x - control2.x);
+    const dy = 0.75 * (control1.y - route.start.y) +
+      1.5 * (control2.y - control1.y) +
+      0.75 * (route.end.y - control2.y);
+    const length = Math.hypot(dx, dy);
+    if (length > 0) normal = { x: -dy / length, y: dx / length };
+  }
   const segments = route.points.slice(0, -1).map((start, index) => {
     const end = route.points[index + 1]!;
     return {
@@ -447,16 +622,17 @@ export function flowConnectorDeleteAnchor(
       length: Math.hypot(end.x - start.x, end.y - start.y),
     };
   });
-  const total = segments.reduce((sum, segment) => sum + segment.length, 0);
-  let remaining = total * 0.5;
-  let normal: FlowPoint | undefined;
-  for (const segment of segments) {
-    if (segment.length === 0) continue;
-    if (remaining <= segment.length) {
-      normal = { x: -segment.dy / segment.length, y: segment.dx / segment.length };
-      break;
+  if (!normal) {
+    const total = segments.reduce((sum, segment) => sum + segment.length, 0);
+    let remaining = total * 0.5;
+    for (const segment of segments) {
+      if (segment.length === 0) continue;
+      if (remaining <= segment.length) {
+        normal = { x: -segment.dy / segment.length, y: segment.dx / segment.length };
+        break;
+      }
+      remaining -= segment.length;
     }
-    remaining -= segment.length;
   }
   if (!normal) return point;
   const occupied = (x: number, y: number) =>

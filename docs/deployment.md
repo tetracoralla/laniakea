@@ -10,12 +10,14 @@
 
 项目不依赖外部 CDN、账号、数据库或应用服务器。浏览器文档使用 IndexedDB，Service Worker 只缓存应用外壳以便离线重新打开。
 
-源码仓库从官方 npm registry 精确锁定
-`@openadam/graph-view-compiler@0.4.0`；`npm ci` 不依赖开发者电脑上的相邻仓库。
+源码仓库暂时精确锁定已审核的
+`@openadam/graph-view-compiler@0.5.0` 打包候选及其 SHA-256 sidecar；`npm ci` 不依赖
+开发者电脑上的相邻仓库。0.5.0 发布到官方 npm registry 后，再把同一版本切回 registry
+来源并删除 vendored 候选，不改变 Laniakea 业务代码。
 网页、Tauri 桌面包和 Codex Plugin 都会把该运行时代码打进自身产物，普通用户不需要
 单独安装 Node 或图引擎。Flow 数据格式与业务代码不因共享包升级而改变。依赖检查会同时
-验证 manifest、lockfile、registry 来源、安装版本和三个公开入口，避免回退到本地路径或
-未发布版本。
+验证 manifest、lockfile、tarball 摘要、安装版本、人工走廊契约和三个公开入口，避免
+回退到相邻仓库或未经审核的包内容。
 
 ## 首次公开发布（已完成）
 

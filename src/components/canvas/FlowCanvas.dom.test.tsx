@@ -10,6 +10,8 @@ import {
   connectFlowNodes,
   createFlowSpace,
   flowSpaceForNode,
+  setFlowEdgeRoute,
+  setFlowEdgeStyle,
   setFlowNodeText,
 } from "../../model/spaces";
 import { FlowCanvas } from "./FlowCanvas";
@@ -217,19 +219,38 @@ describe("FlowCanvas", () => {
       expect.objectContaining({
         [created.selectedFlowNodeId]: { x: 140, y: 140 },
       }),
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
     );
 
+    const rightPort = container.querySelector<HTMLButtonElement>(
+      ".flow-node__port--right",
+    )!;
     await act(async () => {
-      container
-        .querySelector<HTMLButtonElement>(".flow-node__port--right")
-        ?.click();
+      rightPort.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
     });
+    expect(container.querySelector(".flow-quick-create-preview__node")).toBeNull();
+    await act(async () => {
+      rightPort.querySelector("span")!.dispatchEvent(
+        new MouseEvent("pointerover", { bubbles: true }),
+      );
+    });
+    const previewNode = container.querySelector<HTMLElement>(
+      ".flow-quick-create-preview__node",
+    )!;
+    expect(previewNode).not.toBeNull();
+    const previewPosition = {
+      x: Number.parseFloat(previewNode.style.left),
+      y: Number.parseFloat(previewNode.style.top),
+    };
+    await act(async () => rightPort.click());
     expect(onAddNode).toHaveBeenLastCalledWith(
       created.selectedFlowNodeId,
       "step",
       "right",
       expect.any(Object),
+      previewPosition,
     );
+    expect(container.querySelector(".flow-quick-create-preview__node")).toBeNull();
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>(".flow-node__content")!.click();
@@ -294,6 +315,76 @@ describe("FlowCanvas", () => {
       created.selectedFlowNodeId,
       "中文步骤",
     );
+  });
+
+  it("uses the shared session-local undo stack while editing a flow node", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const space = flowSpaceForNode(created.document, "path")!;
+    let draft = "旧步骤";
+
+    const renderCanvas = () => (
+      <FlowCanvas
+        draft={draft}
+        editingId={created.selectedFlowNodeId}
+        onAddBranch={() => undefined}
+        onAddNext={() => undefined}
+        onBeginEdit={() => undefined}
+        onCancelEdit={() => undefined}
+        onChangeKind={() => undefined}
+        onChangeEdgeLabel={() => undefined}
+        onCommitEdit={() => undefined}
+        onConnect={() => undefined}
+        onDelete={() => undefined}
+        onDraftChange={(value) => {
+          draft = value;
+          root.render(renderCanvas());
+        }}
+        onSelect={() => undefined}
+        onViewportChange={() => undefined}
+        selectedId={created.selectedFlowNodeId}
+        space={space}
+      />
+    );
+
+    await act(async () => root.render(renderCanvas()));
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      ".flow-node__editor",
+    )!;
+    const setEditorValue = (value: string) => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(editor, value);
+      editor.setSelectionRange(value.length, value.length);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    await act(async () => {
+      setEditorValue("步骤一");
+      setEditorValue("步骤二");
+    });
+    const undoEvent = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "z",
+      metaKey: true,
+    });
+    await act(async () => editor.dispatchEvent(undoEvent));
+    expect(undoEvent.defaultPrevented).toBe(true);
+    expect(editor.value).toBe("步骤一");
+    expect(draft).toBe("步骤一");
+
+    const redoEvent = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "z",
+      metaKey: true,
+      shiftKey: true,
+    });
+    await act(async () => editor.dispatchEvent(redoEvent));
+    expect(redoEvent.defaultPrevented).toBe(true);
+    expect(editor.value).toBe("步骤二");
+    expect(draft).toBe("步骤二");
   });
 
   it("commits final IME text after composition-time blur", async () => {
@@ -609,6 +700,7 @@ describe("FlowCanvas", () => {
       "step",
       "right",
       expect.any(Object),
+      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
     );
 
     const dragSourceToTarget = async (
@@ -1050,9 +1142,9 @@ describe("FlowCanvas", () => {
     });
 
     await selectEdge();
-    expect(container.querySelector(".flow-edge-delete")).not.toBeNull();
+    expect(container.querySelector(".flow-edge-toolbar__delete")).not.toBeNull();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>(".flow-edge-delete")!.click();
+      container.querySelector<HTMLButtonElement>(".flow-edge-toolbar__delete")!.click();
     });
     expect(onDeleteEdge).toHaveBeenCalledWith(added.space.edges[0].id);
 
@@ -1066,7 +1158,184 @@ describe("FlowCanvas", () => {
     expect(onDeleteEdge).toHaveBeenCalledWith(added.space.edges[0].id);
   });
 
-  it("keeps a directional arrow on a selected edge via the highlighted marker", async () => {
+  it("edits connector appearance and drags its route without changing endpoints", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
+    const onChangeEdgeRoute = vi.fn();
+    const onChangeEdgeStyle = vi.fn();
+    let renderedSpace = added.space;
+
+    function Harness() {
+      const [space, setSpace] = useState(added.space);
+      renderedSpace = space;
+      return (
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onChangeEdgeRoute={(edgeId, route) => {
+            onChangeEdgeRoute(edgeId, route);
+            setSpace((current) => setFlowEdgeRoute(current, edgeId, route));
+          }}
+          onChangeEdgeStyle={(edgeId, patch) => {
+            onChangeEdgeStyle(edgeId, patch);
+            setSpace((current) => setFlowEdgeStyle(current, edgeId, patch));
+          }}
+          onChangeKind={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDraftChange={() => undefined}
+          onSelect={() => undefined}
+          onViewportChange={() => undefined}
+          selectedId={null}
+          space={space}
+        />
+      );
+    }
+
+    await act(async () => {
+      root.render(<Harness />);
+    });
+    await act(async () => {
+      container.querySelector<SVGPathElement>(".flow-connector__hit")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[aria-label='调整连线样式']",
+      )!.click();
+    });
+    expect(container.querySelector(".flow-edge-style-panel")).not.toBeNull();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[aria-label='曲线']")!.click();
+      container.querySelector<HTMLButtonElement>("[aria-label='虚线']")!.click();
+      container.querySelector<HTMLButtonElement>("[aria-label='圆环']")!.click();
+    });
+    expect(onChangeEdgeStyle).toHaveBeenCalledWith(
+      added.space.edges[0].id,
+      { kind: "curved" },
+    );
+    expect(onChangeEdgeStyle).toHaveBeenCalledWith(
+      added.space.edges[0].id,
+      { dash: "dashed" },
+    );
+    expect(onChangeEdgeStyle).toHaveBeenCalledWith(
+      added.space.edges[0].id,
+      expect.objectContaining({ sourceEndpoint: "ring" }),
+    );
+    expect(container.querySelector(".flow-connector")?.getAttribute("d"))
+      .toContain(" C ");
+    expect(container.querySelector(".flow-edge-route-handle")).toBeNull();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[aria-label='圆角折线']",
+      )!.click();
+    });
+
+    const routeHandle = container.querySelector<SVGCircleElement>(
+      ".flow-edge-route-handle",
+    )!;
+    expect(routeHandle).not.toBeNull();
+    const startX = Number(routeHandle.getAttribute("cx"));
+    const startY = Number(routeHandle.getAttribute("cy"));
+    const axis = routeHandle.classList.contains("flow-edge-route-handle--x")
+      ? "x"
+      : "y";
+    await act(async () => {
+      dispatchPointer(routeHandle as unknown as HTMLElement, "pointerdown", startX, startY, 31);
+      dispatchPointer(
+        routeHandle as unknown as HTMLElement,
+        "pointermove",
+        startX + (axis === "x" ? 60 : 0),
+        startY + (axis === "y" ? 60 : 0),
+        31,
+      );
+      dispatchPointer(
+        routeHandle as unknown as HTMLElement,
+        "pointerup",
+        startX + (axis === "x" ? 60 : 0),
+        startY + (axis === "y" ? 60 : 0),
+        31,
+      );
+    });
+    expect(onChangeEdgeRoute).toHaveBeenCalledWith(
+      added.space.edges[0].id,
+      expect.objectContaining({ axis, coordinate: expect.any(Number) }),
+    );
+    expect(renderedSpace.edges[0]).toMatchObject({
+      from: added.space.edges[0].from,
+      to: added.space.edges[0].to,
+      style: {
+        dash: "dashed",
+        kind: "rounded",
+        sourceEndpoint: "ring",
+      },
+    });
+    expect(renderedSpace.edgeRoutes?.[added.space.edges[0].id])
+      .toEqual(expect.objectContaining({ axis, coordinate: expect.any(Number) }));
+  });
+
+  it("keeps connector controls and hit areas usable when the canvas is zoomed out", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
+    const space = {
+      ...added.space,
+      viewport: { x: 0, y: 0, zoom: 0.5 },
+    };
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onChangeKind={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDraftChange={() => undefined}
+          onSelect={() => undefined}
+          onViewportChange={() => undefined}
+          selectedId={null}
+          space={space}
+        />,
+      );
+    });
+    const hitPath = container.querySelector<SVGPathElement>(
+      ".flow-connector__hit",
+    )!;
+    await act(async () => {
+      hitPath.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(hitPath.getAttribute("stroke-width")).toBe("32");
+    expect(container.querySelector(".flow-edge-handle--from")?.getAttribute("r"))
+      .toBe("20");
+    expect(container.querySelector(".flow-edge-route-handle")?.getAttribute("r"))
+      .toBe("22");
+    expect(
+      container.querySelector<HTMLElement>(".flow-edge-toolbar-anchor")
+        ?.style.getPropertyValue("--flow-edge-toolbar-offset"),
+    ).toBe("36px");
+    expect(
+      container.querySelector<HTMLElement>(".flow-edge-toolbar-shell")
+        ?.style.getPropertyValue("--flow-edge-toolbar-scale"),
+    ).toBe("2");
+  });
+
+  it("keeps a directional arrow on a selected edge and highlights its marker", async () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
@@ -1097,8 +1366,8 @@ describe("FlowCanvas", () => {
     const connector = container.querySelector<SVGPathElement>(
       ".flow-connector",
     )!;
-    expect(connector.getAttribute("marker-end")).toBe(
-      `url(#flow-arrow-${added.space.id})`,
+    expect(connector.getAttribute("marker-end")).toContain(
+      `flow-edge-target-${added.space.id}`,
     );
 
     await act(async () => {
@@ -1110,12 +1379,13 @@ describe("FlowCanvas", () => {
       ".flow-connector.is-selected",
     )!;
     expect(selected).not.toBeNull();
-    expect(selected.getAttribute("marker-end")).toBe(
-      `url(#flow-arrow-selected-${added.space.id})`,
+    expect(selected.getAttribute("marker-end")).toContain(
+      `flow-edge-target-${added.space.id}`,
     );
-    expect(
-      container.querySelector(".flow-connectors marker.is-selected"),
-    ).not.toBeNull();
+    const selectedMarker = container.querySelector<SVGPathElement>(
+      `.flow-connectors marker[id^="flow-edge-target-${added.space.id}"] path`,
+    );
+    expect(selectedMarker?.style.fill).toBe("var(--violet)");
   });
 
   it("flushes the latest wheel viewport when the flow surface unmounts", async () => {

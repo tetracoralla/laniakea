@@ -1,6 +1,8 @@
 import { createRuntimeId } from "./runtimeId";
 import type {
   FlowEdge,
+  FlowEdgeRouteOverride,
+  FlowEdgeStyle,
   FlowNode,
   FlowNodeKind,
   FlowNodePosition,
@@ -13,6 +15,7 @@ import type {
   SelectionState,
   Viewport,
 } from "../types/mindmap";
+import { resolveFlowDirectionalPlacement } from "./flowPlacement";
 import { singleSelection } from "./selection";
 import type { DocumentMutation } from "./tree";
 
@@ -462,6 +465,18 @@ function withFlowTimestamp(space: FlowSpace, patch: Partial<FlowSpace>): FlowSpa
   return { ...space, ...patch, updatedAt: new Date().toISOString() };
 }
 
+function flowEdgeRoutesWithout(
+  edgeRoutes: FlowSpace["edgeRoutes"],
+  removedEdgeIds: Iterable<string>,
+): FlowSpace["edgeRoutes"] {
+  if (!edgeRoutes) return undefined;
+  const removed = new Set(removedEdgeIds);
+  const retained = Object.fromEntries(
+    Object.entries(edgeRoutes).filter(([edgeId]) => !removed.has(edgeId)),
+  );
+  return Object.keys(retained).length > 0 ? retained : undefined;
+}
+
 export function setFlowNodeText(
   space: FlowSpace,
   nodeId: string,
@@ -470,6 +485,7 @@ export function setFlowNodeText(
   const node = space.nodes[nodeId];
   if (!node) return space;
   const value = text.trim();
+  if (node.text === value) return space;
   return withFlowTimestamp(space, {
     nodes: {
       ...space.nodes,
@@ -516,10 +532,48 @@ export function setFlowEdgeLabel(
   });
 }
 
+export function setFlowEdgeStyle(
+  space: FlowSpace,
+  edgeId: string,
+  patch: Partial<FlowEdgeStyle>,
+): FlowSpace {
+  const edge = space.edges.find((candidate) => candidate.id === edgeId);
+  if (!edge) return space;
+  const style = { ...edge.style, ...patch };
+  if (JSON.stringify(edge.style ?? {}) === JSON.stringify(style)) return space;
+  return withFlowTimestamp(space, {
+    edges: space.edges.map((candidate) =>
+      candidate.id === edgeId ? { ...candidate, style } : candidate,
+    ),
+  });
+}
+
+export function setFlowEdgeRoute(
+  space: FlowSpace,
+  edgeId: string,
+  route: FlowEdgeRouteOverride | null,
+): FlowSpace {
+  if (!space.edges.some((edge) => edge.id === edgeId)) return space;
+  if (route && !Number.isFinite(route.coordinate)) return space;
+  const current = space.edgeRoutes?.[edgeId];
+  if (
+    route && current?.axis === route.axis &&
+    current.coordinate === route.coordinate
+  ) return space;
+  if (!route && !current) return space;
+  const edgeRoutes = { ...space.edgeRoutes };
+  if (route) edgeRoutes[edgeId] = route;
+  else delete edgeRoutes[edgeId];
+  return withFlowTimestamp(space, {
+    edgeRoutes: Object.keys(edgeRoutes).length > 0 ? edgeRoutes : undefined,
+  });
+}
+
 export function deleteFlowEdge(space: FlowSpace, edgeId: string): FlowSpace {
   if (!space.edges.some((edge) => edge.id === edgeId)) return space;
   return withFlowTimestamp(space, {
     edges: space.edges.filter((edge) => edge.id !== edgeId),
+    edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, [edgeId]),
   });
 }
 
@@ -591,6 +645,7 @@ export function reconnectFlowEdge(
           : { ...candidate, to, toPort: port }
         : candidate,
     ),
+    edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, [edgeId]),
   });
 }
 
@@ -634,6 +689,7 @@ export function addFlowNodeAfter(
   }
 
   const retained = space.edges.filter((edge) => edge.from !== nodeId);
+  const rewiredEdgeIds = outgoing.map(({ id }) => id);
   return {
     nodeId: created.id,
     space: withFlowTimestamp(space, {
@@ -643,6 +699,7 @@ export function addFlowNodeAfter(
         createFlowEdge(nodeId, created.id),
         ...outgoing.map((edge) => ({ ...edge, from: created.id })),
       ],
+      edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, rewiredEdgeIds),
     }),
   };
 }
@@ -672,6 +729,7 @@ export function addFlowNodeInDirection(
   kind: "step" | "decision",
   direction: FlowPlacementDirection,
   currentPositions: Record<string, FlowNodePosition>,
+  resolvedPosition?: FlowNodePosition,
 ): { space: FlowSpace; nodeId: string } {
   if (!space.nodes[nodeId]) return { space, nodeId };
   const now = new Date().toISOString();
@@ -696,25 +754,24 @@ export function addFlowNodeInDirection(
       ],
     }),
   };
-  const origin = currentPositions[nodeId] ?? space.positions?.[nodeId];
-  if (!origin) return created;
-  const offset = direction === "left"
-    ? { x: -268, y: 0 }
-    : direction === "right"
-      ? { x: 268, y: 0 }
-      : direction === "up"
-        ? { x: 0, y: -168 }
-        : { x: 0, y: 168 };
+  const placement = resolvedPosition &&
+      Number.isFinite(resolvedPosition.x) && Number.isFinite(resolvedPosition.y)
+    ? resolvedPosition
+    : resolveFlowDirectionalPlacement(
+        space,
+        nodeId,
+        kind,
+        direction,
+        currentPositions,
+      );
+  if (!placement) return created;
   const positions = {
     ...Object.fromEntries(
       Object.entries(currentPositions).filter(([id]) =>
         Boolean(created.space.nodes[id]),
       ),
     ),
-    [created.nodeId]: {
-      x: origin.x + offset.x,
-      y: origin.y + offset.y,
-    },
+    [created.nodeId]: { x: placement.x, y: placement.y },
   };
   return {
     nodeId: created.nodeId,
@@ -765,10 +822,21 @@ export function addFlowStepAfter(
     ...outgoing.map((edge) => ({ ...edge, from: created.id })),
   ];
   const origin = space.positions?.[nodeId];
+  const placement = origin
+    ? resolveFlowDirectionalPlacement(
+        space,
+        nodeId,
+        "step",
+        "right",
+        space.positions ?? {},
+      )
+    : null;
   const positions = origin
     ? {
         ...space.positions,
-        [created.id]: { x: origin.x + 268, y: origin.y },
+        [created.id]: placement
+          ? { x: placement.x, y: placement.y }
+          : { x: origin.x + 268, y: origin.y },
       }
     : space.positions;
   return {
@@ -776,6 +844,10 @@ export function addFlowStepAfter(
     space: withFlowTimestamp(space, {
       nodes: { ...space.nodes, [created.id]: created },
       edges,
+      edgeRoutes: flowEdgeRoutesWithout(
+        space.edgeRoutes,
+        outgoing.map(({ id }) => id),
+      ),
       positions,
     }),
   };
@@ -796,19 +868,45 @@ export function addFlowBranch(
     ? current
     : { ...current, kind: "decision" as const, updatedAt: now };
   const origin = space.positions?.[nodeId];
-  const positions = origin
+  const placementSpace = current === decision
+    ? space
+    : { ...space, nodes: { ...space.nodes, [nodeId]: decision } };
+  const branchPlacement = origin
+    ? resolveFlowDirectionalPlacement(
+        placementSpace,
+        nodeId,
+        "step",
+        "right",
+        space.positions ?? {},
+      )
+    : null;
+  const branchPosition = branchPlacement
+    ? { x: branchPlacement.x, y: branchPlacement.y }
+    : origin
+      ? { x: origin.x + 268, y: origin.y + outgoingCount * 112 }
+      : null;
+  const alternativePlacement = origin && alternative && branchPosition
+    ? resolveFlowDirectionalPlacement(
+        {
+          ...placementSpace,
+          nodes: { ...placementSpace.nodes, [branch.id]: branch },
+          positions: { ...space.positions, [branch.id]: branchPosition },
+        },
+        nodeId,
+        "step",
+        "right",
+        { ...space.positions, [branch.id]: branchPosition },
+      )
+    : null;
+  const positions = origin && branchPosition
     ? {
         ...space.positions,
-        [branch.id]: {
-          x: origin.x + 268,
-          y: origin.y + (alternative ? -84 : outgoingCount * 112),
-        },
+        [branch.id]: branchPosition,
         ...(alternative
           ? {
-              [alternative.id]: {
-                x: origin.x + 268,
-                y: origin.y + 84,
-              },
+              [alternative.id]: alternativePlacement
+                ? { x: alternativePlacement.x, y: alternativePlacement.y }
+                : { x: origin.x + 268, y: origin.y + 84 },
             }
           : {}),
       }
@@ -862,6 +960,10 @@ export function deleteFlowNode(
         Object.entries(space.positions).filter(([id]) => id !== nodeId),
       )
     : undefined;
+  const retainedEdgeIds = new Set(remaining.map(({ id }) => id));
+  const removedEdgeIds = space.edges
+    .filter(({ id }) => !retainedEdgeIds.has(id))
+    .map(({ id }) => id);
   return {
     nextSelectedId:
       incoming[0]?.from ?? outgoing[0]?.to ?? Object.keys(nodes)[0] ?? null,
@@ -869,6 +971,7 @@ export function deleteFlowNode(
       nodes,
       edges: remaining,
       positions,
+      edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, removedEdgeIds),
     }),
   };
 }

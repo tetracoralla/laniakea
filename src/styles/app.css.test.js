@@ -129,7 +129,10 @@ describe("node editor styles", () => {
       ".mind-node--leaf .mind-node__content,\n.mind-node--leaf .mind-node__editor-shell {",
     );
     expect(appStyles).toContain("  font-size: var(--fs-13);");
-    expect(appStyles).toContain("  --node-padding-inline: 14px;");
+    expect(appStyles).toContain(
+      "padding: var(--node-padding-block) var(--node-padding-inline);",
+    );
+    expect(appStyles).not.toContain("  --node-padding-inline: 14px;");
   });
 
   it("does not paint the search field focus as a selected canvas object", () => {

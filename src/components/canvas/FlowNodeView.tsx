@@ -14,6 +14,7 @@ import {
   isInputMethodKey,
   markInputMethodComposition,
 } from "../../model/inputMethod";
+import { useTextEditorHistory } from "../../hooks/useTextEditorHistory";
 import { Icon } from "../icons/Icon";
 
 interface FlowNodeViewProps {
@@ -49,6 +50,9 @@ interface FlowNodeViewProps {
     event: ReactPointerEvent<HTMLButtonElement>,
   ) => void;
   onPortClick: (id: string, port: FlowPlacementDirection) => void;
+  onPortIntentChange: (
+    intent: { id: string; port: FlowPlacementDirection } | null,
+  ) => void;
   onSelect: (id: string) => void;
   position: FlowLayoutNode;
   selected: boolean;
@@ -72,6 +76,7 @@ export const FlowNodeView = memo(function FlowNodeView({
   onConnectPointerDown,
   onNodePointerDown,
   onPortClick,
+  onPortIntentChange,
   onSelect,
   position,
   selected,
@@ -80,13 +85,20 @@ export const FlowNodeView = memo(function FlowNodeView({
   const composingRef = useRef(false);
   const commitAfterCompositionRef = useRef(false);
   const editFinishedByKeyRef = useRef(false);
+  const editorHistory = useTextEditorHistory({
+    active: editing,
+    editorRef,
+    onRestore: onDraftChange,
+    sessionKey: editing ? node.id : null,
+  });
 
   useEffect(() => {
     if (!editing) return;
     editFinishedByKeyRef.current = false;
     editorRef.current?.focus({ preventScroll: true });
     editorRef.current?.select();
-  }, [editing]);
+    if (editorRef.current) editorHistory.reset(editorRef.current);
+  }, [editing, editorHistory.reset]);
 
   return (
     <div
@@ -145,11 +157,15 @@ export const FlowNodeView = memo(function FlowNodeView({
             }
           }}
           onChange={(event) => {
-            if (!composingRef.current) onDraftChange(event.target.value);
+            if (!composingRef.current) {
+              editorHistory.record(event.currentTarget);
+              onDraftChange(event.target.value);
+            }
           }}
           onCompositionEnd={(event) => {
             composingRef.current = false;
             markInputMethodComposition(event.currentTarget, false);
+            editorHistory.record(event.currentTarget);
             onDraftChange(event.currentTarget.value);
             if (commitAfterCompositionRef.current) {
               commitAfterCompositionRef.current = false;
@@ -164,6 +180,7 @@ export const FlowNodeView = memo(function FlowNodeView({
           onKeyDown={(event) => {
             event.stopPropagation();
             if (isInputMethodKey(event.nativeEvent, composingRef.current)) return;
+            if (editorHistory.handleKeyDown(event)) return;
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               editFinishedByKeyRef.current = true;
@@ -199,6 +216,9 @@ export const FlowNodeView = memo(function FlowNodeView({
                 event.stopPropagation();
                 onPortClick(node.id, port);
               }}
+              onBlur={() => onPortIntentChange(null)}
+              onFocus={() => onPortIntentChange({ id: node.id, port })}
+              onPointerLeave={() => onPortIntentChange(null)}
               onPointerDown={(event) => {
                 event.stopPropagation();
                 onConnectPointerDown(node.id, port, event);
@@ -206,7 +226,11 @@ export const FlowNodeView = memo(function FlowNodeView({
               title="点击创建步骤，拖动连接已有节点"
               type="button"
             >
-              <span aria-hidden="true" />
+              <span
+                aria-hidden="true"
+                onPointerEnter={() => onPortIntentChange({ id: node.id, port })}
+                onPointerLeave={() => onPortIntentChange(null)}
+              />
             </button>
           ))}
         </div>

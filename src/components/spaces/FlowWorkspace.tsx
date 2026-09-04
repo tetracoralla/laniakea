@@ -15,7 +15,9 @@ import {
   deleteFlowEdge,
   deleteFlowNode,
   reconnectFlowEdge,
+  setFlowEdgeRoute,
   setFlowEdgeLabel,
+  setFlowEdgeStyle,
   setFlowNodeKind,
   setFlowNodeText,
 } from "../../model/spaces";
@@ -24,6 +26,8 @@ import type {
   FlowNodeKind,
   FlowNodePosition,
   FlowPlacementDirection,
+  FlowEdgeRouteOverride,
+  FlowEdgeStyle,
   FlowSpace,
   Viewport,
 } from "../../types/mindmap";
@@ -90,11 +94,16 @@ export const FlowWorkspace = forwardRef<
   const [editingId, setEditingId] = useState(
     initialEditing ? initialSelectedId : null,
   );
-  const [draft, setDraft] = useState(
+  const [draft, setDraftState] = useState(
     initialEditing && initialSelectedId
       ? space.nodes[initialSelectedId]?.text ?? ""
       : "",
   );
+  const draftRef = useRef(draft);
+  const setDraft = useCallback((value: string) => {
+    draftRef.current = value;
+    setDraftState(value);
+  }, []);
 
   selectedIdRef.current = selectedId;
   // Mutations must compose on the latest applied space instead of a render
@@ -175,11 +184,11 @@ export const FlowWorkspace = forwardRef<
     focusCanvas: () => canvasRef.current?.focusCanvas(),
     finishEditing: () => {
       const nodeId = editingIdRef.current;
-      if (nodeId) commitEdit(nodeId, draft);
+      if (nodeId) commitEdit(nodeId, draftRef.current);
     },
     flushViewport: () => canvasRef.current?.flushViewport(),
     selectedId: () => selectedIdRef.current,
-  }), [commitEdit, draft]);
+  }), [commitEdit]);
 
   const addNext = useCallback((nodeId: string) => {
     const created = addFlowStepAfter(appliedSpaceRef.current, nodeId);
@@ -196,6 +205,7 @@ export const FlowWorkspace = forwardRef<
     kind: Extract<FlowNodeKind, "step" | "decision">,
     direction: FlowPlacementDirection,
     currentPositions: Record<string, FlowNodePosition>,
+    resolvedPosition?: FlowNodePosition,
   ) => {
     const created = addFlowNodeInDirection(
       appliedSpaceRef.current,
@@ -203,6 +213,7 @@ export const FlowWorkspace = forwardRef<
       kind,
       direction,
       currentPositions,
+      resolvedPosition,
     );
     if (created.space === appliedSpaceRef.current) return;
     applySpace(created.space);
@@ -247,6 +258,20 @@ export const FlowWorkspace = forwardRef<
 
   const changeEdgeLabel = useCallback((edgeId: string, label: string) => {
     applySpace(setFlowEdgeLabel(appliedSpaceRef.current, edgeId, label));
+  }, [applySpace]);
+
+  const changeEdgeStyle = useCallback((
+    edgeId: string,
+    patch: Partial<FlowEdgeStyle>,
+  ) => {
+    applySpace(setFlowEdgeStyle(appliedSpaceRef.current, edgeId, patch));
+  }, [applySpace]);
+
+  const changeEdgeRoute = useCallback((
+    edgeId: string,
+    route: FlowEdgeRouteOverride | null,
+  ) => {
+    applySpace(setFlowEdgeRoute(appliedSpaceRef.current, edgeId, route));
   }, [applySpace]);
 
   const connect = useCallback((
@@ -327,6 +352,8 @@ export const FlowWorkspace = forwardRef<
       }}
       onCancelEdit={cancelEdit}
       onChangeEdgeLabel={changeEdgeLabel}
+      onChangeEdgeRoute={changeEdgeRoute}
+      onChangeEdgeStyle={changeEdgeStyle}
       onChangeKind={changeKind}
       onCommitEdit={commitEdit}
       onConnect={connect}

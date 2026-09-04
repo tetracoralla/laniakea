@@ -105,6 +105,7 @@ export function useFlowKeyboardCommands({
       const target = event.target as Element | null;
       // 菜单自己管理 Escape 与方向键；先让它关闭，再谈返回上层。
       if (target?.closest?.("[role='menu']")) return;
+      if (target?.closest?.("[data-flow-edge-toolbar]")) return;
       if (handlers.selectedEdgeId && event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();

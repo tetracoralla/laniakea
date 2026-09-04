@@ -385,6 +385,7 @@ export function App() {
     beginEdit,
     beginBlankDocument,
     finishDocumentSwitch,
+    finishEdit,
     commitEdit,
     cancelEdit,
     toggleNode,
@@ -443,10 +444,9 @@ export function App() {
     finishEditorDraft(true);
   }, [finishDocumentSwitch, finishEditorDraft]);
   const finishMindEditForNavigation = useCallback(() => {
-    if (!editingId) return;
-    commitEdit(editingId, draft);
+    finishEdit();
     finishEditorDraft(false);
-  }, [commitEdit, draft, editingId, finishEditorDraft]);
+  }, [finishEdit, finishEditorDraft]);
   const activeFlowCandidate = surface.kind === "flow"
     ? documentSpaces(mindMap)[surface.spaceId]
     : null;

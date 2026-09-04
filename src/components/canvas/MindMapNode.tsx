@@ -2,6 +2,7 @@ import {
   memo,
   useLayoutEffect,
   useRef,
+  type CSSProperties,
   type PointerEventHandler,
 } from "react";
 import {
@@ -14,6 +15,8 @@ import {
   isInputMethodKey,
   markInputMethodComposition,
 } from "../../model/inputMethod";
+import { useTextEditorHistory } from "../../hooks/useTextEditorHistory";
+import { nodeInlinePadding } from "../../model/layout";
 import { Icon } from "../icons/Icon";
 
 interface MindMapNodeProps {
@@ -103,6 +106,14 @@ export const MindMapNode = memo(function MindMapNode({
     editor.scrollLeft = 0;
   };
 
+  const editorHistory = useTextEditorHistory({
+    active: editing,
+    editorRef,
+    onRestore: onDraftChange,
+    onRestored: fitEditorToText,
+    sessionKey: editing ? node.id : null,
+  });
+
   useLayoutEffect(() => {
     if (!editing) return;
     const editor = editorRef.current;
@@ -111,7 +122,8 @@ export const MindMapNode = memo(function MindMapNode({
     editor.focus({ preventScroll: true });
     editor.setSelectionRange(editor.value.length, editor.value.length);
     editor.scrollTop = editor.scrollHeight;
-  }, [editing]);
+    editorHistory.reset(editor);
+  }, [editing, editorHistory.reset]);
 
   useLayoutEffect(() => {
     if (!editing) return;
@@ -155,12 +167,15 @@ export const MindMapNode = memo(function MindMapNode({
             }
       }
       onPointerDown={onDragPointerDown}
-      style={{
-        left: layout.x,
-        top: layout.y,
-        width: layout.width,
-        height: layout.height,
-      }}
+      style={
+        {
+          "--node-padding-inline": `${nodeInlinePadding(layout.depth, layout.rootKind)}px`,
+          left: layout.x,
+          top: layout.y,
+          width: layout.width,
+          height: layout.height,
+        } as CSSProperties
+      }
     >
       {editing ? (
         <div className="mind-node__editor-shell">
@@ -191,6 +206,7 @@ export const MindMapNode = memo(function MindMapNode({
               }
               const selectionAtEnd = editor.selectionEnd === editor.value.length;
               fitEditorToText(editor);
+              editorHistory.record(editor);
               onDraftChange(editor.value);
               if (selectionAtEnd) {
                 editor.ownerDocument.defaultView?.setTimeout(() => {
@@ -207,6 +223,7 @@ export const MindMapNode = memo(function MindMapNode({
               inputMethodComposingRef.current = false;
               finishCompositionContext(event.currentTarget);
               fitEditorToText(event.currentTarget);
+              editorHistory.record(event.currentTarget);
               onDraftChange(event.currentTarget.value);
               if (commitAfterCompositionRef.current) {
                 commitAfterCompositionRef.current = false;
@@ -234,6 +251,7 @@ export const MindMapNode = memo(function MindMapNode({
               ) {
                 return;
               }
+              if (editorHistory.handleKeyDown(event)) return;
               if (event.key === "Tab") {
                 event.preventDefault();
                 onEditTab?.(

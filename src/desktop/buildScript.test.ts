@@ -29,7 +29,9 @@ describe("desktop build-and-run entrypoint", () => {
     expect(verifyBranch).toContain(
       'npx tauri build --bundles app --config "$VERIFY_CONFIG"',
     );
-    expect(verifyBranch).toContain('open_app "$VERIFY_APP_BUNDLE"');
+    expect(script).toContain('/usr/bin/open -gj -n "$bundle"');
+    expect(verifyBranch).toContain('open_verify_app "$VERIFY_APP_BUNDLE"');
+    expect(verifyBranch).not.toContain('open_app "$VERIFY_APP_BUNDLE"');
     expect(verifyBranch).toContain('pgrep -f "$VERIFY_APP_BINARY"');
     expect(verifyBranch).toContain('pkill -f "$VERIFY_APP_BINARY"');
     expect(verifyBranch).not.toContain('rm -rf -- "$APP_BUNDLE"');

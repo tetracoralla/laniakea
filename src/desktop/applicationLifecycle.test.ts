@@ -4,8 +4,6 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   listen: vi.fn(),
   unlisten: vi.fn(),
-  unlistenWindow: vi.fn(),
-  onFocusChanged: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -16,16 +14,9 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: mocks.listen,
 }));
 
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({
-    onFocusChanged: mocks.onFocusChanged,
-  }),
-}));
-
 import {
   applicationExitRequestedEvent,
   listenForApplicationExit,
-  listenForWindowFocusChange,
   resolveApplicationExit,
 } from "./applicationLifecycle";
 
@@ -35,10 +26,7 @@ describe("desktop application lifecycle bridge", () => {
     mocks.invoke.mockResolvedValue(undefined);
     mocks.listen.mockReset();
     mocks.unlisten.mockReset();
-    mocks.unlistenWindow.mockReset();
     mocks.listen.mockResolvedValue(mocks.unlisten);
-    mocks.onFocusChanged.mockReset();
-    mocks.onFocusChanged.mockResolvedValue(mocks.unlistenWindow);
   });
 
   it("registers the listener before declaring the frontend ready", async () => {
@@ -70,19 +58,5 @@ describe("desktop application lifecycle bridge", () => {
       "resolve_application_exit",
       { saved: true },
     );
-  });
-
-  it("projects native window focus changes into a boolean callback", async () => {
-    const handler = vi.fn();
-
-    const unlisten = await listenForWindowFocusChange(handler);
-    const webviewHandler = mocks.onFocusChanged.mock.calls[0][0];
-    webviewHandler({ payload: false });
-    webviewHandler({ payload: true });
-
-    expect(handler).toHaveBeenNthCalledWith(1, false);
-    expect(handler).toHaveBeenNthCalledWith(2, true);
-    unlisten();
-    expect(mocks.unlistenWindow).toHaveBeenCalledOnce();
   });
 });

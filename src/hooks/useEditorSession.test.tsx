@@ -25,10 +25,11 @@ describe("editor session lifecycle", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    Reflect.deleteProperty(document, "visibilityState");
     vi.restoreAllMocks();
   });
 
-  it("commits one history mutation when duplicate focus-loss paths arrive", async () => {
+  it("commits the latest draft once when duplicate finish paths arrive", async () => {
     const mindMap = createBlankDocument();
     const applyMutation = vi.fn();
     let session: ReturnType<typeof useEditorSession> | null = null;
@@ -48,15 +49,24 @@ describe("editor session lifecycle", () => {
     await act(async () => root.render(<Harness />));
     await act(async () => session!.beginEdit(mindMap.rootId));
     await act(async () => {
-      session!.commitEdit(mindMap.rootId, "失焦后的最终文本");
-      session!.commitEdit(mindMap.rootId, "失焦后的最终文本");
+      session!.setDraft("第一版");
+      session!.setDraft("导航前的最终文本");
+      session!.finishEdit();
+      session!.finishEdit();
     });
 
     expect(applyMutation).toHaveBeenCalledOnce();
     expect(session!.editingId).toBeNull();
+    const mutation = applyMutation.mock.calls[0][0]({
+      document: mindMap,
+      selection: singleSelection(mindMap.rootId),
+    });
+    expect(mutation.document.nodes[mindMap.rootId].text).toBe(
+      "导航前的最终文本",
+    );
   });
 
-  it("commits the mounted editor value after native focus already left it", async () => {
+  it("keeps an edit session intact when another app takes window focus", async () => {
     const mindMap = createBlankDocument();
     const applyMutation = vi.fn();
     let session: ReturnType<typeof useEditorSession> | null = null;
@@ -81,21 +91,25 @@ describe("editor session lifecycle", () => {
     await act(async () => root.render(<Harness />));
     await act(async () => session!.beginEdit(mindMap.rootId));
     const editor = container.querySelector("textarea")!;
-    editor.value = "输入事件落后于原生失焦的内容";
+    editor.value = "切回后仍要继续编辑的内容";
+    await act(async () => session!.setDraft(editor.value));
     document.body.tabIndex = -1;
     document.body.focus();
 
     await act(async () => {
       window.dispatchEvent(new Event("blur"));
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "hidden",
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
     });
 
-    expect(applyMutation).toHaveBeenCalledOnce();
-    const mutation = applyMutation.mock.calls[0][0]({
-      document: mindMap,
-      selection: singleSelection(mindMap.rootId),
-    });
-    expect(mutation.document.nodes[mindMap.rootId].text).toBe(
-      "输入事件落后于原生失焦的内容",
+    expect(applyMutation).not.toHaveBeenCalled();
+    expect(session!.editingId).toBe(mindMap.rootId);
+    expect(session!.draft).toBe("切回后仍要继续编辑的内容");
+    expect(container.querySelector("textarea")?.value).toBe(
+      "切回后仍要继续编辑的内容",
     );
   });
 

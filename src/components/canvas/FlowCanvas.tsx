@@ -15,9 +15,12 @@ import { useFlowKeyboardCommands } from "../../hooks/useFlowKeyboardCommands";
 import { useFlowNodeDrag } from "../../hooks/useFlowNodeDrag";
 import { useFlowViewport } from "../../hooks/useFlowViewport";
 import {
+  compileFlowConnectors,
   computeFlowLayout,
+  includeFlowConnectorBounds,
   flowNavigationTarget,
   flowNodeSize,
+  resolveFlowDirectionalPlacement,
   type FlowNavigationDirection,
 } from "../../model/flowLayout";
 import {
@@ -25,6 +28,8 @@ import {
   positionFlowNode,
 } from "../../model/spaces";
 import type {
+  FlowEdgeRouteOverride,
+  FlowEdgeStyle,
   FlowNodeKind,
   FlowNodePosition,
   FlowPlacementDirection,
@@ -37,6 +42,7 @@ import { FlowTargetPicker } from "../spaces/FlowTargetPicker";
 import { FlowConnectionPreview } from "./FlowConnectionPreview";
 import { FlowEdgeLayer } from "./FlowEdgeLayer";
 import { FlowNodeView } from "./FlowNodeView";
+import { FlowQuickCreatePreview } from "./FlowQuickCreatePreview";
 import { FlowShapePalette } from "./FlowShapePalette";
 import { createCanvasTextWidthMeasurer } from "./textMeasure";
 
@@ -64,6 +70,7 @@ export interface FlowCanvasProps {
     kind: Extract<FlowNodeKind, "step" | "decision">,
     direction: FlowPlacementDirection,
     currentPositions: Record<string, FlowNodePosition>,
+    resolvedPosition?: FlowNodePosition,
   ) => void;
   onAddNext: (id: string) => void;
   onAddBranch: (id: string) => void;
@@ -74,6 +81,11 @@ export interface FlowCanvasProps {
   ) => void;
   onChangeKind: (id: string, kind: FlowNodeKind) => void;
   onChangeEdgeLabel: (edgeId: string, label: string) => void;
+  onChangeEdgeRoute?: (
+    edgeId: string,
+    route: FlowEdgeRouteOverride | null,
+  ) => void;
+  onChangeEdgeStyle?: (edgeId: string, patch: Partial<FlowEdgeStyle>) => void;
   onConnect: (
     fromId: string,
     toId: string,
@@ -125,6 +137,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       onAddShape = () => undefined,
       onChangeKind,
       onChangeEdgeLabel,
+      onChangeEdgeRoute = () => undefined,
+      onChangeEdgeStyle = () => undefined,
       onConnect,
       onDelete,
       onDeleteEdge = () => undefined,
@@ -141,19 +155,37 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
     const [connectingFromId, setConnectingFromId] = useState<string | null>(null);
     const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+    const [quickCreateIntent, setQuickCreateIntent] = useState<{
+      id: string;
+      port: FlowPlacementDirection;
+    } | null>(null);
     const measureTextWidth = useMemo(
       () => createCanvasTextWidthMeasurer(),
       [],
     );
-    const layout = useMemo(
+    const baseLayout = useMemo(
       () => computeFlowLayout(space, measureTextWidth),
       [measureTextWidth, space.nodes, space.edges, space.positions],
+    );
+    const connectors = useMemo(
+      () => compileFlowConnectors(space, baseLayout, measureTextWidth),
+      [baseLayout, measureTextWidth, space.edgeRoutes, space.edges, space.nodes],
+    );
+    const layout = useMemo(
+      () => includeFlowConnectorBounds(
+        space,
+        baseLayout,
+        measureTextWidth,
+        connectors,
+      ),
+      [baseLayout, connectors, measureTextWidth],
     );
     const nodes = useMemo(() => Object.values(space.nodes), [space.nodes]);
     const clearCanvasSelection = useCallback(() => {
       onSelect(null);
       setSelectedEdgeId(null);
       setNodeMenu(null);
+      setQuickCreateIntent(null);
     }, [onSelect]);
     const {
       bindings,
@@ -180,12 +212,32 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       ),
       [layout.nodes],
     );
+    const createDirectionalNode = useCallback((
+      nodeId: string,
+      kind: Extract<FlowNodeKind, "step" | "decision">,
+      port: FlowPlacementDirection,
+    ) => {
+      setQuickCreateIntent(null);
+      const placement = resolveFlowDirectionalPlacement(
+        space,
+        nodeId,
+        kind,
+        port,
+        currentPositions,
+        measureTextWidth,
+      );
+      onAddNode(
+        nodeId,
+        kind,
+        port,
+        currentPositions,
+        placement ? { x: placement.x, y: placement.y } : undefined,
+      );
+    }, [currentPositions, measureTextWidth, onAddNode, space]);
     const createFromPort = useCallback((
       nodeId: string,
       port: FlowPlacementDirection,
-    ) => {
-      onAddNode(nodeId, "step", port, currentPositions);
-    }, [currentPositions, onAddNode]);
+    ) => createDirectionalNode(nodeId, "step", port), [createDirectionalNode]);
     const connection = useFlowConnectionDrag({
       containerRef,
       onConnect,
@@ -198,6 +250,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       setNodeMenu(null);
       setConnectingFromId(null);
       setSelectedEdgeId(edgeId);
+      setQuickCreateIntent(null);
       window.requestAnimationFrame(() => {
         containerRef.current?.focus({ preventScroll: true });
       });
@@ -213,6 +266,12 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         setSelectedEdgeId(null);
       }
     }, [selectedEdgeId, space.edges]);
+    useEffect(() => {
+      setSelectedEdgeId(null);
+      setQuickCreateIntent(null);
+      setConnectingFromId(null);
+      setNodeMenu(null);
+    }, [space.id]);
     const beginConnectionDrag = useCallback((
       fromId: string,
       fromPort: FlowPlacementDirection,
@@ -222,6 +281,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       setNodeMenu(null);
       setConnectingFromId(null);
       setSelectedEdgeId(null);
+      setQuickCreateIntent(null);
       connection.begin(fromId, fromPort, event);
     }, [connection.begin, panModifierHeld]);
     const moveNode = useCallback((
@@ -250,6 +310,21 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       onSelect: selectNode,
       space,
     });
+    const quickCreatePlacement = useMemo(() => quickCreateIntent
+      ? resolveFlowDirectionalPlacement(
+          space,
+          quickCreateIntent.id,
+          "step",
+          quickCreateIntent.port,
+          currentPositions,
+          measureTextWidth,
+        )
+      : null, [
+        currentPositions,
+        measureTextWidth,
+        quickCreateIntent,
+        space,
+      ]);
     const navigateSelection = useCallback((direction: FlowNavigationDirection) => {
       if (!selectedId) return;
       const target = flowNavigationTarget(space, selectedId, direction);
@@ -449,11 +524,21 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
           }}
         >
           <FlowEdgeLayer
+            connectors={connectors}
             edges={space.edges}
+            edgeRoutes={space.edgeRoutes}
             layout={layout}
             measureTextWidth={measureTextWidth}
             nodes={space.nodes}
             onChangeLabel={onChangeEdgeLabel}
+            onChangeRoute={onChangeEdgeRoute}
+            onChangeStyle={onChangeEdgeStyle}
+            onClearSelection={() => {
+              setSelectedEdgeId(null);
+              window.requestAnimationFrame(() => {
+                containerRef.current?.focus({ preventScroll: true });
+              });
+            }}
             onDraftChange={onEdgeDraftChange}
             onDraftFinish={onEdgeDraftFinish}
             onDeleteEdge={(edgeId) => {
@@ -467,7 +552,22 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             onSelectEdge={selectEdge}
             selectedEdgeId={selectedEdgeId}
             spaceId={space.id}
+            zoom={space.viewport.zoom}
           />
+
+          {quickCreateIntent && quickCreatePlacement &&
+            !connection.state && !edgeReconnect.state &&
+            layout.nodes[quickCreateIntent.id] && (
+              <FlowQuickCreatePreview
+                direction={quickCreateIntent.port}
+                layout={layout}
+                measureTextWidth={measureTextWidth}
+                placement={quickCreatePlacement}
+                source={layout.nodes[quickCreateIntent.id]}
+                space={space}
+                spaceId={space.id}
+              />
+            )}
 
           {nodes.map((node) => {
             const position = layout.nodes[node.id];
@@ -499,7 +599,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
                 key={node.id}
                 node={node}
                 onAddNode={(nodeId, kind, direction) =>
-                  onAddNode(nodeId, kind, direction, currentPositions)
+                  createDirectionalNode(nodeId, kind, direction)
                 }
                 onBeginEdit={onBeginEdit}
                 onCancelEdit={onCancelEdit}
@@ -517,6 +617,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
                   if (connection.consumeHandledPortClick(nodeId, port)) return;
                   createFromPort(nodeId, port);
                 }}
+                onPortIntentChange={setQuickCreateIntent}
                 onSelect={selectNode}
                 position={position}
                 selected={node.id === selectedId}

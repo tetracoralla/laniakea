@@ -7,8 +7,12 @@ import {
   flowConnectorDeleteAnchor,
   flowConnectorPath,
   flowConnectorPoint,
+  flowConnectorPointOnRoute,
   flowConnectorRoute,
+  flowConnectorPathFromRoute,
+  flowRouteAdjustmentHandle,
   flowNavigationTarget,
+  includeFlowConnectorBounds,
 } from "./flowLayout";
 
 const now = "2026-08-27T00:00:00.000Z";
@@ -221,6 +225,74 @@ describe("computeFlowLayout node sizing", () => {
         Math.abs(point.y - next.y) < 0.01;
     })).toBe(true);
     expect(flowConnectorPath(from, to, "right", "down")).not.toContain(" C ");
+  });
+
+  it("renders line variants and moves one explicit orthogonal corridor", () => {
+    const space = {
+      ...spaceWith([
+        node("from", "step", "起点"),
+        node("to", "step", "终点"),
+      ], [["from", "to"]]),
+      positions: { from: { x: 0, y: 100 }, to: { x: 500, y: 100 } },
+      edgeRoutes: { "edge-0": { axis: "y" as const, coordinate: 240 } },
+    };
+    const layout = computeFlowLayout(space);
+    const adjusted = compileFlowConnectors(space, layout)[0]!.route;
+
+    expect(adjusted.points.some(({ y }) => y === 240)).toBe(true);
+    expect(adjusted.points.slice(0, -1).every((point, index) => {
+      const next = adjusted.points[index + 1];
+      return point.x === next.x || point.y === next.y;
+    })).toBe(true);
+    expect(flowRouteAdjustmentHandle(adjusted)).toMatchObject({
+      axis: "y",
+      coordinate: 240,
+    });
+    expect(flowConnectorPathFromRoute(adjusted, [], "rounded")).toContain(" Q ");
+    expect(flowConnectorPathFromRoute(adjusted, [], "orthogonal")).not.toContain(" Q ");
+    expect(flowConnectorPathFromRoute(adjusted, [], "straight")).not.toContain("240");
+    expect(flowConnectorPathFromRoute(adjusted, [], "curved")).toContain(" C ");
+    expect(flowConnectorPointOnRoute(adjusted, 0.34, "straight").y)
+      .toBeCloseTo(adjusted.start.y);
+    expect(flowConnectorPointOnRoute(adjusted, 0.34, "curved").y)
+      .toBeCloseTo(adjusted.start.y);
+    expect(flowConnectorPointOnRoute(adjusted, 0.34, "rounded").y)
+      .not.toBeCloseTo(adjusted.start.y);
+  });
+
+  it("keeps a short manually moved corridor as the active adjustment handle", () => {
+    const routeOverride = { axis: "y" as const, coordinate: 240 };
+    const space = {
+      ...spaceWith([
+        node("from", "step", "起点"),
+        node("to", "step", "终点"),
+      ], [["from", "to"]]),
+      positions: { from: { x: 0, y: 100 }, to: { x: 268, y: 100 } },
+      edgeRoutes: { "edge-0": routeOverride },
+    };
+    const adjusted = compileFlowConnectors(space, computeFlowLayout(space))[0]!.route;
+
+    expect(flowRouteAdjustmentHandle(adjusted, routeOverride)).toMatchObject({
+      axis: "y",
+      coordinate: 240,
+    });
+  });
+
+  it("includes a manual corridor in fit bounds", () => {
+    const space = {
+      ...spaceWith([
+        node("from", "step", "起点"),
+        node("to", "step", "终点"),
+      ], [["from", "to"]]),
+      positions: { from: { x: 0, y: 100 }, to: { x: 500, y: 100 } },
+      edgeRoutes: { "edge-0": { axis: "y" as const, coordinate: -420 } },
+    };
+    const base = computeFlowLayout(space);
+    const withConnectors = includeFlowConnectorBounds(space, base);
+
+    expect(base.minY).toBeGreaterThan(-420);
+    expect(withConnectors.minY).toBeLessThan(-420);
+    expect(withConnectors.height).toBeGreaterThan(base.height);
   });
 
   it("adds a bridge to the horizontal edge at an unrelated line crossing", () => {

@@ -4,6 +4,7 @@ import {
   applyDraftWidth,
   computeLayout,
   mainBranchAnchorForCollapseTransition,
+  nodeInlinePadding,
   shareStableLayout,
   sizeForNode,
   stabilizeMainBranchAnchor,
@@ -178,8 +179,8 @@ describe("automatic layout", () => {
 
     const layout = computeLayout(document);
 
-    expect(layout.nodes.root.width).toBe(130);
-    expect(layout.nodes["node-1"].width).toBe(108);
+    expect(layout.nodes.root.width).toBe(128);
+    expect(layout.nodes["node-1"].width).toBe(106);
     expect(layout.nodes.root.height).toBe(48);
     expect(layout.nodes["node-1"].height).toBe(48);
     expect(layout.nodes["node-2"].width).toBeGreaterThan(
@@ -201,8 +202,20 @@ describe("automatic layout", () => {
       (text) => (text === "H2A、 A2A互动平台" ? 142 : 0),
     );
 
-    expect(measured.width).toBe(186);
+    expect(measured.width).toBe(180);
     expect(measured.height).toBe(44);
+  });
+
+  it("gives left-aligned text equal horizontal room around its measured glyphs", () => {
+    const textWidth = 142;
+
+    for (const depth of [1, 2, 3]) {
+      const size = sizeForNode(depth, "精确测量", null, () => textWidth);
+      const renderedTextRoom =
+        size.width - nodeInlinePadding(depth) * 2 - 2;
+
+      expect(renderedTextRoom).toBe(textWidth);
+    }
   });
 
   it("keeps the main root on one line unless text contains a newline", () => {
