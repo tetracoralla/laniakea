@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const version = "0.5.0";
-const filename = `openadam-graph-view-compiler-${version}.tgz`;
-const dependency = `file:vendor/${filename}`;
+const dependency = version;
 const manifest = JSON.parse(await readFile("package.json", "utf8"));
 const lock = JSON.parse(await readFile("package-lock.json", "utf8"));
 const locked = lock.packages["node_modules/@openadam/graph-view-compiler"];
@@ -16,14 +14,10 @@ const installed = JSON.parse(await readFile(
 assert.equal(manifest.dependencies["@openadam/graph-view-compiler"], dependency);
 assert.equal(lock.packages[""].dependencies["@openadam/graph-view-compiler"], dependency);
 assert.equal(locked.version, version);
-assert.equal(locked.resolved, dependency);
+assert.match(locked.resolved, /^https:\/\/registry\.npmjs\.org\/@openadam\/graph-view-compiler\/-\//u);
 assert.match(locked.integrity, /^sha512-/u);
 assert.equal(installed.name, "@openadam/graph-view-compiler");
 assert.equal(installed.version, version);
-const tarball = await readFile(`vendor/${filename}`);
-const sidecar = await readFile(`vendor/${filename}.sha256`, "utf8");
-const hash = createHash("sha256").update(tarball).digest("hex");
-assert.equal(sidecar, `${hash}  ${filename}\n`);
 
 const projection = await import("@openadam/graph-view-compiler");
 const semantic = await import("@openadam/graph-view-compiler/semantic");
