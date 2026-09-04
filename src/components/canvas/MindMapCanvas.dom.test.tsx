@@ -201,9 +201,10 @@ describe("rendered interaction regressions", () => {
           onImport={() => undefined}
           onMoveRecent={() => undefined}
           onNew={() => editor.focus()}
-          onCopyRecentPath={() => undefined}
+          onCopyDocumentPath={() => undefined}
           onForgetRecent={() => undefined}
           onOpenRecent={() => undefined}
+          onRevealCurrent={vi.fn()}
           onRevealRecent={() => undefined}
           onSave={() => undefined}
           onSaveAs={() => undefined}
@@ -255,12 +256,13 @@ describe("rendered interaction regressions", () => {
     const sharedProps = {
       currentDocumentPath: null,
       onCopyMarkdown: () => undefined,
-      onCopyRecentPath: () => undefined,
+      onCopyDocumentPath: () => undefined,
       onForgetRecent: () => undefined,
       onImport: () => undefined,
       onMoveRecent: () => undefined,
       onNew: () => undefined,
       onOpenRecent: () => undefined,
+      onRevealCurrent: () => undefined,
       onRevealRecent: () => undefined,
       onSave: () => undefined,
       onSaveAs: () => undefined,
@@ -306,9 +308,10 @@ describe("rendered interaction regressions", () => {
           onImport={() => undefined}
           onMoveRecent={() => undefined}
           onNew={() => undefined}
-          onCopyRecentPath={() => undefined}
+          onCopyDocumentPath={() => undefined}
           onForgetRecent={() => undefined}
           onOpenRecent={() => undefined}
+          onRevealCurrent={vi.fn()}
           onRevealRecent={() => undefined}
           onSave={() => undefined}
           onSaveAs={() => undefined}
@@ -342,9 +345,10 @@ describe("rendered interaction regressions", () => {
           onImport={() => undefined}
           onMoveRecent={() => undefined}
           onNew={() => undefined}
-          onCopyRecentPath={() => undefined}
+          onCopyDocumentPath={() => undefined}
           onForgetRecent={() => undefined}
           onOpenRecent={() => undefined}
+          onRevealCurrent={vi.fn()}
           onRevealRecent={() => undefined}
           onSave={() => undefined}
           onSaveAs={() => undefined}
@@ -382,9 +386,10 @@ describe("rendered interaction regressions", () => {
           onImport={() => undefined}
           onMoveRecent={() => undefined}
           onNew={() => undefined}
-          onCopyRecentPath={() => undefined}
+          onCopyDocumentPath={() => undefined}
           onForgetRecent={() => undefined}
           onOpenRecent={onOpenRecent}
+          onRevealCurrent={vi.fn()}
           onRevealRecent={() => undefined}
           onSave={() => undefined}
           onSaveAs={() => undefined}
@@ -409,7 +414,7 @@ describe("rendered interaction regressions", () => {
     });
 
     const switcher = container.querySelector<HTMLButtonElement>(
-      "button[aria-label='切换思维导图']",
+      "button[aria-label^='切换思维导图']",
     )!;
     await act(async () => switcher.click());
     const documentMenu = container.querySelector<HTMLElement>(
@@ -422,7 +427,11 @@ describe("rendered interaction regressions", () => {
     );
 
     expect(recentItems).toHaveLength(5);
-    expect(documentMenu.textContent).not.toContain("当前文档");
+    expect(
+      documentMenu.querySelector(".document-switcher__current-row")
+        ?.textContent,
+    ).toContain("当前文档");
+    expect(documentMenu.textContent).toContain("其他最近文档");
     expect(documentMenu.textContent).toContain("打开文件…");
 
     await act(async () => recentItems[0].click());

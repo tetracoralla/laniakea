@@ -26,10 +26,12 @@ interface TopBarProps {
   onCopyMarkdown: () => void;
   onShortcutSettings: (returnFocus: HTMLElement) => void;
   currentDocumentPath: string | null;
+  currentSourceDocumentPath?: string | null;
   recentDocuments: RecentDocument[];
   onOpenRecent: (path: string) => void;
+  onRevealCurrent: (path: string) => void;
   onRevealRecent: (path: string) => void;
-  onCopyRecentPath: (path: string) => void;
+  onCopyDocumentPath: (path: string) => void;
   onMoveRecent: (path: string) => void;
   onForgetRecent: (path: string) => void;
   onDeleteDocument?: (path: string) => void;
@@ -54,10 +56,12 @@ export function TopBar({
   onCopyMarkdown,
   onShortcutSettings,
   currentDocumentPath,
+  currentSourceDocumentPath = null,
   recentDocuments,
   onOpenRecent,
+  onRevealCurrent,
   onRevealRecent,
-  onCopyRecentPath,
+  onCopyDocumentPath,
   onMoveRecent,
   onForgetRecent,
   onDeleteDocument,
@@ -244,13 +248,16 @@ export function TopBar({
         </label>
         <DocumentSwitcher
           currentPath={currentDocumentPath}
+          currentSourcePath={currentSourceDocumentPath}
+          currentTitle={title}
           onOpenChange={(open) =>
             setOpenMenu(open ? "documents" : null)
           }
           onOpenFile={onImport}
           onOpenRecent={onOpenRecent}
+          onRevealCurrent={onRevealCurrent}
           onRevealRecent={onRevealRecent}
-          onCopyRecentPath={onCopyRecentPath}
+          onCopyDocumentPath={onCopyDocumentPath}
           onForgetRecent={onForgetRecent}
           onDeleteDocument={onDeleteDocument}
           onMoveRecent={onMoveRecent}

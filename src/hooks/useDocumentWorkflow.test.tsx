@@ -40,6 +40,13 @@ const mocks = vi.hoisted(() => ({
   desktopRuntime: true,
   openLocalDocument: vi.fn(),
   readOutlineFile: vi.fn(),
+  revealDocumentInFileManager: vi.fn(),
+  copyDocumentPath: vi.fn(),
+}));
+
+vi.mock("../desktop/documentFileActions", () => ({
+  copyDocumentPath: mocks.copyDocumentPath,
+  revealDocumentInFileManager: mocks.revealDocumentInFileManager,
 }));
 
 vi.mock("../persistence/documentFileDialog", () => ({
@@ -84,6 +91,10 @@ describe("document workflow", () => {
     mocks.discardInternalDraft.mockResolvedValue(undefined);
     mocks.openLocalDocument.mockReset();
     mocks.readOutlineFile.mockReset();
+    mocks.revealDocumentInFileManager.mockReset();
+    mocks.revealDocumentInFileManager.mockResolvedValue(undefined);
+    mocks.copyDocumentPath.mockReset();
+    mocks.copyDocumentPath.mockResolvedValue(undefined);
     await resetBrowserDocumentStoreForTests();
     container = document.createElement("div");
     document.body.append(container);
@@ -309,6 +320,60 @@ describe("document workflow", () => {
     expect(removeRecentDocument).toHaveBeenCalledWith(
       "/tmp/已移动.md",
     );
+  });
+
+  it("does not offer to remove the active binding when reveal says it is missing", async () => {
+    const notify = vi.fn();
+    const removeRecentDocument = vi.fn();
+    mocks.revealDocumentInFileManager.mockRejectedValue(
+      new Error("这个文件已不存在"),
+    );
+
+    function Harness() {
+      const workflow = useDocumentWorkflow({
+        document: createSeedDocument(),
+        documentPath: "/tmp/当前.md",
+        currentDocumentPath: "/tmp/当前.md",
+        recentDocuments: [],
+        saveState: "saved",
+        saveError: null,
+        notify,
+        newDocument: async () => preparedNewDocument(),
+        openDocument: vi.fn(),
+        replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true),
+        retrySave: vi.fn(async () => true),
+        saveBeforeSwitch: vi.fn(async () => true),
+        beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true),
+        removeRecentDocument,
+      });
+      return (
+        <button
+          onClick={() =>
+            workflow.revealCurrentDocument("/tmp/当前.md")
+          }
+        >
+          显示当前文件
+        </button>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(notify).toHaveBeenLastCalledWith({
+      message: "这个文件已不存在",
+      tone: "error",
+      actionLabel: undefined,
+      onAction: undefined,
+    });
+    expect(removeRecentDocument).not.toHaveBeenCalled();
   });
 
   it("moves an inactive local draft directly from the recent menu", async () => {

@@ -121,15 +121,28 @@
 }
 
 .document-switcher__trigger {
-  display: grid;
-  width: 28px;
+  display: flex;
+  width: auto;
+  min-width: 28px;
+  max-width: 138px;
   height: 30px;
-  padding: 0;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
   color: var(--muted);
   background: transparent;
   border-radius: var(--radius-6);
   cursor: pointer;
-  place-items: center;
+  justify-content: center;
+}
+
+.document-switcher__current-location {
+  max-width: 104px;
+  overflow: hidden;
+  font-size: var(--fs-10);
+  font-weight: var(--fw-ui-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .document-switcher__trigger:hover,
@@ -210,6 +223,20 @@
   border-radius: var(--radius-8);
 }
 
+.document-switcher__current-row {
+  display: grid;
+  min-height: 46px;
+  grid-template-columns: 22px minmax(0, 1fr) 28px;
+  align-items: center;
+  padding: 6px 10px;
+  background: var(--surface-soft);
+  border-radius: var(--radius-8);
+}
+
+.document-switcher__current-row > svg {
+  color: var(--violet);
+}
+
 .document-switcher__recent-row:hover,
 .document-switcher__recent-row:focus-within {
   background: var(--violet-soft);
@@ -244,6 +271,10 @@
 .document-switcher__recent-row:hover
   .document-switcher__recent-more,
 .document-switcher__recent-row:focus-within
+  .document-switcher__recent-more,
+.document-switcher__current-row:hover
+  .document-switcher__recent-more,
+.document-switcher__current-row:focus-within
   .document-switcher__recent-more,
 .document-switcher__recent-more[aria-expanded="true"] {
   opacity: 1;

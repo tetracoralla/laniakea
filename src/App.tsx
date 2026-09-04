@@ -1006,8 +1006,9 @@ export function App() {
     backupInputRef,
     openImport,
     openRecentDocument,
+    revealCurrentDocument,
     revealRecentDocument,
-    copyRecentDocumentPath,
+    copyDocumentPathToClipboard,
     forgetRecentDocument,
     moveRecentDocumentToDirectory,
     createNewDocument,
@@ -1214,11 +1215,12 @@ export function App() {
   return (
     <main className="app-shell">
       <TopBar
-        currentDocumentPath={sourceDocumentPath ?? documentPath}
+        currentDocumentPath={documentPath}
+        currentSourceDocumentPath={sourceDocumentPath}
         onCopyMarkdown={() => void copyDocumentMarkdown()}
         onImport={openImport}
         onNew={createNewDocument}
-        onCopyRecentPath={copyRecentDocumentPath}
+        onCopyDocumentPath={copyDocumentPathToClipboard}
         onForgetRecent={forgetRecentDocument}
         onDeleteDocument={
           desktopRuntime ? undefined : deleteBrowserLibraryDocument
@@ -1226,6 +1228,7 @@ export function App() {
         onExportFullBackup={() => void exportFullBackup()}
         onMoveRecent={moveRecentDocumentToDirectory}
         onOpenRecent={(path) => void openRecentDocument(path)}
+        onRevealCurrent={revealCurrentDocument}
         onRevealRecent={revealRecentDocument}
         onRestoreFullBackup={openFullBackupRestore}
         onSave={() => void saveCurrentDocument()}

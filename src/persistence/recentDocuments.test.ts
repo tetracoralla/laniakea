@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  describeCurrentDocument,
   documentParentDirectory,
   forgetRecentDocument,
   isInternalDocumentPath,
@@ -178,5 +179,34 @@ describe("recent document index", () => {
     expect(
       documentParentDirectory("C:\\Workspace\\想法.md"),
     ).toBe("C:/Workspace");
+  });
+
+  it("keeps the writable binding distinct from an unbound source", () => {
+    expect(
+      describeCurrentDocument({
+        documentPath: "/Users/openadam/Desktop/方案.md",
+        sourcePath: "/Users/openadam/Desktop/方案.md",
+      }),
+    ).toEqual({
+      associatedPath: "/Users/openadam/Desktop/方案.md",
+      compactLocation: "桌面",
+      exactDescription: "正在保存到：/Users/openadam/Desktop/方案.md",
+      metadata: "保存到 · 桌面",
+      pathRole: "binding",
+    });
+
+    expect(
+      describeCurrentDocument({
+        documentPath: null,
+        sourcePath: "/Users/openadam/Downloads/复杂方案.md",
+      }),
+    ).toEqual({
+      associatedPath: "/Users/openadam/Downloads/复杂方案.md",
+      compactLocation: "待另存",
+      exactDescription:
+        "当前修改尚未写回来源文件，来源：/Users/openadam/Downloads/复杂方案.md",
+      metadata: "尚未另存 · 来源：下载",
+      pathRole: "source",
+    });
   });
 });

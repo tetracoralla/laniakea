@@ -795,7 +795,10 @@ export function useDocumentWorkflow({
     saveAsMarkdownDocument,
   ]);
 
-  const revealRecentDocument = useCallback((path: string) => {
+  const revealDocument = useCallback((
+    path: string,
+    onMissing?: () => void,
+  ) => {
     void (async () => {
       try {
         await revealDocumentInFileManager(path);
@@ -811,16 +814,22 @@ export function useDocumentWorkflow({
         notify({
           message,
           tone: "error",
-          actionLabel: isMissing ? "移除记录" : undefined,
-          onAction: isMissing
-            ? () => removeRecentDocument(path)
-            : undefined,
+          actionLabel: isMissing && onMissing ? "移除记录" : undefined,
+          onAction: isMissing ? onMissing : undefined,
         });
       }
     })();
-  }, [notify, removeRecentDocument]);
+  }, [notify]);
 
-  const copyRecentDocumentPath = useCallback((path: string) => {
+  const revealCurrentDocument = useCallback((path: string) => {
+    revealDocument(path);
+  }, [revealDocument]);
+
+  const revealRecentDocument = useCallback((path: string) => {
+    revealDocument(path, () => removeRecentDocument(path));
+  }, [removeRecentDocument, revealDocument]);
+
+  const copyDocumentPathToClipboard = useCallback((path: string) => {
     void (async () => {
       try {
         await copyDocumentPath(path);
@@ -988,8 +997,9 @@ export function useDocumentWorkflow({
     backupInputRef,
     openImport,
     openRecentDocument,
+    revealCurrentDocument,
     revealRecentDocument,
-    copyRecentDocumentPath,
+    copyDocumentPathToClipboard,
     forgetRecentDocument,
     moveRecentDocumentToDirectory,
     createNewDocument,

@@ -8,6 +8,21 @@ export interface RecentDocument {
   lastOpenedAt: string;
 }
 
+export interface CurrentDocumentIdentity {
+  /** The path that currently receives saves, when one exists. */
+  documentPath: string | null;
+  /** The file the content came from, which may be protected and unbound. */
+  sourcePath: string | null;
+}
+
+export interface CurrentDocumentDescription {
+  associatedPath: string | null;
+  compactLocation: string;
+  exactDescription: string;
+  metadata: string;
+  pathRole: "binding" | "source" | null;
+}
+
 function normalizedPath(path: string): string {
   return path.trim().replace(/\\/g, "/").replace(/\/+$/, "");
 }
@@ -44,6 +59,80 @@ export function recentDocumentLocation(path: string): string {
     .split("/")
     .filter((segment) => segment && !/^[A-Za-z]:$/.test(segment));
   return segments.slice(-2).join("/") || parent;
+}
+
+function compactDocumentLocation(path: string): string {
+  if (path.startsWith(browserDocumentPrefix)) return "此浏览器";
+  if (isInternalDocumentPath(path)) return "本地草稿";
+  const parent = documentParentDirectory(path);
+  if (!parent) return "本地文件";
+  const directory = normalizedPath(parent).split("/").filter(Boolean).at(-1);
+  if (!directory) return parent;
+  const familiarLocations: Record<string, string> = {
+    Desktop: "桌面",
+    Documents: "文稿",
+    Downloads: "下载",
+  };
+  return familiarLocations[directory] ?? directory;
+}
+
+/**
+ * Describes the one current document identity without conflating a writable
+ * binding with the protected file an unbound copy was imported from.
+ */
+export function describeCurrentDocument(
+  identity: CurrentDocumentIdentity,
+): CurrentDocumentDescription {
+  if (identity.documentPath) {
+    const location = compactDocumentLocation(identity.documentPath);
+    if (identity.documentPath.startsWith(browserDocumentPrefix)) {
+      return {
+        associatedPath: identity.documentPath,
+        compactLocation: location,
+        exactDescription: "正在编辑的内容保存在此浏览器",
+        metadata: "保存在此浏览器",
+        pathRole: null,
+      };
+    }
+    if (isInternalDocumentPath(identity.documentPath)) {
+      return {
+        associatedPath: identity.documentPath,
+        compactLocation: location,
+        exactDescription: "正在编辑本地自动保存草稿，尚未整理到用户文件夹",
+        metadata: "自动保存 · 可用另存为整理位置",
+        pathRole: null,
+      };
+    }
+    return {
+      associatedPath: identity.documentPath,
+      compactLocation: location,
+      exactDescription: `正在保存到：${identity.documentPath}`,
+      metadata: `保存到 · ${location}`,
+      pathRole: "binding",
+    };
+  }
+
+  if (identity.sourcePath) {
+    const location = compactDocumentLocation(identity.sourcePath);
+    return {
+      associatedPath: identity.sourcePath,
+      compactLocation: "待另存",
+      exactDescription: `当前修改尚未写回来源文件，来源：${identity.sourcePath}`,
+      metadata: `尚未另存 · 来源：${location}`,
+      pathRole: isInternalDocumentPath(identity.sourcePath) ||
+          identity.sourcePath.startsWith(browserDocumentPrefix)
+        ? null
+        : "source",
+    };
+  }
+
+  return {
+    associatedPath: null,
+    compactLocation: "待保存",
+    exactDescription: "正在编辑的内容尚未建立保存位置",
+    metadata: "尚未建立保存位置",
+    pathRole: null,
+  };
 }
 
 function isRecentDocument(value: unknown): value is RecentDocument {
