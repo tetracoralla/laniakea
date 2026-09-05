@@ -117,6 +117,39 @@ describe("local document persistence errors", () => {
       .toBe("较新版本");
   });
 
+  it("does not renew a stale tab's content lease through a view-only save", async () => {
+    const created = await createBrowserDocument(createSeedDocument());
+    const staleTab = await openBrowserDocument(created.documentPath);
+    const currentTab = await openBrowserDocument(created.documentPath);
+    const newer = { ...currentTab.document, title: "另一标签页的新内容" };
+    await saveLocalDocument(
+      newer,
+      currentTab.documentPath,
+      currentTab.sourceHash,
+    );
+
+    const panned = {
+      ...staleTab.document,
+      viewport: { x: 200, y: -80, zoom: 0.9 },
+    };
+    const viewSave = await saveLocalDocument(
+      panned,
+      staleTab.documentPath,
+      staleTab.sourceHash,
+      null,
+      { viewportOnly: true },
+    );
+
+    expect(viewSave.sourceHash).toBe(staleTab.sourceHash);
+    await expect(saveLocalDocument(
+      { ...panned, title: "旧标签页的过期内容" },
+      staleTab.documentPath,
+      viewSave.sourceHash,
+    )).rejects.toThrow("另一个标签页");
+    expect((await openBrowserDocument(created.documentPath)).document.title)
+      .toBe("另一标签页的新内容");
+  });
+
   it("keeps each tab recovery record and only clears the tab that saved", async () => {
     const created = await createBrowserDocument(createSeedDocument());
     const tabA = { ...created.document, title: "标签页 A 未提交" };

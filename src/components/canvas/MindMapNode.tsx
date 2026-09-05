@@ -2,6 +2,7 @@ import {
   memo,
   useLayoutEffect,
   useRef,
+  type CSSProperties,
   type PointerEventHandler,
 } from "react";
 import {
@@ -10,6 +11,12 @@ import {
   nodePlaceholder,
 } from "../../model/canvasRender";
 import type { LayoutNode, MindNode } from "../../types/mindmap";
+import {
+  isInputMethodKey,
+  markInputMethodComposition,
+} from "../../model/inputMethod";
+import { useTextEditorHistory } from "../../hooks/useTextEditorHistory";
+import { nodeInlinePadding } from "../../model/layout";
 import { Icon } from "../icons/Icon";
 
 interface MindMapNodeProps {
@@ -19,22 +26,19 @@ interface MindMapNodeProps {
   primary: boolean;
   editing: boolean;
   draft: string;
-  dragging: boolean;
-  dropTarget: boolean;
   onSelect: (id: string, additive: boolean) => void;
   onBeginEdit: (id: string) => void;
   onDraftChange: (value: string) => void;
   onPasteStructured: (id: string, value: string) => boolean;
   onCommitEdit: (id: string, value: string) => void;
   onCancelEdit: (id: string) => void;
+  onEditTab?: (id: string, value: string, shiftKey: boolean) => void;
   onToggle: (id: string) => void;
   onOpenContextMenu?: (
     id: string,
     targetRect: { left: number; right: number; top: number; bottom: number },
     returnFocus: HTMLElement,
   ) => void;
-  onOpenSubspace?: (id: string) => void;
-  portalSummary?: string;
   onDragPointerDown: PointerEventHandler<HTMLDivElement>;
 }
 
@@ -45,22 +49,20 @@ export const MindMapNode = memo(function MindMapNode({
   primary,
   editing,
   draft,
-  dragging,
-  dropTarget,
   onSelect,
   onBeginEdit,
   onDraftChange,
   onPasteStructured,
   onCommitEdit,
   onCancelEdit,
+  onEditTab,
   onToggle,
   onOpenContextMenu = () => undefined,
-  onOpenSubspace = () => undefined,
-  portalSummary,
   onDragPointerDown,
 }: MindMapNodeProps) {
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const inputMethodComposingRef = useRef(false);
+  const commitAfterCompositionRef = useRef(false);
   const placeholder = nodePlaceholder(layout);
   const empty = node.text.length === 0;
   const markdownDivider = isMarkdownThematicBreak(node.text);
@@ -89,7 +91,7 @@ export const MindMapNode = memo(function MindMapNode({
   };
 
   const revealCompositionContext = (editor: HTMLTextAreaElement) => {
-    editor.dataset.composing = "true";
+    markInputMethodComposition(editor, true);
     editor.style.width = "100%";
     const visibleWidth = Math.max(editor.clientWidth, editor.scrollWidth);
     if (visibleWidth > 0) {
@@ -99,10 +101,18 @@ export const MindMapNode = memo(function MindMapNode({
   };
 
   const finishCompositionContext = (editor: HTMLTextAreaElement) => {
-    delete editor.dataset.composing;
+    markInputMethodComposition(editor, false);
     editor.style.removeProperty("width");
     editor.scrollLeft = 0;
   };
+
+  const editorHistory = useTextEditorHistory({
+    active: editing,
+    editorRef,
+    onRestore: onDraftChange,
+    onRestored: fitEditorToText,
+    sessionKey: editing ? node.id : null,
+  });
 
   useLayoutEffect(() => {
     if (!editing) return;
@@ -112,7 +122,8 @@ export const MindMapNode = memo(function MindMapNode({
     editor.focus({ preventScroll: true });
     editor.setSelectionRange(editor.value.length, editor.value.length);
     editor.scrollTop = editor.scrollHeight;
-  }, [editing]);
+    editorHistory.reset(editor);
+  }, [editing, editorHistory.reset]);
 
   useLayoutEffect(() => {
     if (!editing) return;
@@ -133,8 +144,9 @@ export const MindMapNode = memo(function MindMapNode({
 
   return (
     <div
-      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${editing ? "is-editing" : ""} ${dragging ? "is-dragging" : ""} ${dropTarget ? "is-drop-target" : ""}`}
+      className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : layout.depth === 2 ? "secondary" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${editing ? "is-editing" : ""}`}
       data-node-id={node.id}
+      id={`mind-node-${node.id}`}
       onContextMenu={
         editing
           ? undefined
@@ -155,12 +167,15 @@ export const MindMapNode = memo(function MindMapNode({
             }
       }
       onPointerDown={onDragPointerDown}
-      style={{
-        left: layout.x,
-        top: layout.y,
-        width: layout.width,
-        height: layout.height,
-      }}
+      style={
+        {
+          "--node-padding-inline": `${nodeInlinePadding(layout.depth, layout.rootKind)}px`,
+          left: layout.x,
+          top: layout.y,
+          width: layout.width,
+          height: layout.height,
+        } as CSSProperties
+      }
     >
       {editing ? (
         <div className="mind-node__editor-shell">
@@ -172,6 +187,10 @@ export const MindMapNode = memo(function MindMapNode({
             ref={editorRef}
             rows={1}
             onBlur={(event) => {
+              if (inputMethodComposingRef.current) {
+                commitAfterCompositionRef.current = true;
+                return;
+              }
               inputMethodComposingRef.current = false;
               finishCompositionContext(event.currentTarget);
               onCommitEdit(node.id, event.currentTarget.value);
@@ -187,6 +206,7 @@ export const MindMapNode = memo(function MindMapNode({
               }
               const selectionAtEnd = editor.selectionEnd === editor.value.length;
               fitEditorToText(editor);
+              editorHistory.record(editor);
               onDraftChange(editor.value);
               if (selectionAtEnd) {
                 editor.ownerDocument.defaultView?.setTimeout(() => {
@@ -203,10 +223,16 @@ export const MindMapNode = memo(function MindMapNode({
               inputMethodComposingRef.current = false;
               finishCompositionContext(event.currentTarget);
               fitEditorToText(event.currentTarget);
+              editorHistory.record(event.currentTarget);
               onDraftChange(event.currentTarget.value);
+              if (commitAfterCompositionRef.current) {
+                commitAfterCompositionRef.current = false;
+                onCommitEdit(node.id, event.currentTarget.value);
+              }
             }}
             onCompositionStart={(event) => {
               inputMethodComposingRef.current = true;
+              commitAfterCompositionRef.current = false;
               revealCompositionContext(event.currentTarget);
             }}
             onPaste={(event) => {
@@ -218,10 +244,21 @@ export const MindMapNode = memo(function MindMapNode({
             onKeyDown={(event) => {
               event.stopPropagation();
               if (
-                inputMethodComposingRef.current ||
-                event.nativeEvent.isComposing ||
-                event.nativeEvent.keyCode === 229
+                isInputMethodKey(
+                  event.nativeEvent,
+                  inputMethodComposingRef.current,
+                )
               ) {
+                return;
+              }
+              if (editorHistory.handleKeyDown(event)) return;
+              if (event.key === "Tab") {
+                event.preventDefault();
+                onEditTab?.(
+                  node.id,
+                  event.currentTarget.value,
+                  event.shiftKey,
+                );
                 return;
               }
               if (event.key === "Enter" && !event.shiftKey) {
@@ -261,7 +298,7 @@ export const MindMapNode = memo(function MindMapNode({
           )}
         </button>
       )}
-      {node.children.length > 0 && (
+      {(node.children.length > 0 || node.subspaceId) && (
         <button
           aria-label={node.collapsed ? "展开分支" : "折叠分支"}
           className={`mind-node__disclosure ${node.collapsed ? "is-collapsed" : ""}`}
@@ -272,21 +309,6 @@ export const MindMapNode = memo(function MindMapNode({
           type="button"
         >
           <Icon name="chevron" size={13} />
-        </button>
-      )}
-      {node.subspaceId && (
-        <button
-          aria-label={`进入${portalSummary ?? "下层图"}`}
-          className="mind-node__portal"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenSubspace(node.id);
-          }}
-          onPointerDown={(event) => event.stopPropagation()}
-          title={portalSummary ?? "进入下层图"}
-          type="button"
-        >
-          <Icon name="layers" size={14} />
         </button>
       )}
     </div>

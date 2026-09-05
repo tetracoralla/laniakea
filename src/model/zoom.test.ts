@@ -5,13 +5,14 @@ import {
   canvasZoomToFit,
   maxCanvasZoom,
   minCanvasZoom,
+  steppedCanvasZoom,
 } from "./zoom";
 
 describe("canvas zoom", () => {
   it("preserves fine trackpad deltas instead of turning them into fixed steps", () => {
     const next = canvasZoomFromWheel(1, 1, 0, 900);
 
-    expect(next).toBeCloseTo(0.997528, 6);
+    expect(next).toBeCloseTo(0.997338, 6);
     expect(1 - next).toBeLessThan(0.003);
   });
 
@@ -22,7 +23,7 @@ describe("canvas zoom", () => {
       zoom = canvasZoomFromWheel(zoom, 24, 0, 900);
     }
 
-    expect(zoom).toBeCloseTo(0.742997, 6);
+    expect(zoom).toBeCloseTo(0.726211, 6);
   });
 
   it("keeps equal opposite deltas continuous and reversible", () => {
@@ -67,5 +68,24 @@ describe("canvas zoom", () => {
     expect(next).toBeGreaterThan(overview);
     expect(next).toBeLessThan(minCanvasZoom);
     expect(canvasZoomFromWheel(overview, 24, 0, 900)).toBe(overview);
+  });
+});
+
+describe("canvas zoom range", () => {
+  it("gives overview and close-up inspection usable headroom", () => {
+    expect(minCanvasZoom).toBe(0.4);
+    expect(maxCanvasZoom).toBe(2.5);
+  });
+});
+
+describe("stepped button zoom", () => {
+  it("steps multiplicatively in the readable range", () => {
+    expect(steppedCanvasZoom(1, 1)).toBeCloseTo(1.2, 6);
+    expect(steppedCanvasZoom(1, -1)).toBeCloseTo(1 / 1.2, 6);
+  });
+
+  it("keeps a 0.1 additive floor so a deep overview escapes quickly", () => {
+    expect(steppedCanvasZoom(0.02, 1)).toBeCloseTo(0.12, 6);
+    expect(steppedCanvasZoom(0.02, 1) / 0.02).toBeGreaterThan(5);
   });
 });

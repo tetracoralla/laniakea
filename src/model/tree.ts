@@ -68,7 +68,7 @@ function updateNode(
 
 function createNode(
   text: string,
-  parentId: string,
+  parentId: string | null,
   id = createNodeId(),
 ): MindNode {
   const now = new Date().toISOString();
@@ -80,6 +80,33 @@ function createNode(
     collapsed: false,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+/**
+ * Creates a blank free-standing root at a canvas position (double-click or
+ * context menu on empty canvas) and selects it for immediate editing.
+ */
+export function createFloatingNode(
+  document: MindMapDocument,
+  x: number,
+  y: number,
+  nodeId = createNodeId(),
+): DocumentMutation {
+  const floatingRoot: FloatingRoot = {
+    id: nodeId,
+    x: Math.max(32, Math.round(x)),
+    y: Math.max(32, Math.round(y)),
+  };
+  return {
+    document: {
+      ...withTimestamp(document, {
+        ...document.nodes,
+        [nodeId]: createNode("", null, nodeId),
+      }),
+      floatingRoots: [...document.floatingRoots, floatingRoot],
+    },
+    selection: singleSelection(nodeId),
   };
 }
 
@@ -175,6 +202,79 @@ export function createSibling(
 
   return {
     document: withTimestamp(document, nodes),
+    selection: singleSelection(created.id),
+  };
+}
+
+/**
+ * Inserts a new topic between the selected node and its current parent.
+ * Root and floating-root topics are wrapped in place so their canvas role and
+ * location transfer to the new parent instead of moving the existing branch.
+ */
+export function insertParent(
+  document: MindMapDocument,
+  childId: string,
+  text = "",
+  nodeId = createNodeId(),
+): DocumentMutation {
+  const child = document.nodes[childId];
+  if (!child) {
+    return { document, selection: singleSelection(document.rootId) };
+  }
+
+  const created = createNode(text, child.parentId, nodeId);
+  created.children = [child.id];
+  let nodes = {
+    ...document.nodes,
+    [created.id]: created,
+  };
+  nodes = updateNode(nodes, child.id, { parentId: created.id });
+
+  if (child.parentId) {
+    const parent = document.nodes[child.parentId];
+    if (!parent) {
+      return { document, selection: singleSelection(child.id) };
+    }
+    const childIndex = parent.children.indexOf(child.id);
+    if (childIndex < 0) {
+      return { document, selection: singleSelection(child.id) };
+    }
+    const children = [...parent.children];
+    children[childIndex] = created.id;
+    nodes = updateNode(nodes, parent.id, {
+      children,
+      collapsed: false,
+    });
+    return {
+      document: withTimestamp(document, nodes),
+      selection: singleSelection(created.id),
+    };
+  }
+
+  if (child.id === document.rootId) {
+    return {
+      document: {
+        ...withTimestamp(document, nodes),
+        rootId: created.id,
+      },
+      selection: singleSelection(created.id),
+    };
+  }
+
+  const floatingIndex = floatingRootIndex(document, child.id);
+  if (floatingIndex < 0) {
+    return { document, selection: singleSelection(child.id) };
+  }
+  const floatingRoots = [...document.floatingRoots];
+  floatingRoots[floatingIndex] = {
+    ...floatingRoots[floatingIndex],
+    id: created.id,
+  };
+  return {
+    document: {
+      ...withTimestamp(document, nodes),
+      floatingRoots,
+    },
     selection: singleSelection(created.id),
   };
 }
@@ -486,9 +586,19 @@ export function detachSubtrees(
     }
   });
 
+  const positionsById = new Map(
+    roots.map(({ id, x, y }) => [id, { id, x, y }]),
+  );
+  const existingFloatingIds = new Set(
+    document.floatingRoots.map(({ id }) => id),
+  );
   const floatingRoots = document.floatingRoots
-    .filter(({ id }) => !rootIdSet.has(id))
-    .concat(roots.map(({ id, x, y }) => ({ id, x, y })));
+    .map((root) => positionsById.get(root.id) ?? root)
+    .concat(
+      roots
+        .filter(({ id }) => !existingFloatingIds.has(id))
+        .map(({ id, x, y }) => ({ id, x, y })),
+    );
   const unchanged =
     nodes === document.nodes &&
     document.floatingRoots.length === floatingRoots.length &&
@@ -717,7 +827,10 @@ export function toggleCollapsed(
   id: string,
 ): DocumentMutation {
   const current = document.nodes[id];
-  if (!current || current.children.length === 0) {
+  const hasSubspace = Boolean(
+    current?.subspaceId && document.spaces?.[current.subspaceId],
+  );
+  if (!current || (current.children.length === 0 && !hasSubspace)) {
     return { document, selection: singleSelection(id) };
   }
   const nodes = updateNode(document.nodes, id, {
@@ -769,7 +882,14 @@ export function toggleCollapsedMany(
   selection: SelectionState,
 ): DocumentMutation {
   const branchIds = selection.selectedIds.filter(
-    (id) => document.nodes[id]?.children.length,
+    (id) => {
+      const node = document.nodes[id];
+      return Boolean(
+        node &&
+          (node.children.length > 0 ||
+            (node.subspaceId && document.spaces?.[node.subspaceId])),
+      );
+    },
   );
   if (branchIds.length === 0) return { document, selection };
 
@@ -798,20 +918,24 @@ export function setAllCollapsed(
 ): DocumentMutation {
   const now = new Date().toISOString();
   const nodes = Object.fromEntries(
-    Object.entries(document.nodes).map(([id, current]) => [
-      id,
-      {
-        ...current,
-        collapsed:
-          id === document.rootId || current.children.length === 0
-            ? false
-            : collapsed,
-        updatedAt:
-          current.children.length > 0 && id !== document.rootId
-            ? now
-            : current.updatedAt,
-      },
-    ]),
+    Object.entries(document.nodes).map(([id, current]) => {
+      const collapsible = Boolean(
+        current.children.length > 0 ||
+          (current.subspaceId && document.spaces?.[current.subspaceId]),
+      );
+      return [
+        id,
+        {
+          ...current,
+          collapsed:
+            id === document.rootId || !collapsible ? false : collapsed,
+          updatedAt:
+            collapsible && id !== document.rootId
+              ? now
+              : current.updatedAt,
+        },
+      ];
+    }),
   );
   const nextDocument = withTimestamp(document, nodes);
   const visible = visibleNodeIds(nextDocument);

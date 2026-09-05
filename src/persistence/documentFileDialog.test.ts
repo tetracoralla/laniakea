@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 
+import { configureInternalDocumentRoot } from "./recentDocuments";
+
 import { describe, expect, it } from "vitest";
 import { preferredUserDocumentDirectory } from "./documentFileDialog";
+
+configureInternalDocumentRoot(
+  "/Volumes/Workspace/Library/Application Support/com.openadam.origin",
+);
 
 describe("document dialog starting directory", () => {
   const internalDraft =

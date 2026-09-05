@@ -42,6 +42,12 @@ describe("Laniakea Agent mind-map tools", () => {
     );
   });
 
+  it("rejects misspelled fields in nested creation input", () => {
+    expect(() => createAgentMindMap("Draft", {
+      text: "Root", children: [{ text: "Child", chidlren: [{ text: "Would be lost" }] }],
+    } as unknown as AgentTreeInput)).toThrow("unknown fields");
+  });
+
   it("uses structural refs to distinguish repeated node labels", () => {
     const parsed = parseAgentMindMap(
       "# Risks\n\n- Root\n  - Risk\n  - Risk\n",
@@ -64,15 +70,13 @@ describe("Laniakea Agent mind-map tools", () => {
     expect(anchor?.subspace).toEqual(
       expect.objectContaining({
         type: "flow",
-        nodeCount: 3,
-        edgeCount: 2,
+        nodeCount: 1,
+        edgeCount: 0,
         truncated: false,
       }),
     );
     expect(anchor?.subspace?.nodes).toEqual([
-      expect.objectContaining({ kind: "start", text: "开始" }),
       expect.objectContaining({ kind: "step", text: "实现路径" }),
-      expect.objectContaining({ kind: "end", text: "完成" }),
     ]);
   });
 
@@ -227,6 +231,27 @@ describe("Laniakea Agent mind-map tools", () => {
     );
   });
 
+  it("uses move positions in the destination list after removal", () => {
+    const parsed = parseAgentMindMap(
+      "# Map\n\n- Root\n  - First\n  - Second\n  - Third\n",
+      "ignored",
+    );
+    const result = applyMindMapOperations(parsed, [
+      {
+        type: "move_subtree",
+        ref: "/0/0",
+        newParentRef: "/0",
+        position: 2,
+      },
+    ]);
+
+    expect(
+      result.document.nodes[result.document.rootId].children.map(
+        (id) => result.document.nodes[id].text,
+      ),
+    ).toEqual(["Second", "Third", "First"]);
+  });
+
   it("rejects cycles and protects the main root", () => {
     const parsed = parseAgentMindMap(
       "# Map\n\n- Root\n  - Parent\n    - Child\n",
@@ -314,7 +339,7 @@ describe("Laniakea Agent mind-map tools", () => {
     expect(hubView?.outgoing).toHaveLength(64);
     expect(hubView?.outgoingTruncated).toBe(true);
     expect(subspace).toEqual(
-      expect.objectContaining({ edgeCount: 72 }),
+      expect.objectContaining({ edgeCount: 70 }),
     );
   });
 

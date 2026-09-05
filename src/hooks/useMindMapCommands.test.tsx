@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanvasHandle } from "../components/canvas/MindMapCanvas";
 import { createSeedDocument } from "../data/seed";
 import { singleSelection } from "../model/selection";
+import type { DocumentMutation } from "../model/tree";
 import { useMindMapCommands } from "./useMindMapCommands";
 
 const clipboard = vi.hoisted(() => ({
@@ -88,5 +89,64 @@ describe("mind map command behavior", () => {
 
     expect(clipboard.copyMarkdown).toHaveBeenCalledTimes(1);
     expect(clipboard.copyDocumentMarkdown).not.toHaveBeenCalled();
+  });
+
+  it("creates and immediately edits a parent around the selected branch", async () => {
+    const capture: { result?: DocumentMutation } = {};
+
+    function Harness() {
+      const document = createSeedDocument();
+      const selection = singleSelection("experience-2");
+      const [editingId, setEditingId] = useState<string | null>(null);
+      const [, setDraft] = useState("");
+      const canvasRef = useRef<CanvasHandle>(null);
+      const { executeCommand } = useMindMapCommands({
+        mindMap: document,
+        selection,
+        canUndo: false,
+        canRedo: false,
+        canvasRef,
+        applyMutation: (mutate) => {
+          capture.result = mutate({ document, selection });
+        },
+        documentSessionId: 1,
+        isDocumentSessionCurrent: () => true,
+        selectNode: vi.fn(),
+        setSelection: vi.fn(),
+        setEditingId,
+        setDraft,
+        openOverlay: vi.fn(),
+        notify: vi.fn(),
+        onImport: vi.fn(),
+        onNew: vi.fn(),
+        onSaveAs: vi.fn(),
+        saveNow: vi.fn(async () => true),
+        undo: vi.fn(),
+        redo: vi.fn(),
+      });
+      return (
+        <button
+          data-editing={editingId ?? ""}
+          onClick={() => executeCommand("node.insert-parent")}
+        >
+          创建父节点
+        </button>
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button")!.click();
+    });
+
+    const createdId = capture.result?.selection.primaryId;
+    expect(createdId).toBeTruthy();
+    expect(container.querySelector("button")?.dataset.editing).toBe(createdId);
+    expect(capture.result?.document.nodes[createdId!].children).toEqual([
+      "experience-2",
+    ]);
+    expect(capture.result?.document.nodes["experience-2"].parentId).toBe(
+      createdId,
+    );
   });
 });

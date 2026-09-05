@@ -1,9 +1,11 @@
 export type CommandContext = "selection" | "editing" | "global";
+export type CommandTarget = "mind-node" | "subspace-portal";
 
 export type CommandId =
   | "node.create-sibling"
   | "node.create-above"
   | "node.create-child"
+  | "node.insert-parent"
   | "node.outdent"
   | "node.delete"
   | "node.delete-preserve"
@@ -24,6 +26,11 @@ export type CommandId =
   | "node.move-down"
   | "node.toggle"
   | "node.drill-down"
+  | "space.enter"
+  | "space.copy-summary"
+  | "space.cut"
+  | "space.delete"
+  | "space.select-anchor"
   | "map.collapse-all"
   | "map.expand-all"
   | "history.undo"
@@ -47,7 +54,8 @@ export interface CommandDefinition {
   shortcut: string;
   aliases?: string[];
   contexts: CommandContext[];
-  group: "节点" | "编辑" | "视图" | "文件";
+  targets?: CommandTarget[];
+  group: "节点" | "下层图" | "编辑" | "视图" | "文件";
 }
 
 export const commandRegistry: CommandDefinition[] = [
@@ -56,6 +64,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "创建同级节点",
     shortcut: "Enter",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -63,6 +72,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "创建上方同级节点",
     shortcut: "Shift+Enter",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -70,6 +80,15 @@ export const commandRegistry: CommandDefinition[] = [
     label: "创建子节点",
     shortcut: "Tab",
     contexts: ["selection"],
+    targets: ["mind-node"],
+    group: "节点",
+  },
+  {
+    id: "node.insert-parent",
+    label: "创建父节点",
+    shortcut: "Meta+Enter",
+    contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -77,6 +96,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "提升一级",
     shortcut: "Shift+Tab",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -85,6 +105,7 @@ export const commandRegistry: CommandDefinition[] = [
     shortcut: "Backspace",
     aliases: ["Delete"],
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -93,6 +114,7 @@ export const commandRegistry: CommandDefinition[] = [
     shortcut: "Alt+Backspace",
     aliases: ["Alt+Delete"],
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -100,6 +122,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "选择父节点",
     shortcut: "ArrowLeft",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -107,6 +130,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "选择第一个子节点",
     shortcut: "ArrowRight",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -114,6 +138,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "选择上一个同级节点",
     shortcut: "ArrowUp",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -121,6 +146,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "选择下一个同级节点",
     shortcut: "ArrowDown",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -128,6 +154,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "向父节点扩展选择",
     shortcut: "Shift+ArrowLeft",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -135,6 +162,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "向子节点扩展选择",
     shortcut: "Shift+ArrowRight",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -142,6 +170,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "向上扩展选择",
     shortcut: "Shift+ArrowUp",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -149,6 +178,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "向下扩展选择",
     shortcut: "Shift+ArrowDown",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -171,6 +201,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "复制选中节点",
     shortcut: "Meta+c",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "编辑",
   },
   {
@@ -178,6 +209,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "剪切选中节点",
     shortcut: "Meta+x",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "编辑",
   },
   {
@@ -185,6 +217,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "粘贴为子节点",
     shortcut: "Meta+v",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "编辑",
   },
   {
@@ -192,6 +225,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "节点向上移动",
     shortcut: "Meta+ArrowUp",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -199,6 +233,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "节点向下移动",
     shortcut: "Meta+ArrowDown",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -206,6 +241,7 @@ export const commandRegistry: CommandDefinition[] = [
     label: "折叠或展开节点",
     shortcut: "Meta+/",
     contexts: ["selection"],
+    targets: ["mind-node"],
     group: "节点",
   },
   {
@@ -214,19 +250,62 @@ export const commandRegistry: CommandDefinition[] = [
     shortcut: "Shift+F10",
     aliases: ["ContextMenu"],
     contexts: ["selection"],
-    group: "视图",
+    targets: ["mind-node"],
+    group: "下层图",
+  },
+  {
+    id: "space.enter",
+    label: "进入下层图",
+    shortcut: "Enter",
+    aliases: ["Shift+F10", "ContextMenu"],
+    contexts: ["selection"],
+    targets: ["subspace-portal"],
+    group: "下层图",
+  },
+  {
+    id: "space.copy-summary",
+    label: "复制下层图概要",
+    shortcut: "Meta+c",
+    contexts: ["selection"],
+    targets: ["subspace-portal"],
+    group: "下层图",
+  },
+  {
+    id: "space.cut",
+    label: "剪切下层图",
+    shortcut: "Meta+x",
+    contexts: ["selection"],
+    targets: ["subspace-portal"],
+    group: "下层图",
+  },
+  {
+    id: "space.delete",
+    label: "删除下层图…",
+    shortcut: "Backspace",
+    aliases: ["Delete", "Alt+Backspace", "Alt+Delete"],
+    contexts: ["selection"],
+    targets: ["subspace-portal"],
+    group: "下层图",
+  },
+  {
+    id: "space.select-anchor",
+    label: "选择所属节点",
+    shortcut: "ArrowLeft",
+    contexts: ["selection"],
+    targets: ["subspace-portal"],
+    group: "下层图",
   },
   {
     id: "map.collapse-all",
     label: "折叠除根节点外全部分支",
-    shortcut: "Alt+Meta+ArrowLeft",
+    shortcut: "Alt+ArrowLeft",
     contexts: ["selection"],
     group: "视图",
   },
   {
     id: "map.expand-all",
     label: "展开全部分支",
-    shortcut: "Alt+Meta+ArrowRight",
+    shortcut: "Alt+ArrowRight",
     contexts: ["selection"],
     group: "视图",
   },
@@ -296,14 +375,14 @@ export const commandRegistry: CommandDefinition[] = [
   {
     id: "viewport.fit",
     label: "画布适应内容",
-    shortcut: "Shift+1",
+    shortcut: "Meta+1",
     contexts: ["selection", "global"],
     group: "视图",
   },
   {
     id: "viewport.focus",
     label: "聚焦选中节点",
-    shortcut: "Shift+2",
+    shortcut: "Meta+2",
     contexts: ["selection", "global"],
     group: "视图",
   },
@@ -341,9 +420,7 @@ function eventShortcut(event: KeyboardEvent): string {
   if (commandModifier) parts.push("Meta");
 
   let key = event.key;
-  if (event.shiftKey && event.code?.startsWith("Digit")) {
-    key = event.code.slice("Digit".length);
-  } else if (shiftedEqual) {
+  if (shiftedEqual) {
     key = "=";
   }
   parts.push(key.length === 1 ? key.toLowerCase() : key);
@@ -353,13 +430,22 @@ function eventShortcut(event: KeyboardEvent): string {
 export function findCommandForEvent(
   event: KeyboardEvent,
   context: CommandContext,
+  target: CommandTarget = "mind-node",
 ): CommandDefinition | undefined {
   const shortcut = eventShortcut(event);
   return commandRegistry.find(
     (command) =>
       (command.shortcut === shortcut || command.aliases?.includes(shortcut)) &&
-      command.contexts.includes(context),
+      command.contexts.includes(context) &&
+      commandSupportsTarget(command, target),
   );
+}
+
+export function commandSupportsTarget(
+  command: CommandDefinition,
+  target: CommandTarget,
+): boolean {
+  return !command.targets || command.targets.includes(target);
 }
 
 export function isPrintableKey(event: KeyboardEvent): boolean {

@@ -33,11 +33,42 @@ export interface FlowNode {
   updatedAt: string;
 }
 
+export interface FlowNodePosition {
+  x: number;
+  y: number;
+}
+
+export type FlowPlacementDirection = "up" | "right" | "down" | "left";
+
+export type FlowConnectorKind = "rounded" | "orthogonal" | "straight" | "curved";
+export type FlowConnectorDash = "solid" | "dashed" | "dotted";
+export type FlowConnectorWeight = "thin" | "regular" | "bold";
+export type FlowConnectorEndpoint = "none" | "arrow" | "dot" | "ring";
+export type FlowConnectorTone = "neutral" | "violet" | "blue" | "emerald" | "amber";
+
+export interface FlowEdgeStyle {
+  kind?: FlowConnectorKind;
+  dash?: FlowConnectorDash;
+  weight?: FlowConnectorWeight;
+  sourceEndpoint?: FlowConnectorEndpoint;
+  targetEndpoint?: FlowConnectorEndpoint;
+  tone?: FlowConnectorTone;
+}
+
+export interface FlowEdgeRouteOverride {
+  /** The movable central corridor is either a fixed x or a fixed y line. */
+  axis: "x" | "y";
+  coordinate: number;
+}
+
 export interface FlowEdge {
   id: string;
   from: string;
   to: string;
   label: string;
+  fromPort?: FlowPlacementDirection;
+  toPort?: FlowPlacementDirection;
+  style?: FlowEdgeStyle;
 }
 
 export interface FlowSpace {
@@ -46,6 +77,16 @@ export interface FlowSpace {
   anchorNodeId: string;
   nodes: Record<string, FlowNode>;
   edges: FlowEdge[];
+  /**
+   * Human canvas arrangement. It is persisted with local view state but is
+   * deliberately omitted from the portable Markdown space bundle.
+   */
+  positions?: Record<string, FlowNodePosition>;
+  /**
+   * Human-adjusted connector corridors. Like node positions, these are local
+   * canvas arrangement and are omitted from the portable Markdown bundle.
+   */
+  edgeRoutes?: Record<string, FlowEdgeRouteOverride>;
   viewport: Viewport;
   updatedAt: string;
 }
@@ -102,6 +143,8 @@ export interface LayoutNode {
 
 export interface LayoutResult {
   nodes: Record<string, LayoutNode>;
+  /** Visual proxies for anchored subspaces, keyed by their anchor node id. */
+  portals?: Record<string, LayoutNode>;
   visibleIds: string[];
   width: number;
   height: number;

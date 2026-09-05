@@ -4,10 +4,12 @@ import {
   applyDraftWidth,
   computeLayout,
   mainBranchAnchorForCollapseTransition,
+  nodeInlinePadding,
   shareStableLayout,
   sizeForNode,
   stabilizeMainBranchAnchor,
 } from "./layout";
+import { createMapSpace, mapSpaceForNode } from "./spaces";
 
 function largeDocument(count: number): MindMapDocument {
   const now = "2026-07-23T00:00:00.000Z";
@@ -61,6 +63,63 @@ function deepDocument(count: number): MindMapDocument {
 }
 
 describe("automatic layout", () => {
+  it("lays out a subspace preview as a real visual child without overlapping siblings", () => {
+    const created = createMapSpace(largeDocument(3), "node-1");
+    const space = mapSpaceForNode(created.document, "node-1")!;
+    const child: MindNode = {
+      id: "map-child",
+      text: "下层主题",
+      parentId: space.rootId,
+      children: [],
+      collapsed: false,
+      createdAt: space.updatedAt,
+      updatedAt: space.updatedAt,
+    };
+    const document = {
+      ...created.document,
+      spaces: {
+        ...created.document.spaces,
+        [space.id]: {
+          ...space,
+          nodes: {
+            ...space.nodes,
+            [space.rootId]: {
+              ...space.nodes[space.rootId],
+              children: [child.id],
+            },
+            [child.id]: child,
+          },
+        },
+      },
+    };
+
+    const layout = computeLayout(document);
+    const portal = layout.portals?.["node-1"];
+
+    expect(portal).toBeDefined();
+    expect(portal!.x).toBeGreaterThan(
+      layout.nodes["node-1"].x + layout.nodes["node-1"].width,
+    );
+    expect(portal!.y + portal!.height).toBeLessThanOrEqual(
+      layout.nodes["node-2"].y,
+    );
+  });
+
+  it("hides the subspace preview with its collapsed anchor branch", () => {
+    const created = createMapSpace(largeDocument(2), "node-1");
+    const expanded = computeLayout(created.document);
+    const collapsed = computeLayout({
+      ...created.document,
+      nodes: {
+        ...created.document.nodes,
+        "node-1": { ...created.document.nodes["node-1"], collapsed: true },
+      },
+    });
+
+    expect(expanded.portals?.["node-1"]).toBeDefined();
+    expect(collapsed.portals?.["node-1"]).toBeUndefined();
+  });
+
   it("lays out all visible nodes with increasing depth coordinates", () => {
     const layout = computeLayout(largeDocument(20));
     expect(layout.visibleIds).toHaveLength(20);
@@ -120,8 +179,8 @@ describe("automatic layout", () => {
 
     const layout = computeLayout(document);
 
-    expect(layout.nodes.root.width).toBe(130);
-    expect(layout.nodes["node-1"].width).toBe(108);
+    expect(layout.nodes.root.width).toBe(128);
+    expect(layout.nodes["node-1"].width).toBe(106);
     expect(layout.nodes.root.height).toBe(48);
     expect(layout.nodes["node-1"].height).toBe(48);
     expect(layout.nodes["node-2"].width).toBeGreaterThan(
@@ -143,8 +202,20 @@ describe("automatic layout", () => {
       (text) => (text === "H2A、 A2A互动平台" ? 142 : 0),
     );
 
-    expect(measured.width).toBe(186);
+    expect(measured.width).toBe(180);
     expect(measured.height).toBe(44);
+  });
+
+  it("gives left-aligned text equal horizontal room around its measured glyphs", () => {
+    const textWidth = 142;
+
+    for (const depth of [1, 2, 3]) {
+      const size = sizeForNode(depth, "精确测量", null, () => textWidth);
+      const renderedTextRoom =
+        size.width - nodeInlinePadding(depth) * 2 - 2;
+
+      expect(renderedTextRoom).toBe(textWidth);
+    }
   });
 
   it("keeps the main root on one line unless text contains a newline", () => {
@@ -164,11 +235,15 @@ describe("automatic layout", () => {
     expect(multiline.height).toBeGreaterThan(48);
   });
 
-  it("keeps second-level nodes compact without sacrificing text padding", () => {
+  it("keeps third-level and deeper nodes visibly tighter than second-level nodes", () => {
     expect(sizeForNode(0, "中心主题", "main").height).toBe(48);
     expect(sizeForNode(1, "一级主题").height).toBe(48);
     expect(sizeForNode(2, "二级主题").height).toBe(44);
-    expect(sizeForNode(4, "更深层主题").height).toBe(44);
+    expect(sizeForNode(3, "三级主题").height).toBe(36);
+    expect(sizeForNode(4, "更深层主题").height).toBe(36);
+    expect(sizeForNode(2, "同样文字").width).toBeGreaterThan(
+      sizeForNode(3, "同样文字").width,
+    );
     expect(sizeForNode(2, "第一行\n第二行\n第三行").height).toBe(83);
   });
 

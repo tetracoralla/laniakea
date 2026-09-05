@@ -6,7 +6,7 @@ import {
   parseMindMapDocument,
 } from "./document";
 import { createBlankDocument } from "../data/seed";
-import { createFlowSpace } from "./spaces";
+import { addFlowStepAfter, createFlowSpace, flowSpaceForNode } from "./spaces";
 
 describe("persisted document validation", () => {
   it("accepts a complete reachable mind map", () => {
@@ -22,11 +22,39 @@ describe("persisted document validation", () => {
     expect(isMindMapDocument(dangling)).toBe(false);
   });
 
-  it("rejects flow self-loops, duplicate endpoint pairs, and directed cycles", () => {
-    const created = createFlowSpace(createSeedDocument(), "path").document;
-    const flow = Object.values(created.spaces ?? {}).find(
-      (space) => space.type === "flow",
-    )!;
+  it("validates persisted connector styles and local route overrides", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowStepAfter(initial, created.selectedFlowNodeId);
+    const edgeId = added.space.edges[0].id;
+    const valid = structuredClone(created.document);
+    valid.spaces![created.spaceId] = {
+      ...added.space,
+      edges: added.space.edges.map((edge) => ({
+        ...edge,
+        style: { kind: "rounded", targetEndpoint: "arrow", tone: "blue" },
+      })),
+      edgeRoutes: { [edgeId]: { axis: "y", coordinate: 260 } },
+    };
+    expect(isMindMapDocument(valid)).toBe(true);
+
+    const invalid = structuredClone(valid) as unknown as Record<string, unknown>;
+    const spaces = invalid.spaces as Record<string, Record<string, unknown>>;
+    const flow = spaces[created.spaceId];
+    flow.edgeRoutes = { [edgeId]: { axis: "diagonal", coordinate: 260 } };
+    expect(isMindMapDocument(invalid)).toBe(false);
+  });
+
+  it("rejects self-loops and duplicate endpoint pairs but accepts directed loops", () => {
+    const base = createFlowSpace(createSeedDocument(), "path");
+    const firstSpace = flowSpaceForNode(base.document, "path")!;
+    const secondNode = addFlowStepAfter(firstSpace, base.selectedFlowNodeId);
+    const thirdNode = addFlowStepAfter(secondNode.space, secondNode.nodeId);
+    const created = {
+      ...base.document,
+      spaces: { [base.spaceId]: thirdNode.space },
+    };
+    const flow = thirdNode.space;
     const [first, second] = flow.edges;
 
     const selfLoop = structuredClone(created);
@@ -55,7 +83,7 @@ describe("persisted document validation", () => {
       to: first.from,
       label: "",
     });
-    expect(isMindMapDocument(cycle)).toBe(false);
+    expect(isMindMapDocument(cycle)).toBe(true);
   });
 
   it("rejects broken parent references and unreachable nodes", () => {

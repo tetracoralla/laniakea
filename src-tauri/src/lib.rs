@@ -8,6 +8,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
 };
+#[cfg(target_os = "macos")]
+use tauri::menu::MenuItem;
 #[cfg(desktop)]
 use tauri::Manager;
 use tauri::{AppHandle, Emitter, State};
@@ -16,6 +18,8 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const DEFAULT_GLOBAL_SHORTCUT: &str = "CommandOrControl+Shift+M";
 const APPLICATION_EXIT_REQUESTED_EVENT: &str = "origin://application-exit-requested";
+#[cfg(target_os = "macos")]
+const APPLICATION_QUIT_MENU_ID: &str = "origin-quit-after-save";
 
 struct DesktopRuntimeState {
     global_shortcut_registered: AtomicBool,
@@ -120,6 +124,57 @@ fn resolve_application_exit(app: AppHandle, state: State<'_, DesktopRuntimeState
     }
 }
 
+#[cfg(target_os = "macos")]
+fn request_frontend_application_exit(app: &AppHandle) {
+    let state = app.state::<DesktopRuntimeState>();
+    if state.application_exit_allowed.load(Ordering::SeqCst) {
+        app.exit(0);
+        return;
+    }
+    if !state.begin_application_exit_request() {
+        return;
+    }
+    if state.application_exit_listener_ready.load(Ordering::SeqCst)
+        && app.emit(APPLICATION_EXIT_REQUESTED_EVENT, ()).is_err()
+    {
+        state
+            .application_exit_request_pending
+            .store(false, Ordering::SeqCst);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn replace_macos_quit_menu(app: &AppHandle) -> tauri::Result<()> {
+    let Some(menu) = app.menu() else {
+        return Ok(());
+    };
+    let menu_items = menu.items()?;
+    let Some(app_menu) = menu_items.first().and_then(|item| item.as_submenu()) else {
+        return Ok(());
+    };
+    let app_menu_items = app_menu.items()?;
+    let Some(default_quit_index) = app_menu_items.len().checked_sub(1) else {
+        return Ok(());
+    };
+    if app_menu_items[default_quit_index]
+        .as_predefined_menuitem()
+        .is_none()
+    {
+        return Ok(());
+    }
+
+    app_menu.remove_at(default_quit_index)?;
+    let quit = MenuItem::with_id(
+        app,
+        APPLICATION_QUIT_MENU_ID,
+        format!("Quit {}", app.package_info().name),
+        true,
+        Some("Command+Q"),
+    )?;
+    app_menu.append(&quit)?;
+    Ok(())
+}
+
 fn validate_global_shortcut(shortcut: &str) -> Result<(), String> {
     let modifiers = [
         "CommandOrControl",
@@ -205,28 +260,34 @@ fn validate_reveal_target(document_path: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-fn reveal_document_in_file_manager(document_path: String) -> Result<(), String> {
-    let target = validate_reveal_target(&document_path)?;
+async fn reveal_document_in_file_manager(document_path: String) -> Result<(), String> {
+    // Waiting on the file-manager process must not occupy the main thread;
+    // the validation and spawn both run on the blocking pool.
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = validate_reveal_target(&document_path)?;
 
-    #[cfg(target_os = "macos")]
-    let status = Command::new("open").arg("-R").arg(&target).status();
+        #[cfg(target_os = "macos")]
+        let status = Command::new("open").arg("-R").arg(&target).status();
 
-    #[cfg(target_os = "windows")]
-    let status = Command::new("explorer")
-        .arg(format!("/select,{}", target.display()))
-        .status();
+        #[cfg(target_os = "windows")]
+        let status = Command::new("explorer")
+            .arg(format!("/select,{}", target.display()))
+            .status();
 
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let status = Command::new("xdg-open")
-        .arg(target.parent().unwrap_or_else(|| Path::new("/")))
-        .status();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let status = Command::new("xdg-open")
+            .arg(target.parent().unwrap_or_else(|| Path::new("/")))
+            .status();
 
-    let status = status.map_err(|_| "无法打开文件管理器".to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("无法在文件管理器中显示这个文件".to_string())
-    }
+        let status = status.map_err(|_| "无法打开文件管理器".to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("无法在文件管理器中显示这个文件".to_string())
+        }
+    })
+    .await
+    .map_err(|error| format!("无法打开文件管理器: {error}"))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -259,6 +320,15 @@ pub fn run() {
                     *shortcut = configured;
                 };
             }
+            #[cfg(target_os = "macos")]
+            {
+                replace_macos_quit_menu(app.handle())?;
+                app.on_menu_event(|app, event| {
+                    if event.id().as_ref() == APPLICATION_QUIT_MENU_ID {
+                        request_frontend_application_exit(app);
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -268,14 +338,18 @@ pub fn run() {
             resolve_application_exit,
             set_global_shortcut,
             storage::activate_local_document,
+            storage::clear_pending_recovery,
             storage::clear_active_document,
             storage::create_markdown_draft,
+            storage::discard_pending_recovery,
             storage::discard_internal_draft,
             storage::load_local_document,
             storage::move_internal_draft,
             storage::open_local_document,
             storage::read_outline_file,
             storage::save_local_document,
+            storage::write_editor_recovery_draft,
+            storage::write_recovery_checkpoint,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Laniakea")
@@ -290,12 +364,7 @@ pub fn run() {
                     let state = app.state::<DesktopRuntimeState>();
                     if !state.application_exit_allowed.load(Ordering::SeqCst) {
                         api.prevent_exit();
-                        let first_request = state.begin_application_exit_request();
-                        if first_request
-                            && state.application_exit_listener_ready.load(Ordering::SeqCst)
-                        {
-                            let _ = app.emit(APPLICATION_EXIT_REQUESTED_EVENT, ());
-                        }
+                        request_frontend_application_exit(app);
                     }
                 }
                 _ => {}

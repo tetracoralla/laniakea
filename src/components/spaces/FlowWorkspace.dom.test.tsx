@@ -8,7 +8,11 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../../data/seed";
-import { createFlowSpace, flowSpaceForNode } from "../../model/spaces";
+import {
+  addFlowStepAfter,
+  createFlowSpace,
+  flowSpaceForNode,
+} from "../../model/spaces";
 import type { FlowSpace } from "../../types/mindmap";
 import {
   FlowWorkspace,
@@ -33,6 +37,62 @@ describe("FlowWorkspace", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     container.remove();
+    Reflect.deleteProperty(document, "visibilityState");
+  });
+
+  it("keeps a flow edit session intact when another app takes window focus", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const updates: FlowSpace[] = [];
+    const onEditorDraftChange = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <FlowWorkspace
+          entryRequest={1}
+          fitOnMount={false}
+          initialEditing
+          initialSelectedId={created.selectedFlowNodeId}
+          keyboardEnabled
+          notify={() => undefined}
+          onBack={() => undefined}
+          onEditorDraftChange={onEditorDraftChange}
+          onRedo={() => undefined}
+          onUndo={() => undefined}
+          onUpdateSpace={(next) => updates.push(next)}
+          onViewportChange={() => undefined}
+          space={initial}
+        />,
+      );
+    });
+
+    const editor = container.querySelector<HTMLTextAreaElement>(
+      ".flow-node__editor",
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(editor, "切回后仍要继续编辑的流程步骤");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      window.dispatchEvent(new Event("blur"));
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        value: "hidden",
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    expect(updates).toHaveLength(0);
+    expect(onEditorDraftChange).toHaveBeenLastCalledWith(
+      {
+        objectId: created.selectedFlowNodeId,
+        objectKind: "flow-node",
+      },
+      "切回后仍要继续编辑的流程步骤",
+    );
+    expect(container.querySelector(".flow-node__editor")).toBe(editor);
+    expect(editor.value).toBe("切回后仍要继续编辑的流程步骤");
   });
 
   it("owns the flow edit sequence while committing updates through the document owner", async () => {
@@ -126,8 +186,10 @@ describe("FlowWorkspace", () => {
 
   it("accepts a new search-entry request without remounting the workspace", async () => {
     const created = createFlowSpace(createSeedDocument(), "path");
-    const space = flowSpaceForNode(created.document, "path")!;
-    const endId = Object.values(space.nodes).find(({ kind }) => kind === "end")!.id;
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowStepAfter(initial, created.selectedFlowNodeId);
+    const space = added.space;
+    const endId = added.nodeId;
     const workspaceRef = createRef<FlowWorkspaceHandle>();
     const common = {
       fitOnMount: false,

@@ -1,10 +1,28 @@
-export const minCanvasZoom = 0.52;
+export const minCanvasZoom = 0.4;
 export const minOverviewCanvasZoom = 0.0001;
-export const maxCanvasZoom = 1.8;
+export const maxCanvasZoom = 2.5;
 
 const wheelLineHeight = 16;
 const maxWheelZoomDelta = 60;
-const wheelPixelsPerZoomDoubling = 280;
+// Keep trackpad pinch continuous while making one gesture slightly more
+// responsive than the previous calibration.
+const wheelPixelsPerZoomDoubling = 260;
+
+/** Normalizes a non-pinch wheel event to pixel deltas for panning. */
+export function wheelPanPixelDelta(
+  deltaX: number,
+  deltaY: number,
+  deltaMode: number,
+  viewportHeight: number,
+): { x: number; y: number } {
+  const scale =
+    deltaMode === 1
+      ? wheelLineHeight
+      : deltaMode === 2
+        ? Math.max(1, viewportHeight)
+        : 1;
+  return { x: deltaX * scale, y: deltaY * scale };
+}
 
 export function clampCanvasZoom(
   value: number,
@@ -76,4 +94,19 @@ export function canvasZoomFeedbackLabel(zoom: number): string {
     return `${percentage}% · 最大`;
   }
   return `${percentage}%`;
+}
+
+/**
+ * Button zoom steps are multiplicative (consistent feel around readable
+ * zooms) but keep a 0.1 additive floor so a deep overview escapes quickly:
+ * ×1.2 from a 2% fit zoom would otherwise need ~24 clicks to become readable.
+ */
+export function steppedCanvasZoom(current: number, direction: 1 | -1): number {
+  const multiplicative = direction > 0 ? current * 1.2 : current / 1.2;
+  const additive = direction > 0 ? current + 0.1 : current - 0.1;
+  const raw =
+    direction > 0
+      ? Math.max(multiplicative, additive)
+      : Math.min(multiplicative, additive);
+  return clampCanvasZoom(raw, Math.min(current, minCanvasZoom));
 }

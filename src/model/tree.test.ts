@@ -14,13 +14,16 @@ import {
   deleteSelectedSubtrees,
   deleteSubtree,
   indentNode,
+  insertParent,
   moveNode,
   outdentNode,
   pasteSubtrees,
   revealNode,
   setNodeText,
+  toggleCollapsed,
   toggleCollapsedMany,
 } from "./tree";
+import { createMapSpace } from "./spaces";
 
 function deepDocument(count: number) {
   const document = createBlankDocument();
@@ -121,6 +124,70 @@ describe("tree mutations", () => {
       "experience-2",
       "experience-3",
     ]);
+  });
+
+  it("inserts an editable parent without moving or flattening the selected branch", () => {
+    const document = createSeedDocument();
+    const originalChildren = document.nodes["experience-2"].children;
+    const result = insertParent(
+      document,
+      "experience-2",
+      "新增父节点",
+      "inserted-parent",
+    );
+
+    expect(result.document.nodes.experience.children).toEqual([
+      "experience-1",
+      "inserted-parent",
+      "experience-3",
+    ]);
+    expect(result.document.nodes["inserted-parent"]).toMatchObject({
+      parentId: "experience",
+      children: ["experience-2"],
+      text: "新增父节点",
+    });
+    expect(result.document.nodes["experience-2"]).toMatchObject({
+      parentId: "inserted-parent",
+      children: originalChildren,
+    });
+    expect(result.selection).toEqual(singleSelection("inserted-parent"));
+    expect(document.nodes.experience.children).toEqual([
+      "experience-1",
+      "experience-2",
+      "experience-3",
+    ]);
+  });
+
+  it("wraps main and floating roots in place when inserting a parent", () => {
+    const document = detachSubtree(
+      createSeedDocument(),
+      "boundary",
+      { x: 760, y: 280 },
+    ).document;
+    const wrappedRoot = insertParent(
+      document,
+      document.rootId,
+      "新中心",
+      "new-root",
+    );
+    const wrappedFloating = insertParent(
+      wrappedRoot.document,
+      "boundary",
+      "浮动父节点",
+      "floating-parent",
+    );
+
+    expect(wrappedRoot.document.rootId).toBe("new-root");
+    expect(wrappedRoot.document.nodes.root.parentId).toBe("new-root");
+    expect(wrappedFloating.document.floatingRoots).toContainEqual({
+      id: "floating-parent",
+      x: 760,
+      y: 280,
+    });
+    expect(wrappedFloating.document.nodes.boundary.parentId).toBe(
+      "floating-parent",
+    );
+    expect(isMindMapDocument(wrappedFloating.document)).toBe(true);
   });
 
   it("deletes a node while preserving and reparenting its children", () => {
@@ -360,6 +427,14 @@ describe("tree mutations", () => {
     expect(result.selection).toEqual(singleSelection("experience"));
   });
 
+  it("collapses a node whose only visible child is its subspace preview", () => {
+    const created = createMapSpace(createSeedDocument(), "path-1");
+    const result = toggleCollapsed(created.document, "path-1");
+
+    expect(result.document.nodes["path-1"].collapsed).toBe(true);
+    expect(result.selection).toEqual(singleSelection("path-1"));
+  });
+
   it("detaches and reattaches selected roots as one ordered group", () => {
     const document = createSeedDocument();
     const selection = {
@@ -398,6 +473,34 @@ describe("tree mutations", () => {
     expect(attached.document.nodes.path.parentId).toBe("scenario");
     expect(attached.document.floatingRoots).toEqual([]);
     expect(attached.selection).toEqual(selection);
+  });
+
+  it("keeps top-level order when an existing floating branch is repositioned", () => {
+    const document = createSeedDocument();
+    const first = detachSubtrees(
+      document,
+      [
+        { id: "experience", x: 760, y: 220 },
+        { id: "path", x: 760, y: 410 },
+      ],
+      singleSelection("experience"),
+    ).document;
+
+    const moved = detachSubtrees(
+      first,
+      [{ id: "experience", x: 900, y: 300 }],
+      singleSelection("experience"),
+    ).document;
+
+    expect(moved.floatingRoots.map(({ id }) => id)).toEqual([
+      "experience",
+      "path",
+    ]);
+    expect(moved.floatingRoots[0]).toEqual({
+      id: "experience",
+      x: 900,
+      y: 300,
+    });
   });
 
   it("reveals every collapsed ancestor before selecting a search result", () => {

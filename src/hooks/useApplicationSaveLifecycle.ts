@@ -6,6 +6,8 @@ import {
 import { isDesktopRuntime } from "../persistence/localDocumentStore";
 
 interface ApplicationSaveLifecycleOptions {
+  getSaveVersion: () => unknown;
+  onSaveBlocked?: () => void;
   prepareForSave?: () => void;
   saveBrowserNow: () => void;
   saveNow: () => Promise<boolean>;
@@ -13,6 +15,8 @@ interface ApplicationSaveLifecycleOptions {
 }
 
 export function useApplicationSaveLifecycle({
+  getSaveVersion,
+  onSaveBlocked,
   prepareForSave,
   saveBrowserNow,
   saveNow,
@@ -20,6 +24,8 @@ export function useApplicationSaveLifecycle({
 }: ApplicationSaveLifecycleOptions): void {
   const prepareForSaveRef = useRef(prepareForSave);
   prepareForSaveRef.current = prepareForSave;
+  const onSaveBlockedRef = useRef(onSaveBlocked);
+  onSaveBlockedRef.current = onSaveBlocked;
 
   useEffect(() => {
     if (isDesktopRuntime()) {
@@ -32,13 +38,21 @@ export function useApplicationSaveLifecycle({
       const saveLatestForLifecycle = () => {
         if (!lifecycleSave) {
           lifecycleSave = waitForStartupReady()
-            .then(() => {
-              try {
-                prepareForSaveRef.current?.();
-              } catch {
-                return false;
+            .then(async () => {
+              // The app remains interactive while a native save is in flight.
+              // Keep saving until the exact document generation that was
+              // written is still current; otherwise Command+Q could approve
+              // exit while a newer edit is only queued in memory.
+              while (true) {
+                try {
+                  prepareForSaveRef.current?.();
+                } catch {
+                  return false;
+                }
+                const savingVersion = getSaveVersion();
+                if (!await saveNow()) return false;
+                if (getSaveVersion() === savingVersion) return true;
               }
-              return saveNow();
             })
             .finally(() => {
               lifecycleSave = null;
@@ -57,6 +71,8 @@ export function useApplicationSaveLifecycle({
           try {
             if (await saveLatestForLifecycle()) {
               await appWindow.hide();
+            } else {
+              onSaveBlockedRef.current?.();
             }
           } finally {
             closeInProgress = false;
@@ -72,6 +88,7 @@ export function useApplicationSaveLifecycle({
           let saved = false;
           try {
             saved = await saveLatestForLifecycle();
+            if (!saved) onSaveBlockedRef.current?.();
             await resolveApplicationExit(saved);
           } finally {
             if (!saved) exitInProgress = false;
@@ -98,5 +115,5 @@ export function useApplicationSaveLifecycle({
     };
     window.addEventListener("beforeunload", flush);
     return () => window.removeEventListener("beforeunload", flush);
-  }, [saveBrowserNow, saveNow, waitForStartupReady]);
+  }, [getSaveVersion, saveBrowserNow, saveNow, waitForStartupReady]);
 }

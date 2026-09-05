@@ -1,5 +1,6 @@
 import type {
   FlowEdge,
+  FlowEdgeRouteOverride,
   FlowNode,
   FlowSpace,
   FloatingRoot,
@@ -64,12 +65,59 @@ function isFlowNode(value: unknown, id: string): value is FlowNode {
 }
 
 function isFlowEdge(value: unknown): value is FlowEdge {
+  const style = isRecord(value) ? value.style : undefined;
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
     typeof value.from === "string" &&
     typeof value.to === "string" &&
-    typeof value.label === "string"
+    typeof value.label === "string" &&
+    (value.fromPort === undefined ||
+      ["up", "right", "down", "left"].includes(String(value.fromPort))) &&
+    (value.toPort === undefined ||
+      ["up", "right", "down", "left"].includes(String(value.toPort))) &&
+    (style === undefined || (
+      isRecord(style) &&
+      (style.kind === undefined || ["rounded", "orthogonal", "straight", "curved"].includes(String(style.kind))) &&
+      (style.dash === undefined || ["solid", "dashed", "dotted"].includes(String(style.dash))) &&
+      (style.weight === undefined || ["thin", "regular", "bold"].includes(String(style.weight))) &&
+      (style.sourceEndpoint === undefined || ["none", "arrow", "dot", "ring"].includes(String(style.sourceEndpoint))) &&
+      (style.targetEndpoint === undefined || ["none", "arrow", "dot", "ring"].includes(String(style.targetEndpoint))) &&
+      (style.tone === undefined || ["neutral", "violet", "blue", "emerald", "amber"].includes(String(style.tone)))
+    ))
+  );
+}
+
+function isFlowEdgeRoutes(
+  value: unknown,
+  edges: readonly FlowEdge[],
+): value is Record<string, FlowEdgeRouteOverride> | undefined {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  const edgeIds = new Set(edges.map(({ id }) => id));
+  return Object.entries(value).every(([edgeId, route]) =>
+    edgeIds.has(edgeId) &&
+    isRecord(route) &&
+    (route.axis === "x" || route.axis === "y") &&
+    typeof route.coordinate === "number" &&
+    Number.isFinite(route.coordinate)
+  );
+}
+
+function isFlowPositions(
+  value: unknown,
+  nodes: Record<string, unknown>,
+): boolean {
+  return value === undefined || (
+    isRecord(value) &&
+    Object.entries(value).every(([nodeId, position]) =>
+      Boolean(nodes[nodeId]) &&
+      isRecord(position) &&
+      typeof position.x === "number" &&
+      Number.isFinite(position.x) &&
+      typeof position.y === "number" &&
+      Number.isFinite(position.y),
+    )
   );
 }
 
@@ -95,23 +143,19 @@ function isFlowSpace(value: unknown, id: string): value is FlowSpace {
     !isRecord(value.nodes) ||
     !Array.isArray(value.edges) ||
     !value.edges.every(isFlowEdge) ||
+    !isFlowPositions(value.positions, value.nodes) ||
+    !isFlowEdgeRoutes(value.edgeRoutes, value.edges as FlowEdge[]) ||
     !isViewport(value.viewport) ||
     typeof value.updatedAt !== "string"
   ) {
     return false;
   }
   const nodes = value.nodes;
-  if (
-    Object.keys(nodes).length === 0 ||
-    Object.entries(nodes).some(([nodeId, node]) => !isFlowNode(node, nodeId))
-  ) {
+  if (Object.entries(nodes).some(([nodeId, node]) => !isFlowNode(node, nodeId))) {
     return false;
   }
-  const nodeIds = Object.keys(nodes);
   const edgeIds = new Set<string>();
   const endpointPairs = new Set<string>();
-  const outgoing = new Map(nodeIds.map((nodeId) => [nodeId, [] as string[]]));
-  const indegree = new Map(nodeIds.map((nodeId) => [nodeId, 0]));
   for (const edge of value.edges) {
     const endpointPair = `${edge.from}\u0000${edge.to}`;
     if (
@@ -125,22 +169,8 @@ function isFlowSpace(value: unknown, id: string): value is FlowSpace {
     }
     edgeIds.add(edge.id);
     endpointPairs.add(endpointPair);
-    outgoing.get(edge.from)?.push(edge.to);
-    indegree.set(edge.to, (indegree.get(edge.to) ?? 0) + 1);
   }
-
-  const pending = nodeIds.filter((nodeId) => indegree.get(nodeId) === 0);
-  let visited = 0;
-  while (pending.length > 0) {
-    const nodeId = pending.pop()!;
-    visited += 1;
-    for (const targetId of outgoing.get(nodeId) ?? []) {
-      const remaining = (indegree.get(targetId) ?? 0) - 1;
-      indegree.set(targetId, remaining);
-      if (remaining === 0) pending.push(targetId);
-    }
-  }
-  return visited === nodeIds.length;
+  return true;
 }
 
 function isMapSpace(value: unknown, id: string): value is MapSpace {

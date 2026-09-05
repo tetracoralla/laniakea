@@ -17,7 +17,10 @@ export type IconName =
   | "flowChart"
   | "layers"
   | "chevron"
-  | "chevronDown";
+  | "chevronDown"
+  | "close"
+  | "trash"
+  | "text";
 
 interface IconProps extends SVGProps<SVGSVGElement> {
   name: IconName;
@@ -113,11 +116,10 @@ const paths: Record<IconName, React.ReactNode> = {
   ),
   flowChart: (
     <>
-      <rect x="17" y="6" width="14" height="9" fill="none" stroke="currentColor" strokeWidth={2} />
-      <rect x="6" y="33" width="14" height="9" fill="none" stroke="currentColor" strokeWidth={2} />
-      <rect x="28" y="33" width="14" height="9" fill="none" stroke="currentColor" strokeWidth={2} />
-      <path d="M24 16V24" strokeWidth={2} />
-      <path d="M13 33V24H35V33" strokeWidth={2} />
+      <rect x="4" y="18" width="15" height="12" rx="3" fill="none" strokeWidth={2} />
+      <path d="M21.5 24H28.5" strokeWidth={2} />
+      <path d="M26 20.5L29.5 24L26 27.5" strokeWidth={2} />
+      <path d="M38.5 16.5L46 24L38.5 31.5L31 24L38.5 16.5Z" fill="none" strokeWidth={2} />
     </>
   ),
   layers: (
@@ -130,6 +132,29 @@ const paths: Record<IconName, React.ReactNode> = {
   ),
   chevron: <path d="M19 12L31 24L19 36" />,
   chevronDown: <path d="M36 18L24 30L12 18" />,
+  close: (
+    <>
+      <path d="M8 8L40 40" />
+      <path d="M8 40L40 8" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M9 10V44H39V10H9Z" />
+      <path d="M20 20V33" />
+      <path d="M28 20V33" />
+      <path d="M4 10H44" />
+      <path d="M16 10L19.289 4H28.7771L32 10H16Z" />
+    </>
+  ),
+  text: (
+    <>
+      <rect height="36" rx="3" width="36" x="6" y="6" />
+      <path d="M16 19V16H32V19" />
+      <path d="M22 34H26" />
+      <path d="M24 18L24 34" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 18, ...props }: IconProps) {

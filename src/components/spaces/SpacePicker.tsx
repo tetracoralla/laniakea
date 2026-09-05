@@ -55,7 +55,7 @@ export function SpacePicker({
             onClick={onClose}
             type="button"
           >
-            ×
+            <Icon aria-hidden="true" name="close" size={17} />
           </button>
         </header>
         <div

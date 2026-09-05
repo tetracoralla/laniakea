@@ -3,15 +3,19 @@ import {
   isDialogTarget,
   isNativeTextEditingTarget,
 } from "./useKeyboardCommands";
+import { hasActiveCanvasDrag } from "./useDragInterruption";
 import type { FlowNavigationDirection } from "../model/flowLayout";
 
 interface FlowKeyboardCommandOptions {
   enabled: boolean;
   selectedId: string | null;
+  selectedEdgeId?: string | null;
   onAddNext: (id: string) => void;
   onAddBranch: (id: string) => void;
   onBeginEdit: (id: string) => void;
   onDelete: (id: string) => void;
+  onDeleteEdge?: (id: string) => void;
+  onClearEdgeSelection?: () => void;
   onNavigate: (direction: FlowNavigationDirection) => void;
   onBack: () => void;
   onUndo: () => void;
@@ -35,10 +39,13 @@ function isFlowCommandTarget(target: EventTarget | null): boolean {
 export function useFlowKeyboardCommands({
   enabled,
   selectedId,
+  selectedEdgeId = null,
   onAddNext,
   onAddBranch,
   onBeginEdit,
   onDelete,
+  onDeleteEdge = () => undefined,
+  onClearEdgeSelection = () => undefined,
   onNavigate,
   onBack,
   onUndo,
@@ -49,26 +56,35 @@ export function useFlowKeyboardCommands({
     onAddBranch,
     onBeginEdit,
     onDelete,
+    onDeleteEdge,
+    onClearEdgeSelection,
     onNavigate,
     onBack,
     onUndo,
     onRedo,
     selectedId,
+    selectedEdgeId,
   });
   handlersRef.current = {
     onAddNext,
     onAddBranch,
     onBeginEdit,
     onDelete,
+    onDeleteEdge,
+    onClearEdgeSelection,
     onNavigate,
     onBack,
     onUndo,
     onRedo,
     selectedId,
+    selectedEdgeId,
   };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // An active drag gesture owns Escape and cancels itself through its
+      // own capture listener; registration order must not decide who wins.
+      if (event.key === "Escape" && hasActiveCanvasDrag()) return;
       if (!enabled || event.defaultPrevented) return;
       if (isDialogTarget(event.target)) return;
       if (isNativeTextEditingTarget(event.target)) return;
@@ -89,6 +105,22 @@ export function useFlowKeyboardCommands({
       const target = event.target as Element | null;
       // 菜单自己管理 Escape 与方向键；先让它关闭，再谈返回上层。
       if (target?.closest?.("[role='menu']")) return;
+      if (target?.closest?.("[data-flow-edge-toolbar]")) return;
+      if (handlers.selectedEdgeId && event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        handlers.onClearEdgeSelection();
+        return;
+      }
+      if (
+        handlers.selectedEdgeId &&
+        (event.key === "Backspace" || event.key === "Delete")
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        handlers.onDeleteEdge(handlers.selectedEdgeId);
+        return;
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -96,7 +128,7 @@ export function useFlowKeyboardCommands({
         return;
       }
       // 适应内容按钮保留原生激活键（Enter/Space 触发点击）。
-      if (target?.closest?.(".flow-fit-button")) return;
+      if (target?.closest?.("button, input, textarea, select, .flow-fit-button")) return;
 
       const { selectedId: currentId } = handlers;
       if (!currentId) return;
@@ -112,10 +144,6 @@ export function useFlowKeyboardCommands({
         event.preventDefault();
         event.stopPropagation();
         handlers.onDelete(currentId);
-      } else if (event.key === " ") {
-        event.preventDefault();
-        event.stopPropagation();
-        handlers.onBeginEdit(currentId);
       } else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
         event.preventDefault();
         event.stopPropagation();

@@ -6,23 +6,28 @@ import {
   useRef,
   useState,
 } from "react";
-import { useFlowKeyboardCommands } from "../../hooks/useFlowKeyboardCommands";
-import {
-  flowNavigationTarget,
-  type FlowNavigationDirection,
-} from "../../model/flowLayout";
 import {
   addFlowBranch,
+  addFlowNodeAtPosition,
+  addFlowNodeInDirection,
   addFlowStepAfter,
   connectFlowNodes,
+  deleteFlowEdge,
   deleteFlowNode,
+  reconnectFlowEdge,
+  setFlowEdgeRoute,
   setFlowEdgeLabel,
+  setFlowEdgeStyle,
   setFlowNodeKind,
   setFlowNodeText,
 } from "../../model/spaces";
 import type { AppNotice } from "../../types/feedback";
 import type {
   FlowNodeKind,
+  FlowNodePosition,
+  FlowPlacementDirection,
+  FlowEdgeRouteOverride,
+  FlowEdgeStyle,
   FlowSpace,
   Viewport,
 } from "../../types/mindmap";
@@ -34,6 +39,7 @@ import {
 export interface FlowWorkspaceHandle {
   fit: () => void;
   focusCanvas: () => void;
+  finishEditing: () => void;
   flushViewport: () => void;
   selectedId: () => string | null;
 }
@@ -47,8 +53,17 @@ interface FlowWorkspaceProps {
   notify: (notice: AppNotice) => void;
   onBack: () => void;
   onRedo: () => void;
+  onEditorDraftChange?: (
+    target: {
+      objectId: string;
+      objectKind: "flow-node" | "flow-edge";
+    },
+    value: string,
+  ) => void;
+  onEditorDraftFinish?: (cancelled: boolean) => void;
   onUndo: () => void;
   onUpdateSpace: (space: FlowSpace) => void;
+  onPositionsChange?: (positions: Record<string, FlowNodePosition>) => void;
   onViewportChange: (viewport: Viewport) => void;
   space: FlowSpace;
 }
@@ -65,8 +80,11 @@ export const FlowWorkspace = forwardRef<
   notify,
   onBack,
   onRedo,
+  onEditorDraftChange = () => undefined,
+  onEditorDraftFinish = () => undefined,
   onUndo,
   onUpdateSpace,
+  onPositionsChange = () => undefined,
   onViewportChange,
   space,
 }, ref) {
@@ -76,11 +94,16 @@ export const FlowWorkspace = forwardRef<
   const [editingId, setEditingId] = useState(
     initialEditing ? initialSelectedId : null,
   );
-  const [draft, setDraft] = useState(
+  const [draft, setDraftState] = useState(
     initialEditing && initialSelectedId
       ? space.nodes[initialSelectedId]?.text ?? ""
       : "",
   );
+  const draftRef = useRef(draft);
+  const setDraft = useCallback((value: string) => {
+    draftRef.current = value;
+    setDraftState(value);
+  }, []);
 
   selectedIdRef.current = selectedId;
   // Mutations must compose on the latest applied space instead of a render
@@ -89,13 +112,6 @@ export const FlowWorkspace = forwardRef<
   const appliedSpaceRef = useRef(space);
   if (appliedSpaceRef.current !== space) appliedSpaceRef.current = space;
   const editingIdRef = useRef<string | null>(editingId);
-
-  useImperativeHandle(ref, () => ({
-    fit: () => canvasRef.current?.fit(),
-    focusCanvas: () => canvasRef.current?.focusCanvas(),
-    flushViewport: () => canvasRef.current?.flushViewport(),
-    selectedId: () => selectedIdRef.current,
-  }), []);
 
   useEffect(() => {
     setSelectedId(initialSelectedId);
@@ -137,8 +153,9 @@ export const FlowWorkspace = forwardRef<
     editingIdRef.current = null;
     setEditingId(null);
     setDraft("");
+    onEditorDraftFinish(true);
     window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
-  }, []);
+  }, [onEditorDraftFinish]);
 
   const commitEdit = useCallback((nodeId: string, value: string) => {
     if (editingIdRef.current !== nodeId) return;
@@ -148,12 +165,76 @@ export const FlowWorkspace = forwardRef<
     applySpace(setFlowNodeText(current, nodeId, value));
     setEditingId(null);
     setDraft("");
+    onEditorDraftFinish(false);
     window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
-  }, [applySpace]);
+  }, [applySpace, onEditorDraftFinish]);
+
+  const changeDraft = useCallback((value: string) => {
+    setDraft(value);
+    const nodeId = editingIdRef.current;
+    if (!nodeId) return;
+    onEditorDraftChange({
+      objectId: nodeId,
+      objectKind: "flow-node",
+    }, value);
+  }, [onEditorDraftChange]);
+
+  useImperativeHandle(ref, () => ({
+    fit: () => canvasRef.current?.fit(),
+    focusCanvas: () => canvasRef.current?.focusCanvas(),
+    finishEditing: () => {
+      const nodeId = editingIdRef.current;
+      if (nodeId) commitEdit(nodeId, draftRef.current);
+    },
+    flushViewport: () => canvasRef.current?.flushViewport(),
+    selectedId: () => selectedIdRef.current,
+  }), [commitEdit]);
 
   const addNext = useCallback((nodeId: string) => {
     const created = addFlowStepAfter(appliedSpaceRef.current, nodeId);
     if (created.space === appliedSpaceRef.current) return;
+    applySpace(created.space);
+    setSelectedId(created.nodeId);
+    editingIdRef.current = created.nodeId;
+    setEditingId(created.nodeId);
+    setDraft("");
+  }, [applySpace]);
+
+  const addNode = useCallback((
+    nodeId: string,
+    kind: Extract<FlowNodeKind, "step" | "decision">,
+    direction: FlowPlacementDirection,
+    currentPositions: Record<string, FlowNodePosition>,
+    resolvedPosition?: FlowNodePosition,
+  ) => {
+    const created = addFlowNodeInDirection(
+      appliedSpaceRef.current,
+      nodeId,
+      kind,
+      direction,
+      currentPositions,
+      resolvedPosition,
+    );
+    if (created.space === appliedSpaceRef.current) return;
+    applySpace(created.space);
+    setSelectedId(created.nodeId);
+    editingIdRef.current = created.nodeId;
+    setEditingId(created.nodeId);
+    setDraft("");
+  }, [applySpace]);
+
+  const addShape = useCallback((
+    kind: FlowNodeKind,
+    position: FlowNodePosition,
+    currentPositions: Record<string, FlowNodePosition>,
+  ) => {
+    const created = addFlowNodeAtPosition(
+      appliedSpaceRef.current,
+      kind,
+      position,
+      currentPositions,
+    );
+    if (created.space === appliedSpaceRef.current || !created.nodeId) return;
     applySpace(created.space);
     setSelectedId(created.nodeId);
     editingIdRef.current = created.nodeId;
@@ -179,68 +260,118 @@ export const FlowWorkspace = forwardRef<
     applySpace(setFlowEdgeLabel(appliedSpaceRef.current, edgeId, label));
   }, [applySpace]);
 
-  const connect = useCallback((fromId: string, toId: string) => {
-    const connected = connectFlowNodes(appliedSpaceRef.current, fromId, toId);
+  const changeEdgeStyle = useCallback((
+    edgeId: string,
+    patch: Partial<FlowEdgeStyle>,
+  ) => {
+    applySpace(setFlowEdgeStyle(appliedSpaceRef.current, edgeId, patch));
+  }, [applySpace]);
+
+  const changeEdgeRoute = useCallback((
+    edgeId: string,
+    route: FlowEdgeRouteOverride | null,
+  ) => {
+    applySpace(setFlowEdgeRoute(appliedSpaceRef.current, edgeId, route));
+  }, [applySpace]);
+
+  const connect = useCallback((
+    fromId: string,
+    toId: string,
+    ports?: {
+      fromPort?: FlowPlacementDirection;
+      toPort?: FlowPlacementDirection;
+    },
+  ) => {
+    const connected = connectFlowNodes(
+      appliedSpaceRef.current,
+      fromId,
+      toId,
+      ports,
+    );
     if (connected === appliedSpaceRef.current) return;
     applySpace(connected);
     setSelectedId(toId);
   }, [applySpace]);
 
-  const navigate = useCallback((direction: FlowNavigationDirection) => {
-    if (!selectedId) return;
-    const target = flowNavigationTarget(
+  const reconnectEdge = useCallback((
+    edgeId: string,
+    endpoint: "from" | "to",
+    nodeId: string,
+    port: FlowPlacementDirection,
+  ) => {
+    const reconnected = reconnectFlowEdge(
       appliedSpaceRef.current,
-      selectedId,
-      direction,
+      edgeId,
+      endpoint,
+      nodeId,
+      port,
     );
-    if (target) setSelectedId(target);
-  }, [selectedId]);
+    if (reconnected !== appliedSpaceRef.current) applySpace(reconnected);
+  }, [applySpace]);
 
   const remove = useCallback((nodeId: string) => {
     const removed = deleteFlowNode(appliedSpaceRef.current, nodeId);
-    if (removed.space === appliedSpaceRef.current) {
-      notify({ message: "开始节点不能删除" });
-      return;
-    }
+    if (removed.space === appliedSpaceRef.current) return;
     applySpace(removed.space);
     setSelectedId(removed.nextSelectedId);
     setEditingId(null);
     editingIdRef.current = null;
+    onEditorDraftFinish(true);
     notify({
       message: "已删除流程步骤",
       actionLabel: "撤销",
       onAction: onUndo,
     });
-  }, [applySpace, notify, onUndo]);
+  }, [applySpace, notify, onEditorDraftFinish, onUndo]);
 
-  useFlowKeyboardCommands({
-    enabled: keyboardEnabled,
-    selectedId,
-    onAddNext: addNext,
-    onAddBranch: addBranch,
-    onBeginEdit: beginEdit,
-    onDelete: remove,
-    onNavigate: navigate,
-    onBack,
-    onUndo,
-    onRedo,
-  });
+  const removeEdge = useCallback((edgeId: string) => {
+    const next = deleteFlowEdge(appliedSpaceRef.current, edgeId);
+    if (next === appliedSpaceRef.current) return;
+    applySpace(next);
+    notify({
+      message: "已删除连线",
+      actionLabel: "撤销",
+      onAction: onUndo,
+    });
+  }, [applySpace, notify, onUndo]);
 
   return (
     <FlowCanvas
       draft={draft}
       editingId={editingId}
+      keyboardEnabled={keyboardEnabled}
       onAddBranch={addBranch}
+      onAddNode={addNode}
+      onAddShape={addShape}
       onAddNext={addNext}
+      onBack={onBack}
       onBeginEdit={beginEdit}
+      onSpaceTap={() => {
+        // Mirrors the main map: a Space tap (no pan) edits the selection.
+        if (selectedId && editingId === null) beginEdit(selectedId);
+      }}
       onCancelEdit={cancelEdit}
       onChangeEdgeLabel={changeEdgeLabel}
+      onChangeEdgeRoute={changeEdgeRoute}
+      onChangeEdgeStyle={changeEdgeStyle}
       onChangeKind={changeKind}
       onCommitEdit={commitEdit}
       onConnect={connect}
       onDelete={remove}
-      onDraftChange={setDraft}
+      onDeleteEdge={removeEdge}
+      onDraftChange={changeDraft}
+      onEdgeDraftChange={(edgeId, value) =>
+        onEditorDraftChange({
+          objectId: edgeId,
+          objectKind: "flow-edge",
+        }, value)
+      }
+      onEdgeDraftFinish={onEditorDraftFinish}
       onSelect={setSelectedId}
+      onPositionsChange={onPositionsChange}
+      onReconnectEdge={reconnectEdge}
+      onRedo={onRedo}
+      onUndo={onUndo}
       onViewportChange={onViewportChange}
       ref={canvasRef}
       selectedId={selectedId}

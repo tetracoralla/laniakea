@@ -8,6 +8,7 @@ import {
   displayGlobalShortcut,
   shortcutFromKeyboardEvent,
 } from "../../desktop/shortcut";
+import { primaryModifierHint } from "../../model/shortcutDisplay";
 import { trapDialogTab } from "../overlays/focus";
 
 interface ShortcutSettingsProps {
@@ -49,7 +50,7 @@ export function ShortcutSettings({
     const shortcut = shortcutFromKeyboardEvent(event);
     if (!shortcut) {
       if (!["Alt", "Control", "Meta", "Shift"].includes(event.key)) {
-        setError("请同时按住 ⌘、⌃ 或 ⌥");
+        setError(primaryModifierHint());
       }
       return;
     }

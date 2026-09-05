@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 
+import { configureInternalDocumentRoot } from "../../persistence/recentDocuments";
+
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentSwitcher } from "./DocumentSwitcher";
+
+configureInternalDocumentRoot(
+  "/Volumes/Workspace/Library/Application Support/com.openadam.origin",
+);
 
 describe("recent document file actions", () => {
   let container: HTMLDivElement;
@@ -34,10 +40,151 @@ describe("recent document file actions", () => {
     vi.unstubAllGlobals();
   });
 
+  it("separates the current save target from a same-named recent file", async () => {
+    const desktopPath = "/Users/test/Desktop/项目计划.md";
+    const downloadsPath = "/Users/test/Downloads/项目计划.md";
+    const onRevealCurrent = vi.fn();
+    const onRevealRecent = vi.fn();
+    const onCopyDocumentPath = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <DocumentSwitcher
+          currentPath={desktopPath}
+          currentSourcePath={desktopPath}
+          currentTitle="项目计划"
+          onCopyDocumentPath={onCopyDocumentPath}
+          onForgetRecent={vi.fn()}
+          onMoveRecent={vi.fn()}
+          onOpenChange={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenRecent={vi.fn()}
+          onRevealCurrent={onRevealCurrent}
+          onRevealRecent={onRevealRecent}
+          open
+          recentDocuments={[
+            {
+              path: desktopPath,
+              title: "项目计划",
+              lastOpenedAt: "2026-09-04T07:38:00.461Z",
+            },
+            {
+              path: downloadsPath,
+              title: "项目计划",
+              lastOpenedAt: "2026-09-02T14:14:02.919Z",
+            },
+          ]}
+        />,
+      );
+    });
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      ".document-switcher__trigger",
+    )!;
+    expect(trigger.textContent).toBe("桌面");
+    expect(trigger.title).toBe(`正在保存到：${desktopPath}`);
+    expect(
+      container.querySelector(".document-switcher__current-row")?.textContent,
+    ).toContain("项目计划保存到 · 桌面");
+    expect(container.textContent).toContain("其他最近文档");
+
+    const recentItems = container.querySelectorAll(
+      ".document-switcher__recent",
+    );
+    expect(recentItems).toHaveLength(1);
+    expect(recentItems[0]?.getAttribute("title")).toBe(downloadsPath);
+
+    const popover = container.querySelector<HTMLElement>(
+      ".document-switcher__popover",
+    )!;
+    const openFile = Array.from(
+      popover.querySelectorAll<HTMLButtonElement>("[role='menuitem']"),
+    ).find((button) => button.textContent?.includes("打开文件"))!;
+    const currentActionsTrigger = container.querySelector<HTMLButtonElement>(
+      "button[aria-label='当前文件操作：项目计划']",
+    )!;
+    openFile.focus();
+    await act(async () => {
+      popover.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "ArrowDown",
+        }),
+      );
+    });
+    expect(document.activeElement).toBe(currentActionsTrigger);
+
+    await act(async () => {
+      currentActionsTrigger.click();
+    });
+    const currentActions = container.querySelector<HTMLElement>(
+      ".document-switcher__actions-menu",
+    )!;
+    expect(currentActions.textContent).toContain("复制路径");
+    expect(currentActions.textContent).not.toContain("从最近编辑中移除");
+    await act(async () => {
+      Array.from(currentActions.querySelectorAll("button"))
+        .find((button) => button.textContent?.includes("在访达中显示"))
+        ?.click();
+    });
+    expect(onRevealCurrent).toHaveBeenCalledWith(desktopPath);
+    expect(onRevealRecent).not.toHaveBeenCalled();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "button[aria-label='当前文件操作：项目计划']",
+      )!.click();
+    });
+    await act(async () => {
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          ".document-switcher__actions-menu button",
+        ),
+      )
+        .find((button) => button.textContent?.includes("复制路径"))
+        ?.click();
+    });
+    expect(onCopyDocumentPath).toHaveBeenCalledWith(desktopPath);
+
+    await act(async () => {
+      root.render(
+        <DocumentSwitcher
+          currentPath={null}
+          currentSourcePath={downloadsPath}
+          currentTitle="项目计划"
+          onCopyDocumentPath={vi.fn()}
+          onForgetRecent={vi.fn()}
+          onMoveRecent={vi.fn()}
+          onOpenChange={vi.fn()}
+          onOpenFile={vi.fn()}
+          onOpenRecent={vi.fn()}
+          onRevealCurrent={vi.fn()}
+          onRevealRecent={vi.fn()}
+          open
+          recentDocuments={[
+            {
+              path: downloadsPath,
+              title: "项目计划",
+              lastOpenedAt: "2026-09-02T14:14:02.919Z",
+            },
+          ]}
+        />,
+      );
+    });
+    expect(
+      container.querySelector(".document-switcher__trigger")?.textContent,
+    ).toBe("待另存");
+    expect(
+      container.querySelector(".document-switcher__current-row")?.textContent,
+    ).toContain("尚未另存 · 来源：下载");
+    expect(container.querySelectorAll(".document-switcher__recent"))
+      .toHaveLength(0);
+  });
+
   it("keeps reopen primary while exposing contextual user-file actions", async () => {
     const onOpenRecent = vi.fn();
     const onRevealRecent = vi.fn();
-    const onCopyRecentPath = vi.fn();
+    const onCopyDocumentPath = vi.fn();
     const onForgetRecent = vi.fn();
     const externalPath =
       "/Volumes/Workspace/Documents/客户项目/验收想法.md";
@@ -48,12 +195,13 @@ describe("recent document file actions", () => {
       root.render(
         <DocumentSwitcher
           currentPath={null}
-          onCopyRecentPath={onCopyRecentPath}
+          onCopyDocumentPath={onCopyDocumentPath}
           onForgetRecent={onForgetRecent}
           onMoveRecent={vi.fn()}
           onOpenChange={vi.fn()}
           onOpenFile={vi.fn()}
           onOpenRecent={onOpenRecent}
+          onRevealCurrent={vi.fn()}
           onRevealRecent={onRevealRecent}
           open
           recentDocuments={[
@@ -93,6 +241,10 @@ describe("recent document file actions", () => {
     const actionMenu = container.querySelector<HTMLElement>(
       ".document-switcher__actions-menu",
     )!;
+    expect(actionMenu.closest(".document-switcher__list")).toBeNull();
+    expect(actionMenu.parentElement).toBe(
+      container.querySelector(".document-switcher__popover"),
+    );
     await act(async () => {
       actionMenu.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -143,12 +295,13 @@ describe("recent document file actions", () => {
       root.render(
         <DocumentSwitcher
           currentPath={null}
-          onCopyRecentPath={vi.fn()}
+          onCopyDocumentPath={vi.fn()}
           onForgetRecent={vi.fn()}
           onMoveRecent={vi.fn()}
           onOpenChange={vi.fn()}
           onOpenFile={vi.fn()}
           onOpenRecent={vi.fn()}
+          onRevealCurrent={vi.fn()}
           onRevealRecent={vi.fn()}
           open
           recentDocuments={[
@@ -238,6 +391,70 @@ describe("recent document file actions", () => {
     vi.useRealTimers();
   });
 
+  it("repositions an open actions menu when the viewport changes", async () => {
+    const externalPath = "/Volumes/Workspace/Documents/验收想法.md";
+    const originalBounds = HTMLElement.prototype.getBoundingClientRect;
+    let menuHeight = 120;
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.classList.contains("document-switcher__popover")) {
+        return { top: 100 } as DOMRect;
+      }
+      if (this.classList.contains("document-switcher__recent-more")) {
+        return { top: 600 } as DOMRect;
+      }
+      if (this.classList.contains("document-switcher__actions-menu")) {
+        return { height: menuHeight } as DOMRect;
+      }
+      return originalBounds.call(this);
+    };
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 800,
+      writable: true,
+    });
+
+    try {
+      await act(async () => {
+        root.render(
+          <DocumentSwitcher
+            currentPath={null}
+            onCopyDocumentPath={vi.fn()}
+            onForgetRecent={vi.fn()}
+            onMoveRecent={vi.fn()}
+            onOpenChange={vi.fn()}
+            onOpenFile={vi.fn()}
+            onOpenRecent={vi.fn()}
+            onRevealCurrent={vi.fn()}
+            onRevealRecent={vi.fn()}
+            open
+            recentDocuments={[{
+              path: externalPath,
+              title: "验收想法",
+              lastOpenedAt: "2026-07-30T10:00:00.000Z",
+            }]}
+          />,
+        );
+      });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>(
+          "button[aria-label='更多操作：验收想法']",
+        )!.click();
+      });
+      const menu = container.querySelector<HTMLElement>(
+        ".document-switcher__actions-menu",
+      )!;
+      expect(menu.style.top).toBe("494px");
+
+      menuHeight = 220;
+      await act(async () => {
+        window.dispatchEvent(new Event("resize"));
+      });
+      expect(menu.style.top).toBe("468px");
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalBounds;
+    }
+  });
+
   it("shows the complete browser library and exposes real deletion", async () => {
     const onOpenRecent = vi.fn();
     const onDeleteDocument = vi.fn();
@@ -251,13 +468,14 @@ describe("recent document file actions", () => {
       root.render(
         <DocumentSwitcher
           currentPath={documents[0].path}
-          onCopyRecentPath={vi.fn()}
+          onCopyDocumentPath={vi.fn()}
           onDeleteDocument={onDeleteDocument}
           onForgetRecent={vi.fn()}
           onMoveRecent={vi.fn()}
           onOpenChange={vi.fn()}
           onOpenFile={vi.fn()}
           onOpenRecent={onOpenRecent}
+          onRevealCurrent={vi.fn()}
           onRevealRecent={vi.fn()}
           open
           recentDocuments={documents}

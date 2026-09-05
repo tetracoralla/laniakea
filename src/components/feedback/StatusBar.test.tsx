@@ -102,6 +102,58 @@ describe("StatusBar", () => {
     expect(onComplete).toHaveBeenCalledOnce();
   });
 
+  it("keeps recovery accept and discard as two explicit actions", () => {
+    const onKeep = vi.fn();
+    const onDiscard = vi.fn();
+    const onComplete = vi.fn();
+    renderStatusBar({
+      notice: {
+        message: "已恢复上次中断前的内容",
+        actionLabel: "保留",
+        onAction: onKeep,
+        secondaryActionLabel: "放弃",
+        onSecondaryAction: onDiscard,
+      },
+      onNoticeActionComplete: onComplete,
+    });
+
+    const actions = container.querySelectorAll<HTMLButtonElement>(
+      ".status-bar__action",
+    );
+    expect(Array.from(actions, ({ textContent }) => textContent)).toEqual([
+      "保留",
+      "放弃",
+    ]);
+    act(() => actions[1]?.click());
+    expect(onKeep).not.toHaveBeenCalled();
+    expect(onDiscard).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a persistent decision bar mounted while its action resolves", () => {
+    const onDiscard = vi.fn();
+    const onComplete = vi.fn();
+    renderStatusBar({
+      notice: {
+        message: "已恢复上次中断前的内容",
+        secondaryActionLabel: "放弃",
+        onSecondaryAction: onDiscard,
+        persistent: true,
+      },
+      onNoticeActionComplete: onComplete,
+    });
+
+    act(() => {
+      container
+        .querySelectorAll<HTMLButtonElement>(".status-bar__action")[0]
+        ?.click();
+    });
+    expect(onDiscard).toHaveBeenCalledOnce();
+    expect(onComplete).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(container.textContent).toContain("已恢复上次中断前的内容");
+  });
+
   it("moves between measured widths so notice changes can animate", () => {
     let contentWidth = 66;
     const originalScrollWidth = Object.getOwnPropertyDescriptor(

@@ -13,6 +13,7 @@ function fakeTarget(options: {
   dialog?: boolean;
   canvas?: boolean;
   body?: boolean;
+  button?: boolean;
 }): EventTarget {
   return {
     matches: (selector: string) =>
@@ -22,7 +23,8 @@ function fakeTarget(options: {
       (options.body && selector.includes("body")),
     closest: (selector: string) =>
       (options.dialog && selector.includes("[role='dialog']")) ||
-      (options.canvas && selector.includes(".mindmap-canvas"))
+      (options.canvas && selector.includes(".mindmap-canvas")) ||
+      (options.button && selector.includes("button"))
         ? ({} as Element)
         : null,
   } as unknown as EventTarget;
@@ -48,6 +50,10 @@ describe("keyboard command focus isolation", () => {
     expect(isCanvasCommandTarget(fakeTarget({ body: true }))).toBe(true);
     expect(isCanvasCommandTarget(fakeTarget({}))).toBe(false);
     expect(isCanvasCommandTarget(null)).toBe(true);
+  });
+
+  it("does not let node commands escape into chrome controls", () => {
+    expect(isCanvasCommandTarget(fakeTarget({ button: true }))).toBe(false);
   });
 
   it("keeps printable Shift shortcuts inside text editors", () => {

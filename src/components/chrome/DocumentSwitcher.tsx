@@ -1,26 +1,33 @@
 import {
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
 } from "react";
 import {
+  describeCurrentDocument,
   isInternalDocumentPath,
   recentDocumentLocation,
   visibleRecentDocuments,
   type RecentDocument,
 } from "../../persistence/recentDocuments";
 import { Icon } from "../icons/Icon";
+import { moveMenuFocus } from "../menu/menuKeyboard";
 
 interface DocumentSwitcherProps {
   currentPath: string | null;
+  currentSourcePath?: string | null;
+  currentTitle?: string;
   open: boolean;
   recentDocuments: RecentDocument[];
   onOpenChange: (open: boolean) => void;
   onOpenFile: () => void;
   onOpenRecent: (path: string) => void;
+  onRevealCurrent: (path: string) => void;
   onRevealRecent: (path: string) => void;
-  onCopyRecentPath: (path: string) => void;
+  onCopyDocumentPath: (path: string) => void;
   onMoveRecent: (path: string) => void;
   onForgetRecent: (path: string) => void;
   onDeleteDocument?: (path: string) => void;
@@ -49,13 +56,16 @@ function formatRecentTime(value: string): string {
 
 export function DocumentSwitcher({
   currentPath,
+  currentSourcePath = null,
+  currentTitle,
   open,
   recentDocuments,
   onOpenChange,
   onOpenFile,
   onOpenRecent,
+  onRevealCurrent,
   onRevealRecent,
-  onCopyRecentPath,
+  onCopyDocumentPath,
   onMoveRecent,
   onForgetRecent,
   onDeleteDocument,
@@ -63,17 +73,39 @@ export function DocumentSwitcher({
 }: DocumentSwitcherProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsOpenTimerRef = useRef<number | null>(null);
   const actionsCloseTimerRef = useRef<number | null>(null);
   const focusActionsOnOpenRef = useRef(false);
   const [actionsPath, setActionsPath] = useState<string | null>(null);
+  const [actionsMenuTop, setActionsMenuTop] = useState<number | null>(null);
+  const currentDocument = describeCurrentDocument({
+    documentPath: currentPath,
+    sourcePath: currentSourcePath,
+  });
   const visibleDocuments = visibleRecentDocuments(
     recentDocuments,
-    currentPath,
+    currentDocument.associatedPath,
     showFileActions ? 5 : null,
   );
+
+  const positionActionsMenu = useCallback(() => {
+    const anchor = actionsTriggerRef.current;
+    const popover = popoverRef.current;
+    const menu = actionsMenuRef.current;
+    if (!anchor || !popover || !menu) return;
+    const anchorBounds = anchor.getBoundingClientRect();
+    const popoverBounds = popover.getBoundingClientRect();
+    const menuHeight = menu.getBoundingClientRect().height;
+    const desiredTop = anchorBounds.top - 6;
+    const boundedTop = Math.max(
+      12,
+      Math.min(desiredTop, window.innerHeight - menuHeight - 12),
+    );
+    setActionsMenuTop(boundedTop - popoverBounds.top);
+  }, []);
 
   useEffect(() => {
     if (!open) {
@@ -109,6 +141,24 @@ export function DocumentSwitcher({
         ?.focus({ preventScroll: true });
     });
   }, [actionsPath]);
+
+  useLayoutEffect(() => {
+    if (!actionsPath) {
+      setActionsMenuTop(null);
+      return;
+    }
+    positionActionsMenu();
+    window.addEventListener("resize", positionActionsMenu);
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(positionActionsMenu);
+    if (actionsMenuRef.current) observer?.observe(actionsMenuRef.current);
+    if (popoverRef.current) observer?.observe(popoverRef.current);
+    return () => {
+      window.removeEventListener("resize", positionActionsMenu);
+      observer?.disconnect();
+    };
+  }, [actionsPath, positionActionsMenu]);
 
   useEffect(
     () => () => {
@@ -228,8 +278,6 @@ export function DocumentSwitcher({
     ) {
       return;
     }
-    const items = menuItems();
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -240,35 +288,23 @@ export function DocumentSwitcher({
       onOpenChange(false);
       return;
     }
+    // Arrow flow stays on the switcher's own list entries; the hover-managed
+    // actions submenu and the row-level "更多操作" trigger join only through
+    // their own entry points.
     if (
-      !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) ||
-      items.length === 0
+      moveMenuFocus(
+        event.currentTarget,
+        event.key,
+        "[role='menuitem'][data-document-switcher-item='true']:not(:disabled)",
+      )
     ) {
-      return;
+      event.preventDefault();
     }
-    event.preventDefault();
-    const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? items.length - 1
-          : event.key === "ArrowDown"
-            ? (Math.max(index, -1) + 1) % items.length
-            : (index <= 0 ? items.length : index) - 1;
-    items[nextIndex]?.focus();
   };
 
   const handleActionsKeyDown = (
     event: KeyboardEvent<HTMLDivElement>,
   ) => {
-    const items = Array.from(
-      event.currentTarget.querySelectorAll<HTMLButtonElement>(
-        "[role='menuitem']",
-      ),
-    );
-    const index = items.indexOf(
-      document.activeElement as HTMLButtonElement,
-    );
     if (event.key === "Escape" || event.key === "ArrowLeft") {
       event.preventDefault();
       event.stopPropagation();
@@ -279,23 +315,10 @@ export function DocumentSwitcher({
       close(false);
       return;
     }
-    if (
-      !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) ||
-      items.length === 0
-    ) {
-      return;
+    if (moveMenuFocus(event.currentTarget, event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
     }
-    event.preventDefault();
-    event.stopPropagation();
-    const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? items.length - 1
-          : event.key === "ArrowDown"
-            ? (Math.max(index, -1) + 1) % items.length
-            : (index <= 0 ? items.length : index) - 1;
-    items[nextIndex]?.focus();
   };
 
   useEffect(() => {
@@ -328,13 +351,31 @@ export function DocumentSwitcher({
     close(false);
     action(path);
   };
+  const actionsIsCurrent = Boolean(
+    currentTitle !== undefined &&
+      currentDocument.pathRole &&
+      actionsPath === currentDocument.associatedPath,
+  );
+  const actionsDocument = actionsPath
+    ? actionsIsCurrent
+      ? {
+          path: actionsPath,
+          title: currentTitle ?? "当前文档",
+          lastOpenedAt: "",
+        }
+      : visibleDocuments.find((document) => document.path === actionsPath)
+    : undefined;
 
   return (
     <div className="document-switcher" ref={rootRef}>
       <button
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label="切换思维导图"
+        aria-label={
+          currentTitle === undefined
+            ? "切换思维导图"
+            : `切换思维导图；${currentDocument.exactDescription}`
+        }
         className="document-switcher__trigger"
         onClick={() => onOpenChange(!open)}
         onKeyDown={(event) => {
@@ -350,8 +391,18 @@ export function DocumentSwitcher({
           }
         }}
         ref={triggerRef}
+        title={
+          currentTitle === undefined
+            ? "切换思维导图"
+            : currentDocument.exactDescription
+        }
         type="button"
       >
+        {currentTitle !== undefined && (
+          <span className="document-switcher__current-location">
+            {currentDocument.compactLocation}
+          </span>
+        )}
         <Icon name="chevronDown" size={16} />
       </button>
 
@@ -362,17 +413,86 @@ export function DocumentSwitcher({
           }
           className="document-switcher__popover"
           onKeyDown={handleMenuKeyDown}
+          ref={popoverRef}
           role="menu"
         >
+          {currentTitle !== undefined && (
+            <>
+              <span className="document-switcher__heading">正在编辑</span>
+              <div
+                aria-label={`${currentTitle}，${currentDocument.exactDescription}`}
+                className="document-switcher__current-row"
+                onContextMenu={(event) => {
+                  if (!currentDocument.pathRole || !currentDocument.associatedPath) {
+                    return;
+                  }
+                  event.preventDefault();
+                  openActions(currentDocument.associatedPath, true);
+                }}
+                role="group"
+                title={currentDocument.exactDescription}
+              >
+                <Icon name="check" size={16} />
+                <span className="document-switcher__item-copy">
+                  <strong>{currentTitle}</strong>
+                  <small>{currentDocument.metadata}</small>
+                </span>
+                {showFileActions &&
+                  currentDocument.pathRole &&
+                  currentDocument.associatedPath && (
+                    <button
+                      aria-expanded={actionsIsCurrent}
+                      aria-haspopup="menu"
+                      aria-label={`当前文件操作：${currentTitle}`}
+                      className="document-switcher__recent-more"
+                      data-document-switcher-item="true"
+                      onClick={() => {
+                        if (actionsIsCurrent) {
+                          closeActions(false);
+                        } else {
+                          openActions(
+                            currentDocument.associatedPath!,
+                            true,
+                          );
+                        }
+                      }}
+                      onPointerEnter={() =>
+                        scheduleActionsOpen(currentDocument.associatedPath!)
+                      }
+                      onPointerLeave={() => {
+                        cancelScheduledActionsOpen();
+                        scheduleActionsClose();
+                      }}
+                      ref={actionsIsCurrent ? actionsTriggerRef : undefined}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <Icon name="more" size={16} />
+                    </button>
+                  )}
+              </div>
+              <span className="document-switcher__divider" />
+            </>
+          )}
           <span className="document-switcher__heading">
-            {showFileActions ? "最近编辑" : "文档库"}
+            {currentTitle === undefined
+              ? showFileActions
+                ? "最近编辑"
+                : "文档库"
+              : showFileActions
+                ? "其他最近文档"
+                : "其他文档"}
           </span>
           {visibleDocuments.length === 0 ? (
             <span className="document-switcher__empty">
               {showFileActions ? "暂无其他最近文档" : "暂无其他文档"}
             </span>
           ) : (
-            <div className="document-switcher__list" role="none">
+            <div
+              className="document-switcher__list"
+              onScroll={() => closeActions(false)}
+              role="none"
+            >
             {visibleDocuments.map((document) => {
               const internal = isInternalDocumentPath(document.path);
               const time = formatRecentTime(document.lastOpenedAt);
@@ -450,79 +570,95 @@ export function DocumentSwitcher({
                       <Icon name="minus" size={16} />
                     </button>
                   )}
-                  {showFileActions && actionsOpen && (
-                    <div
-                      aria-label={`${document.title}的文件操作`}
-                      className="document-switcher__actions-menu"
-                      onKeyDown={handleActionsKeyDown}
-                      onPointerEnter={keepActionsOpen}
-                      onPointerLeave={scheduleActionsClose}
-                      ref={actionsMenuRef}
-                      role="menu"
-                    >
-                      {!internal && (
-                        <>
-                          <button
-                            onClick={() =>
-                              runRecentAction(
-                                document.path,
-                                onRevealRecent,
-                              )
-                            }
-                            role="menuitem"
-                            type="button"
-                          >
-                            <Icon name="folder" size={16} />
-                            <span>在访达中显示</span>
-                          </button>
-                          <button
-                            onClick={() =>
-                              runRecentAction(
-                                document.path,
-                                onCopyRecentPath,
-                              )
-                            }
-                            role="menuitem"
-                            type="button"
-                          >
-                            <Icon name="code" size={16} />
-                            <span>复制路径</span>
-                          </button>
-                        </>
-                      )}
-                      {internal && (
-                        <button
-                          onClick={() =>
-                            runRecentAction(
-                              document.path,
-                              onMoveRecent,
-                            )
-                          }
-                          role="menuitem"
-                          type="button"
-                        >
-                          <Icon name="folder" size={16} />
-                          <span>移动到…</span>
-                        </button>
-                      )}
-                      <button
-                        onClick={() =>
-                          runRecentAction(
-                            document.path,
-                            onForgetRecent,
-                          )
-                        }
-                        role="menuitem"
-                        type="button"
-                      >
-                        <Icon name="minus" size={16} />
-                        <span>从最近编辑中移除</span>
-                      </button>
-                    </div>
-                  )}
                 </div>
               );
             })}
+            </div>
+          )}
+          {showFileActions && actionsDocument && (
+            <div
+              aria-label={`${actionsDocument.title}的文件操作`}
+              className="document-switcher__actions-menu"
+              onKeyDown={handleActionsKeyDown}
+              onPointerEnter={keepActionsOpen}
+              onPointerLeave={scheduleActionsClose}
+              ref={actionsMenuRef}
+              role="menu"
+              style={{
+                top: actionsMenuTop ?? -6,
+                visibility: actionsMenuTop === null ? "hidden" : "visible",
+              }}
+            >
+              {!isInternalDocumentPath(actionsDocument.path) && (
+                <>
+                  <button
+                    onClick={() =>
+                      runRecentAction(
+                        actionsDocument.path,
+                        actionsIsCurrent
+                          ? onRevealCurrent
+                          : onRevealRecent,
+                      )
+                    }
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Icon name="folder" size={16} />
+                    <span>
+                      {actionsIsCurrent && currentDocument.pathRole === "source"
+                        ? "在访达中显示来源"
+                        : "在访达中显示"}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() =>
+                      runRecentAction(
+                        actionsDocument.path,
+                        onCopyDocumentPath,
+                      )
+                    }
+                    role="menuitem"
+                    type="button"
+                  >
+                    <Icon name="code" size={16} />
+                    <span>
+                      {actionsIsCurrent && currentDocument.pathRole === "source"
+                        ? "复制来源路径"
+                        : "复制路径"}
+                    </span>
+                  </button>
+                </>
+              )}
+              {!actionsIsCurrent && isInternalDocumentPath(actionsDocument.path) && (
+                <button
+                  onClick={() =>
+                    runRecentAction(
+                      actionsDocument.path,
+                      onMoveRecent,
+                    )
+                  }
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="folder" size={16} />
+                  <span>移动到…</span>
+                </button>
+              )}
+              {!actionsIsCurrent && (
+                <button
+                  onClick={() =>
+                    runRecentAction(
+                      actionsDocument.path,
+                      onForgetRecent,
+                    )
+                  }
+                  role="menuitem"
+                  type="button"
+                >
+                  <Icon name="minus" size={16} />
+                  <span>从最近编辑中移除</span>
+                </button>
+              )}
             </div>
           )}
           <span className="document-switcher__divider" />

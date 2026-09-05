@@ -4,6 +4,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   rm,
   stat,
   symlink,
@@ -16,7 +17,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createMindMapFile,
   readMindMapFile,
+  markdownRevision,
+  normalizeUpdateLockKey,
   removeStaleLockIfUnchanged,
+  updateLockPath,
   updateMindMapFile,
 } from "./mindMapFileStore";
 
@@ -31,6 +35,30 @@ describe("Laniakea Agent Markdown file store", () => {
     await rm(workspace, { recursive: true, force: true });
   });
 
+  it("shares the desktop canonical-path lock naming contract", () => {
+    expect(updateLockPath("/tmp/方案.md")).toBe(
+      "/tmp/.laniakea-lock-1dd1bad2ed9e0344d0c85c386dd1e6ff",
+    );
+  });
+
+  it("normalizes Windows extended paths to the desktop lock key", () => {
+    expect(
+      normalizeUpdateLockKey(String.raw`\\?\C:\Users\Ada\方案.md`, "win32"),
+    ).toBe(String.raw`C:\Users\Ada\方案.md`);
+    expect(
+      normalizeUpdateLockKey(
+        String.raw`\\?\UNC\server\share\方案.md`,
+        "win32",
+      ),
+    ).toBe(String.raw`\\server\share\方案.md`);
+    expect(
+      updateLockPath(String.raw`\\?\C:\Users\Ada\方案.md`, "win32"),
+    ).toBe(updateLockPath(String.raw`C:\Users\Ada\方案.md`, "win32"));
+    expect(
+      updateLockPath(String.raw`C:\Users\Ada\方案.md`, "win32"),
+    ).toContain(".laniakea-lock-863ef6696318b82b930aeb9cb8aa0120");
+  });
+
   it("creates a new file but never overwrites an existing destination", async () => {
     const filePath = join(workspace, "map.md");
     await createMindMapFile(filePath, "Plan", {
@@ -43,6 +71,25 @@ describe("Laniakea Agent Markdown file store", () => {
     ).rejects.toMatchObject({ code: "already_exists" });
     expect(await readFile(filePath, "utf8")).toContain("First");
     expect(await readFile(filePath, "utf8")).not.toContain("Forbidden");
+  });
+
+  it("serializes first creation through the canonical parent lock", async () => {
+    const realDirectory = join(workspace, "real");
+    const aliasDirectory = join(workspace, "alias");
+    await mkdir(realDirectory);
+    await symlink(realDirectory, aliasDirectory, "dir");
+    const canonicalPath = join(await realpath(realDirectory), "new-map.md");
+    const aliasPath = join(aliasDirectory, "new-map.md");
+    const lockPath = updateLockPath(canonicalPath);
+    await writeFile(lockPath, `${process.pid}\n`, "utf8");
+
+    const creating = createMindMapFile(aliasPath, "Plan", { text: "Root" });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await expect(lstat(canonicalPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await rm(lockPath);
+    await expect(creating).resolves.toMatchObject({ filePath: aliasPath });
+    expect(await readFile(canonicalPath, "utf8")).toContain("# Plan");
   });
 
   it("rejects a stale update without changing the newer Markdown", async () => {
@@ -189,6 +236,28 @@ describe("Laniakea Agent Markdown file store", () => {
     await symlink(target, link);
 
     await expect(readMindMapFile(link)).rejects.toMatchObject({
+      code: "invalid_path",
+    });
+  });
+
+  it("hashes the exact source bytes and rejects invalid UTF-8", async () => {
+    const plainPath = join(workspace, "plain.md");
+    const bomPath = join(workspace, "bom.md");
+    const invalidPath = join(workspace, "invalid.md");
+    const plain = Buffer.from("# Map\n\n- Root\n", "utf8");
+    const withBom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), plain]);
+    await writeFile(plainPath, plain);
+    await writeFile(bomPath, withBom);
+    await writeFile(invalidPath, Buffer.from([0x23, 0x20, 0xc3, 0x28]));
+
+    const loadedPlain = await readMindMapFile(plainPath);
+    const loadedBom = await readMindMapFile(bomPath);
+
+    expect(loadedPlain.revision).toBe(markdownRevision(plain));
+    expect(loadedBom.revision).toBe(markdownRevision(withBom));
+    expect(loadedBom.revision).not.toBe(loadedPlain.revision);
+    expect(loadedBom.markdown.charCodeAt(0)).toBe(0xfeff);
+    await expect(readMindMapFile(invalidPath)).rejects.toMatchObject({
       code: "invalid_path",
     });
   });

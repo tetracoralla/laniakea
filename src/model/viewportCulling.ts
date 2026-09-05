@@ -22,7 +22,10 @@ export function shareStableVisibleIds(
 }
 
 export function viewportOverscan(viewportSize: ViewportSize): number {
-  return Math.max(480, viewportSize.width, viewportSize.height);
+  // One short viewport dimension already leaves a generous compositor-only
+  // pan buffer. Using the long dimension on wide windows keeps thousands of
+  // extra rows mounted at low zoom with no corresponding interaction benefit.
+  return Math.max(480, Math.min(viewportSize.width, viewportSize.height));
 }
 
 function visibleContentBounds(
@@ -52,6 +55,12 @@ export function viewportNeedsRenderWindowRefresh(
   if (viewportSize.width <= 0 || viewportSize.height <= 0) return true;
 
   const renderedZoom = Math.max(renderedViewport.zoom, 0.01);
+  const liveZoom = Math.max(liveViewport.zoom, 0.01);
+  // Zooming in makes the visible content window smaller, so it can remain
+  // inside the old overscan forever. Refresh after a material scale change to
+  // release thousands of now-offscreen nodes instead of keeping an overview
+  // render mounted throughout readable-zoom interaction.
+  if (liveZoom / renderedZoom >= 1.35) return true;
   const refreshMargin = overscan / 2;
   const safeBounds = {
     left:
@@ -110,6 +119,34 @@ export function visibleLayoutNodeIds(
       node.x <= right &&
       node.y + node.height >= top &&
       node.y <= bottom
+    );
+  });
+}
+
+export function visibleLayoutPortalAnchorIds(
+  layout: LayoutResult,
+  viewport: Viewport,
+  viewportSize: ViewportSize,
+  pinnedAnchorId: string | null = null,
+  overscan = viewportOverscan(viewportSize),
+): string[] {
+  const portals = layout.portals ?? {};
+  const ids = Object.keys(portals);
+  if (viewportSize.width <= 0 || viewportSize.height <= 0) return ids;
+
+  const zoom = Math.max(viewport.zoom, 0.01);
+  const left = (-viewport.x - overscan) / zoom;
+  const top = (-viewport.y - overscan) / zoom;
+  const right = (viewportSize.width - viewport.x + overscan) / zoom;
+  const bottom = (viewportSize.height - viewport.y + overscan) / zoom;
+  return ids.filter((anchorId) => {
+    if (anchorId === pinnedAnchorId) return true;
+    const portal = portals[anchorId];
+    return (
+      portal.x + portal.width >= left &&
+      portal.x <= right &&
+      portal.y + portal.height >= top &&
+      portal.y <= bottom
     );
   });
 }

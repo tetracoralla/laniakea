@@ -72,8 +72,25 @@ function titleFromPath(filePath: string): string {
   return basename(filePath).replace(/\.(md|markdown)$/i, "");
 }
 
-export function markdownRevision(markdown: string): string {
+export function markdownRevision(markdown: string | Uint8Array): string {
   return `sha256:${createHash("sha256").update(markdown).digest("hex")}`;
+}
+
+function decodeMarkdown(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", {
+      fatal: true,
+      // Preserve a leading BOM in the decoded source. The revision is still
+      // computed from the exact bytes, so two byte-distinct files can never
+      // share a lease merely because decoding normalized them.
+      ignoreBOM: true,
+    }).decode(bytes);
+  } catch {
+    throw new MindMapFileError(
+      "invalid_path",
+      "The Markdown file must contain valid UTF-8 text.",
+    );
+  }
 }
 
 async function requireRegularFile(filePath: string) {
@@ -104,12 +121,21 @@ async function requireRegularFile(filePath: string) {
 export async function readMindMapFile(filePath: string): Promise<LoadedMindMapFile> {
   const resolved = requireMarkdownPath(filePath);
   await requireRegularFile(resolved);
-  const markdown = await readFile(resolved, "utf8");
+  const bytes = await readFile(resolved);
+  // The file can grow after lstat and before readFile. Enforce the public
+  // bound against the bytes actually placed in memory as well.
+  if (bytes.byteLength > MAX_MARKDOWN_BYTES) {
+    throw new MindMapFileError(
+      "file_too_large",
+      `Mind map files may not exceed ${MAX_MARKDOWN_BYTES} bytes.`,
+    );
+  }
+  const markdown = decodeMarkdown(bytes);
   return {
     filePath: resolved,
     markdown,
     parsed: parseAgentMindMap(markdown, titleFromPath(resolved)),
-    revision: markdownRevision(markdown),
+    revision: markdownRevision(bytes),
   };
 }
 
@@ -133,8 +159,25 @@ async function writeExclusive(filePath: string, markdown: string, mode?: number)
   }
 }
 
-function updateLockPath(filePath: string): string {
-  const digest = createHash("sha256").update(filePath).digest("hex").slice(0, 32);
+export function normalizeUpdateLockKey(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== "win32") return filePath;
+  const normalized = filePath.replaceAll("/", "\\");
+  if (normalized.startsWith("\\\\?\\UNC\\")) {
+    return `\\\\${normalized.slice(8)}`;
+  }
+  if (normalized.startsWith("\\\\?\\")) return normalized.slice(4);
+  return normalized;
+}
+
+export function updateLockPath(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const key = normalizeUpdateLockKey(filePath, platform);
+  const digest = createHash("sha256").update(key).digest("hex").slice(0, 32);
   return join(dirname(filePath), `.laniakea-lock-${digest}`);
 }
 
@@ -193,8 +236,24 @@ async function withUpdateLock<T>(
   work: (canonicalPath: string) => Promise<T>,
 ): Promise<T> {
   const resolved = requireMarkdownPath(filePath);
-  await requireRegularFile(resolved);
-  const canonicalPath = await realpath(resolved);
+  let canonicalPath: string;
+  try {
+    await requireRegularFile(resolved);
+    canonicalPath = await realpath(resolved);
+  } catch (error) {
+    if (!(error instanceof MindMapFileError) || error.code !== "not_found") {
+      throw error;
+    }
+    const parent = dirname(resolved);
+    const parentMetadata = await stat(parent).catch(() => null);
+    if (!parentMetadata?.isDirectory()) {
+      throw new MindMapFileError(
+        "invalid_path",
+        "The destination folder must already exist.",
+      );
+    }
+    canonicalPath = join(await realpath(parent), basename(resolved));
+  }
   const lockPath = updateLockPath(canonicalPath);
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   let lockHandle: Awaited<ReturnType<typeof open>> | null = null;
@@ -253,17 +312,19 @@ export async function createMindMapFile(
   }
   const document = createAgentMindMap(title, root);
   const markdown = documentToMarkdown(document);
-  try {
-    await writeExclusive(resolved, markdown);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new MindMapFileError(
-        "already_exists",
-        "The destination already exists. Laniakea will not overwrite it while creating a mind map.",
-      );
+  await withUpdateLock(resolved, async (canonicalPath) => {
+    try {
+      await writeExclusive(canonicalPath, markdown);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new MindMapFileError(
+          "already_exists",
+          "The destination already exists. Laniakea will not overwrite it while creating a mind map.",
+        );
+      }
+      throw error;
     }
-    throw error;
-  }
+  });
   return {
     filePath: resolved,
     markdown,

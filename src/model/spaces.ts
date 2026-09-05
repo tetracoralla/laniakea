@@ -1,8 +1,12 @@
 import { createRuntimeId } from "./runtimeId";
 import type {
   FlowEdge,
+  FlowEdgeRouteOverride,
+  FlowEdgeStyle,
   FlowNode,
   FlowNodeKind,
+  FlowNodePosition,
+  FlowPlacementDirection,
   FlowSpace,
   LaniakeaSpace,
   MapSpace,
@@ -11,6 +15,7 @@ import type {
   SelectionState,
   Viewport,
 } from "../types/mindmap";
+import { resolveFlowDirectionalPlacement } from "./flowPlacement";
 import { singleSelection } from "./selection";
 import type { DocumentMutation } from "./tree";
 
@@ -170,12 +175,17 @@ function createFlowEdge(
   from: string,
   to: string,
   label = "",
+  ports?: {
+    fromPort?: FlowPlacementDirection;
+    toPort?: FlowPlacementDirection;
+  },
 ): FlowEdge {
   return {
     id: createRuntimeId("flow-edge"),
     from,
     to,
     label,
+    ...ports,
   };
 }
 
@@ -205,25 +215,16 @@ export function createFlowSpace(
   }
 
   const now = new Date().toISOString();
-  const start = createFlowNode("start", "开始", now);
   // Empty anchors keep empty step content; the display layer renders the
   // "输入步骤" prompt, and placeholder text must never reach the document.
   const step = createFlowNode("step", anchor.text.trim(), now);
-  const end = createFlowNode("end", "完成", now);
   const id = createRuntimeId("flow-space");
   const space: FlowSpace = {
     id,
     type: "flow",
     anchorNodeId,
-    nodes: {
-      [start.id]: start,
-      [step.id]: step,
-      [end.id]: end,
-    },
-    edges: [
-      createFlowEdge(start.id, step.id),
-      createFlowEdge(step.id, end.id),
-    ],
+    nodes: { [step.id]: step },
+    edges: [],
     viewport: defaultSpaceViewport,
     updatedAt: now,
   };
@@ -289,7 +290,16 @@ export function preserveDocumentViewports(
       Object.entries(restoredSpaces).map(([spaceId, space]) => {
         const twin = currentSpaces[spaceId];
         return twin && twin.type === space.type
-          ? [spaceId, { ...space, viewport: twin.viewport }]
+          ? [
+              spaceId,
+              space.type === "flow" && twin.type === "flow"
+                ? {
+                    ...space,
+                    viewport: twin.viewport,
+                    positions: twin.positions,
+                  }
+                : { ...space, viewport: twin.viewport },
+            ]
           : [spaceId, space];
       }),
     );
@@ -343,6 +353,36 @@ export function deleteSubspaceForNode(
   };
 }
 
+export function moveSubspaceToNode(
+  document: MindMapDocument,
+  sourceNodeId: string,
+  targetNodeId: string,
+): MindMapDocument {
+  if (sourceNodeId === targetNodeId) return document;
+  const source = document.nodes[sourceNodeId];
+  const target = document.nodes[targetNodeId];
+  const spaceId = source?.subspaceId;
+  const space = spaceId ? documentSpaces(document)[spaceId] : undefined;
+  if (!source || !target || !spaceId || !space || target.subspaceId) {
+    return document;
+  }
+  const now = new Date().toISOString();
+  const { subspaceId: _removedSubspaceId, ...sourceWithoutSubspace } = source;
+  return {
+    ...document,
+    nodes: {
+      ...document.nodes,
+      [sourceNodeId]: { ...sourceWithoutSubspace, updatedAt: now },
+      [targetNodeId]: { ...target, subspaceId: spaceId, updatedAt: now },
+    },
+    spaces: {
+      ...documentSpaces(document),
+      [spaceId]: { ...space, anchorNodeId: targetNodeId, updatedAt: now },
+    },
+    updatedAt: now,
+  };
+}
+
 export function updateFlowSpace(
   document: MindMapDocument,
   space: FlowSpace,
@@ -386,8 +426,55 @@ export function setFlowViewport(
   };
 }
 
+function sameFlowPositions(
+  left: Record<string, FlowNodePosition> | undefined,
+  right: Record<string, FlowNodePosition>,
+): boolean {
+  const leftIds = Object.keys(left ?? {});
+  const rightIds = Object.keys(right);
+  return leftIds.length === rightIds.length && rightIds.every((id) =>
+    left?.[id]?.x === right[id].x && left?.[id]?.y === right[id].y,
+  );
+}
+
+export function setFlowPositions(
+  document: MindMapDocument,
+  spaceId: string,
+  positions: Record<string, FlowNodePosition>,
+): MindMapDocument {
+  const space = documentSpaces(document)[spaceId];
+  if (space?.type !== "flow") return document;
+  const valid = Object.fromEntries(
+    Object.entries(positions).filter(([nodeId, position]) =>
+      Boolean(space.nodes[nodeId]) &&
+      Number.isFinite(position.x) &&
+      Number.isFinite(position.y),
+    ),
+  );
+  if (sameFlowPositions(space.positions, valid)) return document;
+  return {
+    ...document,
+    spaces: {
+      ...documentSpaces(document),
+      [spaceId]: { ...space, positions: valid },
+    },
+  };
+}
+
 function withFlowTimestamp(space: FlowSpace, patch: Partial<FlowSpace>): FlowSpace {
   return { ...space, ...patch, updatedAt: new Date().toISOString() };
+}
+
+function flowEdgeRoutesWithout(
+  edgeRoutes: FlowSpace["edgeRoutes"],
+  removedEdgeIds: Iterable<string>,
+): FlowSpace["edgeRoutes"] {
+  if (!edgeRoutes) return undefined;
+  const removed = new Set(removedEdgeIds);
+  const retained = Object.fromEntries(
+    Object.entries(edgeRoutes).filter(([edgeId]) => !removed.has(edgeId)),
+  );
+  return Object.keys(retained).length > 0 ? retained : undefined;
 }
 
 export function setFlowNodeText(
@@ -398,6 +485,7 @@ export function setFlowNodeText(
   const node = space.nodes[nodeId];
   if (!node) return space;
   const value = text.trim();
+  if (node.text === value) return space;
   return withFlowTimestamp(space, {
     nodes: {
       ...space.nodes,
@@ -444,38 +532,66 @@ export function setFlowEdgeLabel(
   });
 }
 
+export function setFlowEdgeStyle(
+  space: FlowSpace,
+  edgeId: string,
+  patch: Partial<FlowEdgeStyle>,
+): FlowSpace {
+  const edge = space.edges.find((candidate) => candidate.id === edgeId);
+  if (!edge) return space;
+  const style = { ...edge.style, ...patch };
+  if (JSON.stringify(edge.style ?? {}) === JSON.stringify(style)) return space;
+  return withFlowTimestamp(space, {
+    edges: space.edges.map((candidate) =>
+      candidate.id === edgeId ? { ...candidate, style } : candidate,
+    ),
+  });
+}
+
+export function setFlowEdgeRoute(
+  space: FlowSpace,
+  edgeId: string,
+  route: FlowEdgeRouteOverride | null,
+): FlowSpace {
+  if (!space.edges.some((edge) => edge.id === edgeId)) return space;
+  if (route && !Number.isFinite(route.coordinate)) return space;
+  const current = space.edgeRoutes?.[edgeId];
+  if (
+    route && current?.axis === route.axis &&
+    current.coordinate === route.coordinate
+  ) return space;
+  if (!route && !current) return space;
+  const edgeRoutes = { ...space.edgeRoutes };
+  if (route) edgeRoutes[edgeId] = route;
+  else delete edgeRoutes[edgeId];
+  return withFlowTimestamp(space, {
+    edgeRoutes: Object.keys(edgeRoutes).length > 0 ? edgeRoutes : undefined,
+  });
+}
+
+export function deleteFlowEdge(space: FlowSpace, edgeId: string): FlowSpace {
+  if (!space.edges.some((edge) => edge.id === edgeId)) return space;
+  return withFlowTimestamp(space, {
+    edges: space.edges.filter((edge) => edge.id !== edgeId),
+    edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, [edgeId]),
+  });
+}
+
 export function connectableFlowNodeIds(
   space: FlowSpace,
   fromId: string,
 ): Set<string> {
   const from = space.nodes[fromId];
-  if (!from || from.kind === "end") return new Set();
+  if (!from) return new Set();
 
-  const incoming = new Map<string, string[]>();
   const existingTargets = new Set<string>();
   space.edges.forEach((edge) => {
-    const sources = incoming.get(edge.to) ?? [];
-    sources.push(edge.from);
-    incoming.set(edge.to, sources);
     if (edge.from === fromId) existingTargets.add(edge.to);
   });
 
-  const ancestors = new Set<string>();
-  const pending = [fromId];
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (!current || ancestors.has(current)) continue;
-    ancestors.add(current);
-    incoming.get(current)?.forEach((source) => pending.push(source));
-  }
-
   const connectable = new Set<string>();
   Object.values(space.nodes).forEach((candidate) => {
-    if (
-      candidate.kind !== "start" &&
-      !ancestors.has(candidate.id) &&
-      !existingTargets.has(candidate.id)
-    ) {
+    if (candidate.id !== fromId && !existingTargets.has(candidate.id)) {
       connectable.add(candidate.id);
     }
   });
@@ -494,29 +610,199 @@ export function connectFlowNodes(
   space: FlowSpace,
   fromId: string,
   toId: string,
+  ports?: {
+    fromPort?: FlowPlacementDirection;
+    toPort?: FlowPlacementDirection;
+  },
 ): FlowSpace {
   if (!canConnectFlowNodes(space, fromId, toId)) return space;
-  const now = new Date().toISOString();
-  const outgoing = space.edges.filter((edge) => edge.from === fromId);
-  const source = space.nodes[fromId];
-  const becomesDecision = outgoing.length > 0 && source.kind !== "decision";
-  const label = outgoing.length === 0 ? "" : `分支 ${outgoing.length + 1}`;
   return withFlowTimestamp(space, {
-    nodes: becomesDecision
-      ? {
-          ...space.nodes,
-          [fromId]: { ...source, kind: "decision", updatedAt: now },
-        }
-      : space.nodes,
-    edges: [
-      ...space.edges.map((edge) =>
-        edge.from === fromId && becomesDecision && !edge.label
-          ? { ...edge, label: "主线" }
-          : edge,
-      ),
-      createFlowEdge(fromId, toId, label),
-    ],
+    edges: [...space.edges, createFlowEdge(fromId, toId, "", ports)],
   });
+}
+
+export function reconnectFlowEdge(
+  space: FlowSpace,
+  edgeId: string,
+  endpoint: "from" | "to",
+  nodeId: string,
+  port: FlowPlacementDirection,
+): FlowSpace {
+  const edge = space.edges.find((candidate) => candidate.id === edgeId);
+  if (!edge || !space.nodes[nodeId]) return space;
+  const from = endpoint === "from" ? nodeId : edge.from;
+  const to = endpoint === "to" ? nodeId : edge.to;
+  const withoutCurrent = {
+    ...space,
+    edges: space.edges.filter((candidate) => candidate.id !== edgeId),
+  };
+  if (!canConnectFlowNodes(withoutCurrent, from, to)) return space;
+  return withFlowTimestamp(space, {
+    edges: space.edges.map((candidate) =>
+      candidate.id === edgeId
+        ? endpoint === "from"
+          ? { ...candidate, from, fromPort: port }
+          : { ...candidate, to, toPort: port }
+        : candidate,
+    ),
+    edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, [edgeId]),
+  });
+}
+
+/**
+ * Create one explicitly typed node from a visible quick-create affordance.
+ * A linear source inserts the node before its current continuation. A source
+ * that already branches keeps those branches and adds the new node as one
+ * more outgoing path instead of silently moving the whole branch set.
+ */
+export function addFlowNodeAfter(
+  space: FlowSpace,
+  nodeId: string,
+  kind: "step" | "decision",
+): { space: FlowSpace; nodeId: string } {
+  const current = space.nodes[nodeId];
+  if (!current) return { space, nodeId };
+
+  const now = new Date().toISOString();
+  const created = createFlowNode(kind, "", now);
+  const outgoing = space.edges.filter((edge) => edge.from === nodeId);
+  const isBranchingSource = current.kind === "decision" || outgoing.length > 1;
+
+  if (isBranchingSource) {
+    const branchLabel = outgoing.length === 0
+      ? ""
+      : `分支 ${outgoing.length + 1}`;
+    return {
+      nodeId: created.id,
+      space: withFlowTimestamp(space, {
+        nodes: { ...space.nodes, [created.id]: created },
+        edges: [
+          ...space.edges.map((edge) =>
+            edge.from === nodeId && !edge.label
+              ? { ...edge, label: "主线" }
+              : edge,
+          ),
+          createFlowEdge(nodeId, created.id, branchLabel),
+        ],
+      }),
+    };
+  }
+
+  const retained = space.edges.filter((edge) => edge.from !== nodeId);
+  const rewiredEdgeIds = outgoing.map(({ id }) => id);
+  return {
+    nodeId: created.id,
+    space: withFlowTimestamp(space, {
+      nodes: { ...space.nodes, [created.id]: created },
+      edges: [
+        ...retained,
+        createFlowEdge(nodeId, created.id),
+        ...outgoing.map((edge) => ({ ...edge, from: created.id })),
+      ],
+      edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, rewiredEdgeIds),
+    }),
+  };
+}
+
+export function positionFlowNode(
+  space: FlowSpace,
+  nodeId: string,
+  position: FlowNodePosition,
+  currentPositions: Record<string, FlowNodePosition>,
+): FlowSpace {
+  if (!space.nodes[nodeId] || !Number.isFinite(position.x) || !Number.isFinite(position.y)) {
+    return space;
+  }
+  const positions = {
+    ...Object.fromEntries(
+      Object.entries(currentPositions).filter(([id]) => Boolean(space.nodes[id])),
+    ),
+    [nodeId]: position,
+  };
+  if (sameFlowPositions(space.positions, positions)) return space;
+  return { ...space, positions };
+}
+
+export function addFlowNodeInDirection(
+  space: FlowSpace,
+  nodeId: string,
+  kind: "step" | "decision",
+  direction: FlowPlacementDirection,
+  currentPositions: Record<string, FlowNodePosition>,
+  resolvedPosition?: FlowNodePosition,
+): { space: FlowSpace; nodeId: string } {
+  if (!space.nodes[nodeId]) return { space, nodeId };
+  const now = new Date().toISOString();
+  const node = createFlowNode(kind, "", now);
+  const oppositeDirection: FlowPlacementDirection = direction === "left"
+    ? "right"
+    : direction === "right"
+      ? "left"
+      : direction === "up"
+        ? "down"
+        : "up";
+  const created = {
+    nodeId: node.id,
+    space: withFlowTimestamp(space, {
+      nodes: { ...space.nodes, [node.id]: node },
+      edges: [
+        ...space.edges,
+        createFlowEdge(nodeId, node.id, "", {
+          fromPort: direction,
+          toPort: oppositeDirection,
+        }),
+      ],
+    }),
+  };
+  const placement = resolvedPosition &&
+      Number.isFinite(resolvedPosition.x) && Number.isFinite(resolvedPosition.y)
+    ? resolvedPosition
+    : resolveFlowDirectionalPlacement(
+        space,
+        nodeId,
+        kind,
+        direction,
+        currentPositions,
+      );
+  if (!placement) return created;
+  const positions = {
+    ...Object.fromEntries(
+      Object.entries(currentPositions).filter(([id]) =>
+        Boolean(created.space.nodes[id]),
+      ),
+    ),
+    [created.nodeId]: { x: placement.x, y: placement.y },
+  };
+  return {
+    nodeId: created.nodeId,
+    space: { ...created.space, positions },
+  };
+}
+
+export function addFlowNodeAtPosition(
+  space: FlowSpace,
+  kind: FlowNodeKind,
+  position: FlowNodePosition,
+  currentPositions: Record<string, FlowNodePosition>,
+): { space: FlowSpace; nodeId: string } {
+  if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) {
+    return { space, nodeId: "" };
+  }
+  const now = new Date().toISOString();
+  const created = createFlowNode(kind, "", now);
+  const positions = {
+    ...Object.fromEntries(
+      Object.entries(currentPositions).filter(([id]) => Boolean(space.nodes[id])),
+    ),
+    [created.id]: position,
+  };
+  return {
+    nodeId: created.id,
+    space: withFlowTimestamp(space, {
+      nodes: { ...space.nodes, [created.id]: created },
+      positions,
+    }),
+  };
 }
 
 export function addFlowStepAfter(
@@ -525,7 +811,6 @@ export function addFlowStepAfter(
 ): { space: FlowSpace; nodeId: string } {
   const current = space.nodes[nodeId];
   if (!current) return { space, nodeId };
-  if (current.kind === "end") return { space, nodeId };
   if (current.kind === "decision") return addFlowBranch(space, nodeId);
   const now = new Date().toISOString();
   const created = createFlowNode("step", "", now);
@@ -536,11 +821,34 @@ export function addFlowStepAfter(
     createFlowEdge(nodeId, created.id),
     ...outgoing.map((edge) => ({ ...edge, from: created.id })),
   ];
+  const origin = space.positions?.[nodeId];
+  const placement = origin
+    ? resolveFlowDirectionalPlacement(
+        space,
+        nodeId,
+        "step",
+        "right",
+        space.positions ?? {},
+      )
+    : null;
+  const positions = origin
+    ? {
+        ...space.positions,
+        [created.id]: placement
+          ? { x: placement.x, y: placement.y }
+          : { x: origin.x + 268, y: origin.y },
+      }
+    : space.positions;
   return {
     nodeId: created.id,
     space: withFlowTimestamp(space, {
       nodes: { ...space.nodes, [created.id]: created },
       edges,
+      edgeRoutes: flowEdgeRoutesWithout(
+        space.edgeRoutes,
+        outgoing.map(({ id }) => id),
+      ),
+      positions,
     }),
   };
 }
@@ -551,7 +859,6 @@ export function addFlowBranch(
 ): { space: FlowSpace; nodeId: string } {
   const current = space.nodes[nodeId];
   if (!current) return { space, nodeId };
-  if (current.kind === "end") return { space, nodeId };
   const now = new Date().toISOString();
   const branch = createFlowNode("step", "", now);
   const outgoingCount = space.edges.filter((edge) => edge.from === nodeId).length;
@@ -560,6 +867,50 @@ export function addFlowBranch(
   const decision = current.kind === "decision"
     ? current
     : { ...current, kind: "decision" as const, updatedAt: now };
+  const origin = space.positions?.[nodeId];
+  const placementSpace = current === decision
+    ? space
+    : { ...space, nodes: { ...space.nodes, [nodeId]: decision } };
+  const branchPlacement = origin
+    ? resolveFlowDirectionalPlacement(
+        placementSpace,
+        nodeId,
+        "step",
+        "right",
+        space.positions ?? {},
+      )
+    : null;
+  const branchPosition = branchPlacement
+    ? { x: branchPlacement.x, y: branchPlacement.y }
+    : origin
+      ? { x: origin.x + 268, y: origin.y + outgoingCount * 112 }
+      : null;
+  const alternativePlacement = origin && alternative && branchPosition
+    ? resolveFlowDirectionalPlacement(
+        {
+          ...placementSpace,
+          nodes: { ...placementSpace.nodes, [branch.id]: branch },
+          positions: { ...space.positions, [branch.id]: branchPosition },
+        },
+        nodeId,
+        "step",
+        "right",
+        { ...space.positions, [branch.id]: branchPosition },
+      )
+    : null;
+  const positions = origin && branchPosition
+    ? {
+        ...space.positions,
+        [branch.id]: branchPosition,
+        ...(alternative
+          ? {
+              [alternative.id]: alternativePlacement
+                ? { x: alternativePlacement.x, y: alternativePlacement.y }
+                : { x: origin.x + 268, y: origin.y + 84 },
+            }
+          : {}),
+      }
+    : space.positions;
   return {
     nodeId: branch.id,
     space: withFlowTimestamp(space, {
@@ -584,6 +935,7 @@ export function addFlowBranch(
           ? [createFlowEdge(nodeId, alternative.id, "否")]
           : []),
       ],
+      positions,
     }),
   };
 }
@@ -593,7 +945,7 @@ export function deleteFlowNode(
   nodeId: string,
 ): { space: FlowSpace; nextSelectedId: string | null } {
   const node = space.nodes[nodeId];
-  if (!node || node.kind === "start") {
+  if (!node) {
     return { space, nextSelectedId: nodeId };
   }
   const incoming = space.edges.filter((edge) => edge.to === nodeId);
@@ -601,27 +953,26 @@ export function deleteFlowNode(
   const remaining = space.edges.filter(
     (edge) => edge.from !== nodeId && edge.to !== nodeId,
   );
-  const bridgeTarget = outgoing[0]?.to;
-  const remainingPairs = new Set(
-    remaining.map((edge) => `${edge.from}\u0000${edge.to}`),
-  );
-  const bridges = bridgeTarget
-    ? incoming
-        .filter((edge) => {
-          const endpointPair = `${edge.from}\u0000${bridgeTarget}`;
-          if (edge.from === bridgeTarget || remainingPairs.has(endpointPair)) {
-            return false;
-          }
-          remainingPairs.add(endpointPair);
-          return true;
-        })
-        .map((edge) => createFlowEdge(edge.from, bridgeTarget, edge.label))
-    : [];
   const nodes = { ...space.nodes };
   delete nodes[nodeId];
+  const positions = space.positions
+    ? Object.fromEntries(
+        Object.entries(space.positions).filter(([id]) => id !== nodeId),
+      )
+    : undefined;
+  const retainedEdgeIds = new Set(remaining.map(({ id }) => id));
+  const removedEdgeIds = space.edges
+    .filter(({ id }) => !retainedEdgeIds.has(id))
+    .map(({ id }) => id);
   return {
-    nextSelectedId: incoming[0]?.from ?? bridgeTarget ?? Object.keys(nodes)[0] ?? null,
-    space: withFlowTimestamp(space, { nodes, edges: [...remaining, ...bridges] }),
+    nextSelectedId:
+      incoming[0]?.from ?? outgoing[0]?.to ?? Object.keys(nodes)[0] ?? null,
+    space: withFlowTimestamp(space, {
+      nodes,
+      edges: remaining,
+      positions,
+      edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, removedEdgeIds),
+    }),
   };
 }
 

@@ -2,16 +2,14 @@ import type {
   NodeTextStyle,
   TextWidthMeasurer,
 } from "../../model/layout";
-
-const fallbackFontFamily =
-  '-apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Segoe UI", sans-serif';
+import { FONT_STACK } from "../../styles/tokens";
 
 function fontFamilyFromDocument(): string {
-  if (typeof document === "undefined") return fallbackFontFamily;
+  if (typeof document === "undefined") return FONT_STACK;
   const declared = getComputedStyle(document.documentElement)
     .getPropertyValue("--font-sans")
     .trim();
-  return declared || getComputedStyle(document.body).fontFamily || fallbackFontFamily;
+  return declared || getComputedStyle(document.body).fontFamily || FONT_STACK;
 }
 
 function letterSpacingWidth(text: string, letterSpacing: number): number {

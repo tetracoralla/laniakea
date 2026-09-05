@@ -1,9 +1,38 @@
-import type { FlowSpace } from "../types/mindmap";
+import type {
+  FlowConnectorKind,
+  FlowEdgeRouteOverride,
+  FlowPlacementDirection,
+  FlowSpace,
+} from "../types/mindmap";
+import {
+  pointOnRoute as projectionPointOnRoute,
+  roundedOrthogonalPath as projectionRoundedOrthogonalPath,
+  routeCrossings as projectionRouteCrossings,
+  routeOrthogonal as projectionRouteOrthogonal,
+  type OrthogonalRoute,
+  type Point as ProjectionPoint,
+  type PortSide,
+  type RouteJump,
+} from "@openadam/graph-view-compiler";
+import { compileGraphView } from "@openadam/graph-view-compiler/compiler";
 import {
   estimateTextWidth,
   type NodeTextStyle,
   type TextWidthMeasurer,
 } from "./layout";
+import { flowSpaceToSemanticGraph } from "./flowGraphAdapter";
+import {
+  FLOW_CANVAS_PADDING as canvasPadding,
+  FLOW_STEP_NODE_HEIGHT as stepNodeHeight,
+  FLOW_STEP_NODE_WIDTH as stepNodeWidth,
+  flowNodeSize,
+  type FlowDirectionalPlacement,
+} from "./flowPlacement";
+export {
+  flowNodeSize,
+  resolveFlowDirectionalPlacement,
+  type FlowDirectionalPlacement,
+} from "./flowPlacement";
 
 export interface FlowLayoutNode {
   id: string;
@@ -16,105 +45,44 @@ export interface FlowLayoutNode {
 
 export interface FlowLayoutResult {
   nodes: Record<string, FlowLayoutNode>;
+  minX: number;
+  minY: number;
   width: number;
   height: number;
 }
 
 export type FlowNavigationDirection = "up" | "down" | "left" | "right";
 
-const stepNodeWidth = 196;
-const stepNodeHeight = 54;
-const stepContentWidth = 160;
-const decisionNodeWidth = 172;
-const decisionNodeHeight = 76;
-const decisionContentWidth = 116;
-const decisionVerticalInset = 24;
 const columnGap = 72;
 const rowGap = 92;
-const canvasPadding = 140;
-const flowLineHeight = 20;
-const flowVerticalPadding = 20;
-const emptyStepPlaceholder = "输入步骤";
 
-const flowFontStyle: NodeTextStyle = {
-  fontSize: 14,
+const flowEdgeLabelFontStyle: NodeTextStyle = {
+  fontSize: 10,
   fontWeight: 570,
   letterSpacing: 0,
 };
-
-function measureLine(
-  line: string,
-  measureTextWidth?: TextWidthMeasurer,
-): number {
-  return measureTextWidth
-    ? measureTextWidth(line, flowFontStyle)
-    : estimateTextWidth(line, flowFontStyle);
-}
-
-function wrappedTextBlock(
-  text: string,
-  maxWidth: number,
-  measureTextWidth?: TextWidthMeasurer,
-): { width: number; height: number } {
-  const visible = text.trim() ? text : emptyStepPlaceholder;
-  const explicitLines = visible.split("\n");
-  let longestLine = 0;
-  const lineCount = explicitLines.reduce((total, line) => {
-    const lineWidth = measureLine(line, measureTextWidth);
-    longestLine = Math.max(longestLine, lineWidth);
-    return total + Math.max(1, Math.ceil(lineWidth / maxWidth));
-  }, 0);
-  return {
-    width: Math.min(maxWidth, Math.ceil(longestLine)),
-    height: lineCount * flowLineHeight,
-  };
-}
-
-function flowNodeSize(
-  kind: string,
-  text: string,
-  measureTextWidth?: TextWidthMeasurer,
-): { width: number; height: number } {
-  if (kind !== "decision") {
-    const block = wrappedTextBlock(text, stepContentWidth, measureTextWidth);
-    return {
-      width: stepNodeWidth,
-      height: Math.max(
-        stepNodeHeight,
-        block.height + flowVerticalPadding,
-      ),
-    };
-  }
-  const block = wrappedTextBlock(
-    text,
-    decisionContentWidth,
-    measureTextWidth,
-  );
-  const halfTextHeight = block.height / 2;
-  const halfHeight = Math.max(
-    decisionNodeHeight / 2,
-    halfTextHeight + decisionVerticalInset,
-  );
-  const halfWidth = Math.max(
-    decisionNodeWidth / 2,
-    Math.ceil(
-      (block.width / 2) * (halfHeight / (halfHeight - halfTextHeight)) + 8,
-    ),
-  );
-  return { width: halfWidth * 2, height: Math.ceil(halfHeight * 2) };
-}
 
 export function computeFlowLayout(
   space: FlowSpace,
   measureTextWidth?: TextWidthMeasurer,
 ): FlowLayoutResult {
-  const ids = Object.keys(space.nodes);
+  const semanticGraph = flowSpaceToSemanticGraph(space);
+  const ids = semanticGraph.nodes.map((node) => node.id);
+  if (ids.length === 0) {
+    return {
+      nodes: {},
+      minX: 0,
+      minY: 0,
+      width: canvasPadding * 2,
+      height: canvasPadding * 2,
+    };
+  }
   const incoming = new Map(ids.map((id) => [id, 0]));
   const outgoing = new Map(ids.map((id) => [id, [] as string[]]));
-  space.edges.forEach((edge) => {
-    if (!space.nodes[edge.from] || !space.nodes[edge.to]) return;
-    incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
-    outgoing.get(edge.from)?.push(edge.to);
+  semanticGraph.relations.forEach((relation) => {
+    if (!space.nodes[relation.source] || !space.nodes[relation.target]) return;
+    incoming.set(relation.target, (incoming.get(relation.target) ?? 0) + 1);
+    outgoing.get(relation.source)?.push(relation.target);
   });
 
   const roots = ids
@@ -125,12 +93,14 @@ export function computeFlowLayout(
     );
   const levels = new Map<string, number>();
   const remainingIncoming = new Map(incoming);
-  const queue = roots.length > 0 ? [...roots] : ids.slice(0, 1);
+  const queue = [...roots];
   queue.forEach((id) => levels.set(id, 0));
+  const processed = new Set<string>();
   let cursor = 0;
   while (cursor < queue.length) {
     const currentId = queue[cursor];
     cursor += 1;
+    processed.add(currentId);
     const nextLevel = (levels.get(currentId) ?? 0) + 1;
     outgoing.get(currentId)?.forEach((target) => {
       levels.set(target, Math.max(levels.get(target) ?? 0, nextLevel));
@@ -144,10 +114,26 @@ export function computeFlowLayout(
     fallbackLevel = Math.max(fallbackLevel, level + 1);
   });
   ids.forEach((id) => {
-    if (!levels.has(id)) {
-      levels.set(id, fallbackLevel);
-      fallbackLevel += 1;
+    if (processed.has(id)) return;
+    const componentQueue = [id];
+    const componentSeen = new Set([id]);
+    levels.set(id, Math.max(levels.get(id) ?? 0, fallbackLevel));
+    let componentCursor = 0;
+    while (componentCursor < componentQueue.length) {
+      const current = componentQueue[componentCursor++];
+      processed.add(current);
+      const nextLevel = (levels.get(current) ?? fallbackLevel) + 1;
+      outgoing.get(current)?.forEach((target) => {
+        if (processed.has(target) || componentSeen.has(target)) return;
+        componentSeen.add(target);
+        levels.set(target, nextLevel);
+        componentQueue.push(target);
+      });
     }
+    fallbackLevel = Math.max(
+      fallbackLevel + 1,
+      ...componentQueue.map((nodeId) => (levels.get(nodeId) ?? 0) + 1),
+    );
   });
 
   const grouped = new Map<number, string[]>();
@@ -202,65 +188,525 @@ export function computeFlowLayout(
     y += rowHeight + rowGap;
   });
 
+  const positioned = space.positions
+    ? Object.fromEntries(
+        Object.entries(nodes).map(([id, node]) => {
+          const position = space.positions?.[id];
+          return [
+            id,
+            position
+              ? { ...node, x: position.x, y: position.y }
+              : node,
+          ];
+        }),
+      )
+    : nodes;
+  const positionedNodes = Object.values(positioned);
+  const minX = Math.min(0, ...positionedNodes.map((node) => node.x - canvasPadding));
+  const minY = Math.min(0, ...positionedNodes.map((node) => node.y - canvasPadding));
+  const maxX = Math.max(
+    maximumRowWidth + canvasPadding * 2,
+    ...positionedNodes.map((node) => node.x + node.width + canvasPadding),
+  );
+  const maxY = Math.max(
+    y - rowGap + canvasPadding,
+    ...positionedNodes.map((node) => node.y + node.height + canvasPadding),
+  );
   return {
-    nodes,
-    width: maximumRowWidth + canvasPadding * 2,
-    height: y - rowGap + canvasPadding,
+    nodes: positioned,
+    minX,
+    minY,
+    width: maxX - minX,
+    height: maxY - minY,
   };
+}
+
+export interface FlowPoint extends ProjectionPoint {}
+
+export interface FlowConnectorRoute {
+  end: FlowPoint;
+  fromPort: FlowPlacementDirection;
+  jumps?: readonly FlowConnectorJump[];
+  points: FlowPoint[];
+  start: FlowPoint;
+  toPort: FlowPlacementDirection;
+}
+
+export interface FlowConnectorJump extends FlowPoint {
+  segmentIndex: number;
+}
+
+export interface FlowRouteAdjustmentHandle extends FlowPoint {
+  axis: FlowEdgeRouteOverride["axis"];
+  coordinate: number;
+  segmentIndex: number;
+}
+
+function toProjectionPort(direction: FlowPlacementDirection): PortSide {
+  return direction === "up"
+    ? "top"
+    : direction === "down"
+      ? "bottom"
+      : direction;
+}
+
+function fromProjectionPort(side: PortSide): FlowPlacementDirection {
+  return side === "top"
+    ? "up"
+    : side === "bottom"
+      ? "down"
+      : side;
+}
+
+function toProjectionRoute(route: FlowConnectorRoute): OrthogonalRoute {
+  return {
+    source: route.start,
+    target: route.end,
+    sourcePort: toProjectionPort(route.fromPort),
+    targetPort: toProjectionPort(route.toPort),
+    points: route.points,
+  };
+}
+
+function fromProjectionRoute(route: OrthogonalRoute): FlowConnectorRoute {
+  return {
+    start: route.source,
+    end: route.target,
+    fromPort: fromProjectionPort(route.sourcePort),
+    toPort: fromProjectionPort(route.targetPort),
+    points: route.points,
+    ...(route.jumps === undefined
+      ? {}
+      : { jumps: route.jumps.map((jump) => ({ ...jump })) }),
+  };
+}
+
+export interface CompiledFlowConnector {
+  edgeId: string;
+  fromId: string;
+  route: FlowConnectorRoute;
+  toId: string;
+}
+
+export function compileFlowConnectors(
+  space: Pick<FlowSpace, "nodes" | "edges" | "edgeRoutes">,
+  layout: FlowLayoutResult,
+  measureTextWidth?: TextWidthMeasurer,
+): CompiledFlowConnector[] {
+  const semanticGraph = flowSpaceToSemanticGraph(space);
+  const plan = compileGraphView({
+    graph: semanticGraph,
+    nodeSizes: Object.fromEntries(
+      semanticGraph.nodes.map((node) => {
+        const positioned = layout.nodes[node.id];
+        return [node.id, {
+          width: positioned?.width ?? stepNodeWidth,
+          height: positioned?.height ?? stepNodeHeight,
+        }];
+      }),
+    ),
+    labelSizes: Object.fromEntries(
+      semanticGraph.relations.flatMap((relation) => relation.label === undefined
+        ? []
+        : [[relation.id, {
+            width: Math.max(32, Math.ceil(
+              (measureTextWidth
+                ? measureTextWidth(relation.label, flowEdgeLabelFontStyle)
+                : estimateTextWidth(relation.label, flowEdgeLabelFontStyle)) + 16,
+            )),
+            height: 24,
+          }] as const]),
+    ),
+    profile: {
+      type: "fixed",
+      positions: Object.fromEntries(
+        semanticGraph.nodes.map((node) => [node.id, {
+          x: layout.nodes[node.id]?.x ?? 0,
+          y: layout.nodes[node.id]?.y ?? 0,
+        }]),
+      ),
+    },
+    edgeRouteConstraints: Object.fromEntries(
+      Object.entries(space.edgeRoutes ?? {}).map(([edgeId, route]) => [edgeId, {
+        type: "orthogonal-corridor" as const,
+        axis: route.axis,
+        coordinate: route.coordinate,
+      }]),
+    ),
+  });
+  return plan.edges.map((edge) => ({
+    edgeId: edge.id,
+    fromId: edge.source,
+    route: fromProjectionRoute(edge.route),
+    toId: edge.target,
+  }));
+}
+
+function portVector(direction: FlowPlacementDirection): FlowPoint {
+  if (direction === "left") return { x: -1, y: 0 };
+  if (direction === "right") return { x: 1, y: 0 };
+  if (direction === "up") return { x: 0, y: -1 };
+  return { x: 0, y: 1 };
+}
+
+export function includeFlowConnectorBounds(
+  space: Pick<FlowSpace, "nodes" | "edges" | "edgeRoutes">,
+  layout: FlowLayoutResult,
+  measureTextWidth?: TextWidthMeasurer,
+  compiled = compileFlowConnectors(space, layout, measureTextWidth),
+): FlowLayoutResult {
+  const edgeById = new Map(space.edges.map((edge) => [edge.id, edge]));
+  const points = compiled.flatMap((connector) => {
+    const kind = edgeById.get(connector.edgeId)?.style?.kind ?? "rounded";
+    if (kind !== "curved") return connector.route.points;
+    const curve = flowCurvedConnectorGeometry(connector.route);
+    // A cubic Bézier stays inside the convex hull of these four points, so
+    // including both controls keeps fit bounds honest without sampling.
+    return [
+      connector.route.start,
+      curve.control1,
+      curve.control2,
+      connector.route.end,
+    ];
+  });
+  if (points.length === 0) return layout;
+  const minX = Math.min(layout.minX, ...points.map((point) => point.x - canvasPadding));
+  const minY = Math.min(layout.minY, ...points.map((point) => point.y - canvasPadding));
+  const maxX = Math.max(
+    layout.minX + layout.width,
+    ...points.map((point) => point.x + canvasPadding),
+  );
+  const maxY = Math.max(
+    layout.minY + layout.height,
+    ...points.map((point) => point.y + canvasPadding),
+  );
+  return { ...layout, minX, minY, width: maxX - minX, height: maxY - minY };
+}
+
+function oppositeFlowPort(
+  direction: FlowPlacementDirection,
+): FlowPlacementDirection {
+  if (direction === "left") return "right";
+  if (direction === "right") return "left";
+  if (direction === "up") return "down";
+  return "up";
+}
+
+export function compileFlowQuickCreateRoute(
+  space: Pick<FlowSpace, "nodes" | "edges" | "edgeRoutes">,
+  layout: FlowLayoutResult,
+  sourceId: string,
+  direction: FlowPlacementDirection,
+  placement: FlowDirectionalPlacement,
+  measureTextWidth?: TextWidthMeasurer,
+): FlowConnectorRoute | null {
+  const source = space.nodes[sourceId];
+  if (!source) return null;
+  let suffix = 0;
+  let previewNodeId = "__quick-create-preview__";
+  while (space.nodes[previewNodeId]) {
+    suffix += 1;
+    previewNodeId = `__quick-create-preview-${suffix}__`;
+  }
+  let previewEdgeId = "__quick-create-edge__";
+  while (space.edges.some((edge) => edge.id === previewEdgeId)) {
+    suffix += 1;
+    previewEdgeId = `__quick-create-edge-${suffix}__`;
+  }
+  const previewSpace = {
+    nodes: {
+      ...space.nodes,
+      [previewNodeId]: {
+        id: previewNodeId,
+        text: "",
+        kind: "step" as const,
+        createdAt: source.updatedAt,
+        updatedAt: source.updatedAt,
+      },
+    },
+    edges: [
+      ...space.edges,
+      {
+        id: previewEdgeId,
+        from: sourceId,
+        to: previewNodeId,
+        label: "",
+        fromPort: direction,
+        toPort: oppositeFlowPort(direction),
+      },
+    ],
+    edgeRoutes: space.edgeRoutes,
+  };
+  const previewLayout: FlowLayoutResult = {
+    ...layout,
+    nodes: {
+      ...layout.nodes,
+      [previewNodeId]: {
+        id: previewNodeId,
+        level: layout.nodes[sourceId]?.level ?? 0,
+        ...placement,
+      },
+    },
+  };
+  return compileFlowConnectors(previewSpace, previewLayout, measureTextWidth)
+    .find((connector) => connector.edgeId === previewEdgeId)?.route ?? null;
+}
+
+export function flowRouteAdjustmentHandle(
+  route: FlowConnectorRoute,
+  preferred?: FlowEdgeRouteOverride,
+): FlowRouteAdjustmentHandle | null {
+  const segments = route.points.slice(0, -1).flatMap((start, segmentIndex) => {
+    const end = route.points[segmentIndex + 1];
+    if (!end) return [];
+    const horizontal = Math.abs(end.y - start.y) < 0.01;
+    const vertical = Math.abs(end.x - start.x) < 0.01;
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    if ((!horizontal && !vertical) || length < 2) return [];
+    return [{
+      axis: horizontal ? "y" as const : "x" as const,
+      coordinate: horizontal ? start.y : start.x,
+      length,
+      segmentIndex,
+      x: (start.x + end.x) / 2,
+      y: (start.y + end.y) / 2,
+    }];
+  });
+  if (preferred) {
+    const preferredSegments = segments.filter((segment) =>
+      segment.axis === preferred.axis &&
+      Math.abs(segment.coordinate - preferred.coordinate) < 0.01
+    );
+    const preferredSegment = preferredSegments.sort((left, right) =>
+      right.length - left.length
+    )[0];
+    if (preferredSegment) return preferredSegment;
+  }
+  const candidates = segments.filter(({ length }) => length >= 28);
+  return candidates.sort((left, right) =>
+    Number(left.segmentIndex === 0 || left.segmentIndex === route.points.length - 2) -
+      Number(right.segmentIndex === 0 || right.segmentIndex === route.points.length - 2) ||
+    right.length - left.length
+  )[0] ?? null;
+}
+
+export function flowConnectorRoute(
+  from: FlowLayoutNode,
+  to: FlowLayoutNode,
+  preferredFromPort?: FlowPlacementDirection,
+  preferredToPort?: FlowPlacementDirection,
+  obstacles: readonly FlowLayoutNode[] = [],
+): FlowConnectorRoute {
+  return fromProjectionRoute(projectionRouteOrthogonal(from, to, {
+    ...(preferredFromPort === undefined
+      ? {}
+      : { sourcePort: toProjectionPort(preferredFromPort) }),
+    ...(preferredToPort === undefined
+      ? {}
+      : { targetPort: toProjectionPort(preferredToPort) }),
+    obstacles,
+  }));
+}
+
+export function flowConnectorPathFromRoute(
+  route: FlowConnectorRoute,
+  jumps: readonly FlowConnectorJump[] = route.jumps ?? [],
+  kind: FlowConnectorKind = "rounded",
+): string {
+  if (kind === "straight") {
+    return `M ${route.start.x} ${route.start.y} L ${route.end.x} ${route.end.y}`;
+  }
+  if (kind === "curved") {
+    const { control1, control2 } = flowCurvedConnectorGeometry(route);
+    return `M ${route.start.x} ${route.start.y} C ${control1.x} ${control1.y} ${control2.x} ${control2.y} ${route.end.x} ${route.end.y}`;
+  }
+  if (kind === "orthogonal") {
+    return route.points.map((point, index) =>
+      `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`,
+    ).join(" ");
+  }
+  return projectionRoundedOrthogonalPath(
+    route.points,
+    jumps.map((jump): RouteJump => ({ ...jump })),
+    10,
+  );
+}
+
+function flowCurvedConnectorGeometry(route: FlowConnectorRoute): {
+  control1: FlowPoint;
+  control2: FlowPoint;
+} {
+  const sourceVector = portVector(route.fromPort);
+  const targetVector = portVector(route.toPort);
+  const distance = Math.max(
+    48,
+    Math.min(180, Math.hypot(
+      route.end.x - route.start.x,
+      route.end.y - route.start.y,
+    ) * 0.42),
+  );
+  return {
+    control1: {
+      x: route.start.x + sourceVector.x * distance,
+      y: route.start.y + sourceVector.y * distance,
+    },
+    control2: {
+      x: route.end.x + targetVector.x * distance,
+      y: route.end.y + targetVector.y * distance,
+    },
+  };
+}
+
+export function flowConnectorPointOnRoute(
+  route: FlowConnectorRoute,
+  progress = 0.34,
+  kind: FlowConnectorKind = "rounded",
+): FlowPoint {
+  const t = Math.max(0, Math.min(1, progress));
+  if (kind === "straight") {
+    return {
+      x: route.start.x + (route.end.x - route.start.x) * t,
+      y: route.start.y + (route.end.y - route.start.y) * t,
+    };
+  }
+  if (kind === "curved") {
+    const { control1, control2 } = flowCurvedConnectorGeometry(route);
+    const inverse = 1 - t;
+    return {
+      x: inverse ** 3 * route.start.x +
+        3 * inverse ** 2 * t * control1.x +
+        3 * inverse * t ** 2 * control2.x +
+        t ** 3 * route.end.x,
+      y: inverse ** 3 * route.start.y +
+        3 * inverse ** 2 * t * control1.y +
+        3 * inverse * t ** 2 * control2.y +
+        t ** 3 * route.end.y,
+    };
+  }
+  return projectionPointOnRoute(toProjectionRoute(route), progress);
+}
+
+// The delete control remains a Laniakea interaction concern. Geometry of the
+// route itself is shared with Graph View Compiler.
+export function flowConnectorDeleteAnchor(
+  route: FlowConnectorRoute,
+  obstacles: readonly FlowLayoutNode[],
+  offset = 24,
+  kind: FlowConnectorKind = "rounded",
+): FlowPoint {
+  const point = flowConnectorPointOnRoute(route, 0.5, kind);
+  let normal: FlowPoint | undefined;
+  if (kind === "straight") {
+    const dx = route.end.x - route.start.x;
+    const dy = route.end.y - route.start.y;
+    const length = Math.hypot(dx, dy);
+    if (length > 0) normal = { x: -dy / length, y: dx / length };
+  } else if (kind === "curved") {
+    const { control1, control2 } = flowCurvedConnectorGeometry(route);
+    // Cubic derivative at t=.5; its perpendicular follows the visible curve
+    // instead of the hidden orthogonal route.
+    const dx = 0.75 * (control1.x - route.start.x) +
+      1.5 * (control2.x - control1.x) +
+      0.75 * (route.end.x - control2.x);
+    const dy = 0.75 * (control1.y - route.start.y) +
+      1.5 * (control2.y - control1.y) +
+      0.75 * (route.end.y - control2.y);
+    const length = Math.hypot(dx, dy);
+    if (length > 0) normal = { x: -dy / length, y: dx / length };
+  }
+  const segments = route.points.slice(0, -1).map((start, index) => {
+    const end = route.points[index + 1]!;
+    return {
+      dx: end.x - start.x,
+      dy: end.y - start.y,
+      length: Math.hypot(end.x - start.x, end.y - start.y),
+    };
+  });
+  if (!normal) {
+    const total = segments.reduce((sum, segment) => sum + segment.length, 0);
+    let remaining = total * 0.5;
+    for (const segment of segments) {
+      if (segment.length === 0) continue;
+      if (remaining <= segment.length) {
+        normal = { x: -segment.dy / segment.length, y: segment.dx / segment.length };
+        break;
+      }
+      remaining -= segment.length;
+    }
+  }
+  if (!normal) return point;
+  const occupied = (x: number, y: number) =>
+    obstacles.some((node) =>
+      x > node.x - 2 && x < node.x + node.width + 2 &&
+      y > node.y - 2 && y < node.y + node.height + 2,
+    );
+  const candidates = [
+    { x: point.x + normal.x * offset, y: point.y + normal.y * offset },
+    { x: point.x - normal.x * offset, y: point.y - normal.y * offset },
+  ];
+  return candidates.find((candidate) => !occupied(candidate.x, candidate.y)) ?? point;
+}
+
+export function flowPreviewConnectorPath(
+  start: FlowPoint,
+  end: FlowPoint,
+  fromPort: FlowPlacementDirection,
+  toPort?: FlowPlacementDirection,
+): string {
+  const source = { id: "preview-source", x: start.x, y: start.y, width: 0, height: 0 };
+  const target = { id: "preview-target", x: end.x, y: end.y, width: 0, height: 0 };
+  const route = projectionRouteOrthogonal(source, target, {
+    sourcePort: toProjectionPort(fromPort),
+    ...(toPort === undefined ? {} : { targetPort: toProjectionPort(toPort) }),
+  });
+  return projectionRoundedOrthogonalPath(route.points, [], 10);
 }
 
 export function flowConnectorPath(
   from: FlowLayoutNode,
   to: FlowLayoutNode,
+  fromPort?: FlowPlacementDirection,
+  toPort?: FlowPlacementDirection,
+  jumps: readonly FlowConnectorJump[] = [],
+  obstacles: readonly FlowLayoutNode[] = [],
 ): string {
-  const startX = from.x + from.width / 2;
-  const startY = from.y + from.height;
-  const endX = to.x + to.width / 2;
-  const endY = to.y;
-  if (to.level - from.level > 1) {
-    const direction = endX < startX ? -1 : 1;
-    const laneX = (direction > 0 ? Math.max(startX, endX) : Math.min(startX, endX))
-      + direction * 150;
-    return `M ${startX} ${startY} C ${startX} ${startY + 30}, ${laneX} ${startY + 30}, ${laneX} ${startY + 64} L ${laneX} ${endY - 42} C ${laneX} ${endY - 18}, ${endX} ${endY - 18}, ${endX} ${endY}`;
-  }
-  const middleY = startY + Math.max(24, (endY - startY) / 2);
-  return `M ${startX} ${startY} C ${startX} ${middleY}, ${endX} ${middleY}, ${endX} ${endY}`;
+  return flowConnectorPathFromRoute(
+    flowConnectorRoute(from, to, fromPort, toPort, obstacles),
+    jumps,
+  );
 }
 
-/**
- * Return a point on the same cubic curve used by flowConnectorPath.
- * Labels sit near the source instead of at the geometric midpoint so a
- * long edge that skips a row cannot cover an intermediate node.
- */
 export function flowConnectorPoint(
   from: FlowLayoutNode,
   to: FlowLayoutNode,
   progress = 0.34,
-): { x: number; y: number } {
-  const startX = from.x + from.width / 2;
-  const startY = from.y + from.height;
-  const endX = to.x + to.width / 2;
-  const endY = to.y;
-  if (to.level - from.level > 1) {
-    const direction = endX < startX ? -1 : 1;
-    return {
-      x: (direction > 0 ? Math.max(startX, endX) : Math.min(startX, endX))
-        + direction * 150,
-      y: startY + 64,
-    };
-  }
-  const middleY = startY + Math.max(24, (endY - startY) / 2);
-  const t = Math.max(0, Math.min(1, progress));
-  const inverse = 1 - t;
-  const cubic = (start: number, controlA: number, controlB: number, end: number) =>
-    inverse ** 3 * start
-    + 3 * inverse ** 2 * t * controlA
-    + 3 * inverse * t ** 2 * controlB
-    + t ** 3 * end;
-  return {
-    x: cubic(startX, startX, endX, endX),
-    y: cubic(startY, middleY, middleY, endY),
-  };
+  fromPort?: FlowPlacementDirection,
+  toPort?: FlowPlacementDirection,
+): FlowPoint {
+  return flowConnectorPointOnRoute(
+    flowConnectorRoute(from, to, fromPort, toPort),
+    progress,
+  );
+}
+
+export function flowConnectorCrossings(
+  routes: readonly {
+    edgeId: string;
+    fromId: string;
+    route: FlowConnectorRoute;
+    toId: string;
+  }[],
+): Record<string, FlowConnectorJump[]> {
+  const projected = projectionRouteCrossings(routes.map((edge) => ({
+    id: edge.edgeId,
+    sourceId: edge.fromId,
+    targetId: edge.toId,
+    route: toProjectionRoute(edge.route),
+  })));
+  return Object.fromEntries(routes.map((edge) => [
+    edge.edgeId,
+    (projected[edge.edgeId] ?? []).map((jump) => ({ ...jump })),
+  ]));
 }
 
 export function flowNavigationTarget(

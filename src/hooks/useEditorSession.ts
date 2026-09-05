@@ -1,19 +1,16 @@
 import {
   useCallback,
-  useEffect,
   useRef,
   useState,
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { listenForWindowFocusChange } from "../desktop/applicationLifecycle";
 import {
   adoptRootTextTitle,
   importedPasteTitle,
 } from "../model/clipboard";
 import { isBlankMindMapDocument } from "../model/document";
 import { parseMarkdownDocument } from "../model/markdown";
-import { isDesktopRuntime } from "../persistence/localDocumentStore";
 import { singleSelection } from "../model/selection";
 import {
   attachSubtrees,
@@ -50,6 +47,7 @@ interface EditorSession {
   beginEdit: (id: string, replacement?: string) => void;
   beginBlankDocument: (rootId: string) => void;
   finishDocumentSwitch: (fitContent: boolean) => void;
+  finishEdit: () => void;
   commitEdit: (id: string, value: string) => void;
   cancelEdit: (id: string) => void;
   toggleNode: (id: string) => void;
@@ -116,9 +114,13 @@ export function useEditorSession({
 
   const beginBlankDocument = useCallback((rootId: string) => {
     cancelledEdit.current = null;
+    selectNode(rootId);
     setEditingId(rootId);
     setDraft("");
-  }, []);
+    // 空白稿没有可恢复的视口：请求一次画布 fit，把唯一的主原点居中呈现。
+    // 令牌由画布挂载后的 layout effect 消费，早于挂载发出也不会丢失。
+    setFitRequest((current) => current + 1);
+  }, [selectNode]);
 
   const finishDocumentSwitch = useCallback((fitContent: boolean) => {
     cancelledEdit.current = null;
@@ -145,56 +147,10 @@ export function useEditorSession({
     [applyMutation],
   );
 
-  useEffect(() => {
-    if (!editingId) return;
-    let active = true;
-    let unlistenNativeFocus: (() => void) | undefined;
-    const finishEditingForFocusLoss = () => {
-      const id = editingIdRef.current;
-      if (!id) return;
-      const activeElement = globalThis.document.activeElement;
-      if (
-        activeElement instanceof HTMLTextAreaElement &&
-        activeElement.classList.contains("mind-node__editor")
-      ) {
-        commitEdit(id, activeElement.value);
-        return;
-      }
-      commitEdit(id, draftRef.current);
-    };
-    const handleVisibilityChange = () => {
-      if (globalThis.document.visibilityState === "hidden") {
-        finishEditingForFocusLoss();
-      }
-    };
-    const handleWindowBlur = () => finishEditingForFocusLoss();
-
-    globalThis.window.addEventListener("blur", handleWindowBlur);
-    globalThis.document.addEventListener(
-      "visibilitychange",
-      handleVisibilityChange,
-    );
-    if (isDesktopRuntime()) {
-      void listenForWindowFocusChange((focused) => {
-        if (active && !focused) finishEditingForFocusLoss();
-      })
-        .then((unlisten) => {
-          if (active) unlistenNativeFocus = unlisten;
-          else unlisten();
-        })
-        .catch(() => undefined);
-    }
-
-    return () => {
-      active = false;
-      unlistenNativeFocus?.();
-      globalThis.window.removeEventListener("blur", handleWindowBlur);
-      globalThis.document.removeEventListener(
-        "visibilitychange",
-        handleVisibilityChange,
-      );
-    };
-  }, [commitEdit, editingId]);
+  const finishEdit = useCallback(() => {
+    const id = editingIdRef.current;
+    if (id) commitEdit(id, draftRef.current);
+  }, [commitEdit]);
 
   const cancelEdit = useCallback((id: string) => {
     if (editingIdRef.current !== id) return;
@@ -339,6 +295,7 @@ export function useEditorSession({
     beginEdit,
     beginBlankDocument,
     finishDocumentSwitch,
+    finishEdit,
     commitEdit,
     cancelEdit,
     toggleNode,

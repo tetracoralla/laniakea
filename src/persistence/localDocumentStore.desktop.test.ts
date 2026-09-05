@@ -1,3 +1,5 @@
+import { configureInternalDocumentRoot } from "./recentDocuments";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
 
@@ -13,11 +15,16 @@ vi.mock("@tauri-apps/api/core", () => ({
 import {
   activateLocalDocument,
   createMarkdownDraft,
+  loadLocalDocument,
   moveInternalDraft,
   openLocalDocument,
   saveLocalDocument,
   shouldFitLoadedDocument,
 } from "./localDocumentStore";
+
+configureInternalDocumentRoot(
+  "/Volumes/Workspace/Library/Application Support/com.openadam.origin",
+);
 
 describe("desktop Markdown document persistence", () => {
   beforeEach(() => invoke.mockReset());
@@ -199,6 +206,106 @@ describe("desktop Markdown document persistence", () => {
       viewportOnly: true,
       markdownContent: null,
     });
+  });
+
+  it("passes recovery cutoffs only when a save absorbed them", async () => {
+    invoke.mockResolvedValueOnce({ sourceHash: "hash-v2" });
+
+    await saveLocalDocument(
+      createSeedDocument(),
+      "/tmp/方案.md",
+      "hash-v1",
+      null,
+      {
+        recoveryCheckpointGeneration: 120,
+        recoveryEditorDraftGeneration: 121,
+      },
+    );
+
+    expect(invoke).toHaveBeenCalledWith(
+      "save_local_document",
+      expect.objectContaining({
+        recoveryCheckpointGeneration: 120,
+        recoveryEditorDraftGeneration: 121,
+      }),
+    );
+  });
+
+  it("restores an input-method-complete editor draft over its checkpoint", async () => {
+    const checkpoint = createSeedDocument();
+    invoke.mockResolvedValueOnce({
+      document: JSON.stringify(checkpoint),
+      outlineContent: "# 思维导图工具\n\n- 做一个思维导图 APP\n",
+      documentFormat: "markdown",
+      documentPath: "/tmp/方案.md",
+      recoveredFromBackup: false,
+      recoveredFromPending: true,
+      recoveryGeneration: 221,
+      recoveryKind: "restored",
+      editorDraft: {
+        formatVersion: 1,
+        sessionId: "session-a",
+        generation: 221,
+        checkpointGeneration: 220,
+        documentPath: "/tmp/方案.md",
+        sourceHash: "hash-v1",
+        surface: "root-map",
+        spaceId: null,
+        objectKind: "mind-node",
+        objectId: checkpoint.rootId,
+        text: "输入法已经完成的最后一段",
+      },
+      notice: "已恢复上次中断前的内容",
+      sourceHash: "hash-v1",
+    });
+
+    const loaded = await loadLocalDocument();
+
+    expect(loaded.recoveryKind).toBe("restored");
+    expect(loaded.recoveryGeneration).toBe(221);
+    expect(loaded.recoveryEditorDraftGeneration).toBe(221);
+    expect(loaded.document?.nodes[checkpoint.rootId].text).toBe(
+      "输入法已经完成的最后一段",
+    );
+  });
+
+  it("materializes a source conflict as an independent draft and clears pending records", async () => {
+    const checkpoint = createSeedDocument();
+    checkpoint.title = "未保存的恢复内容";
+    invoke
+      .mockResolvedValueOnce({
+        document: JSON.stringify(checkpoint),
+        outlineContent: "# 未保存的恢复内容\n\n- 做一个思维导图 APP\n",
+        documentFormat: "markdown",
+        documentPath: "/tmp/外部已经修改.md",
+        recoveredFromBackup: false,
+        recoveredFromPending: true,
+        recoveryGeneration: 310,
+        recoveryKind: "conflict",
+        editorDraft: null,
+        notice: "原文件已有变化，恢复内容将保留为独立副本。",
+        sourceHash: "old-hash",
+      })
+      .mockResolvedValueOnce({
+        documentPath: "/app-data/drafts/未保存的恢复内容.md",
+        sourceHash: "copy-hash",
+      })
+      .mockResolvedValueOnce(undefined);
+
+    const loaded = await loadLocalDocument();
+
+    expect(loaded.recoveryKind).toBe("copy");
+    expect(loaded.recoveryGeneration).toBeNull();
+    expect(loaded.recoveryEditorDraftGeneration).toBeNull();
+    expect(loaded.documentPath).toBe(
+      "/app-data/drafts/未保存的恢复内容.md",
+    );
+    expect(invoke).toHaveBeenNthCalledWith(
+      2,
+      "create_markdown_draft",
+      expect.objectContaining({ activateDocument: true }),
+    );
+    expect(invoke).toHaveBeenNthCalledWith(3, "discard_pending_recovery");
   });
 
   it("passes a protected rich Markdown source to the native save guard", async () => {

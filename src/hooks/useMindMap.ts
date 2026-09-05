@@ -22,13 +22,21 @@ import {
   activateLocalDocument,
   clearActiveDocument,
   createMarkdownDraft,
+  discardDesktopPendingRecovery,
   discardInternalDraft,
   isDesktopRuntime,
   loadLocalDocument,
   moveInternalDraft,
+  openLocalDocument,
   saveBrowserDocumentSynchronously,
   saveLocalDocument,
 } from "../persistence/localDocumentStore";
+import {
+  RecoveryCoordinator,
+  type RecoveryBinding,
+  type RecoveryEditorTarget,
+  type RecoverySaveCutoff,
+} from "../persistence/recoveryCoordinator";
 import {
   forgetRecentDocument,
   isInternalDocumentPath,
@@ -49,6 +57,7 @@ import type {
 import {
   findMindNode,
   preserveDocumentViewports,
+  setFlowPositions as setDocumentFlowPositions,
   setFlowViewport as setDocumentFlowViewport,
   setMapSpaceViewport as setDocumentMapSpaceViewport,
 } from "../model/spaces";
@@ -96,6 +105,10 @@ export function useMindMap({
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [recoveredWorkPending, setRecoveredWorkPending] = useState(false);
+  const [lifecycleSaveBlockedRequest, setLifecycleSaveBlockedRequest] =
+    useState(0);
   const [documentPath, setDocumentPath] = useState<string | null>(null);
   const [sourceDocumentPath, setSourceDocumentPath] =
     useState<string | null>(null);
@@ -116,6 +129,8 @@ export function useMindMap({
   const lastPersistedContentDocument = useRef<MindMapDocument | null>(
     null,
   );
+  const recoveredWorkPendingRef = useRef(false);
+  const recoveredBaselineDocumentRef = useRef<MindMapDocument | null>(null);
   const protectedUnboundSourceContent = useRef<string | null>(null);
   const protectedUnboundSourceDocument = useRef<MindMapDocument | null>(
     null,
@@ -134,6 +149,16 @@ export function useMindMap({
   const saveRequest = useRef(0);
   const documentSessionRef = useRef(0);
   const [documentSessionId, setDocumentSessionId] = useState(0);
+  const recoveryCoordinatorRef = useRef<RecoveryCoordinator | null>(null);
+  if (!recoveryCoordinatorRef.current) {
+    recoveryCoordinatorRef.current = new RecoveryCoordinator({
+      enabled: isDesktopRuntime(),
+      isDocumentSessionCurrent: (session) =>
+        documentSessionRef.current === session,
+      onError: setRecoveryError,
+    });
+  }
+  const recoveryCoordinator = recoveryCoordinatorRef.current;
 
   latestDocument.current = snapshot.document;
   documentPathRef.current = documentPath;
@@ -151,11 +176,13 @@ export function useMindMap({
     pathOverride?: string | null,
     options: {
       newBinding?: boolean;
+      moveTo?: string;
       silent?: boolean;
     } = {},
   ) => {
-    const { newBinding = false, silent = false } = options;
+    const { newBinding = false, moveTo, silent = false } = options;
     const target = document ?? latestDocument.current;
+    const targetSession = documentSessionRef.current;
     const targetPath =
       pathOverride === undefined
         ? documentPathRef.current
@@ -193,53 +220,168 @@ export function useMindMap({
     const queued = saveQueue.current
       .catch(() => undefined)
       .then(async () => {
+        if (targetSession !== documentSessionRef.current) {
+          return { result: null, stale: true } as const;
+        }
+        // Ordinary saves follow the binding at execution time. A preceding
+        // queued Save As may have moved the draft since this save was requested.
+        const writePath = pathOverride === undefined
+          ? documentPathRef.current
+          : targetPath;
+        const previousBinding = documentPathRef.current;
         const savingCurrentBinding =
-          !newBinding &&
-          targetPath !== null &&
-          targetPath === documentPathRef.current;
+          targetSession === documentSessionRef.current &&
+          writePath !== null &&
+          writePath === documentPathRef.current;
+        // Resolve the lease only when this queued write starts. A preceding
+        // save from the same document may have advanced it legitimately.
         const expectedSourceHash = savingCurrentBinding
           ? sourceHashRef.current
           : null;
+        // While a restored recovery is still undecided, silent viewport
+        // saves must stay auxiliary-only: the recovered document is the
+        // content baseline, not a version the source has committed.
+        const silentSaveBaseline =
+          lastPersistedContentDocument.current ??
+          recoveredBaselineDocumentRef.current;
         const viewportOnly = Boolean(
           silent &&
-          lastPersistedContentDocument.current &&
-          sharesDocumentContent(
-            target,
-            lastPersistedContentDocument.current,
-          ),
+          silentSaveBaseline &&
+          sharesDocumentContent(target, silentSaveBaseline),
         );
-        const result = viewportOnly
+        const recoveryBinding: RecoveryBinding = {
+          documentPath: documentPathRef.current,
+          protectedSourcePath: protectedUnboundSourcePath.current,
+          sourceHash: sourceHashRef.current,
+        };
+        let recoveryCutoff: RecoverySaveCutoff = {
+          checkpointGeneration: null,
+          editorDraftGeneration: null,
+        };
+        try {
+          recoveryCutoff = await recoveryCoordinator.prepareSave(
+            target,
+            recoveryBinding,
+            targetSession,
+            viewportOnly,
+          );
+        } catch {
+          // A normal source save is itself the strongest recovery path. A
+          // failed pending-checkpoint write is surfaced separately and must
+          // not prevent that source save from succeeding.
+        }
+        const hasRecoveryCutoff = Boolean(
+          recoveryCutoff.checkpointGeneration ||
+          recoveryCutoff.editorDraftGeneration,
+        );
+        let result = viewportOnly || hasRecoveryCutoff
           ? await saveLocalDocument(
               target,
-              targetPath,
+              writePath,
               expectedSourceHash,
               protectedSourceForSave,
-              { viewportOnly: true },
+              {
+                viewportOnly,
+                ...(recoveryCutoff.checkpointGeneration
+                  ? {
+                      recoveryCheckpointGeneration:
+                        recoveryCutoff.checkpointGeneration,
+                    }
+                  : {}),
+                ...(recoveryCutoff.editorDraftGeneration
+                  ? {
+                      recoveryEditorDraftGeneration:
+                        recoveryCutoff.editorDraftGeneration,
+                    }
+                  : {}),
+              },
             )
           : await saveLocalDocument(
               target,
-              targetPath,
+              writePath,
               expectedSourceHash,
               protectedSourceForSave,
             );
-        lastPersistedContentDocument.current = target;
+        if (targetSession === documentSessionRef.current) {
+          // The source save has committed even if the subsequent move fails.
+          // Retain its lease so retrying never reports a false source conflict.
+          if (savingCurrentBinding) sourceHashRef.current = result.sourceHash;
+          if (!viewportOnly || !recoveredBaselineDocumentRef.current) {
+            lastPersistedContentDocument.current = target;
+          }
+          recoveryCoordinator.markSaveCompleted(target, recoveryCutoff);
+        }
+        if (moveTo && writePath) {
+          // Rename and source writes use the same queue. Do not let a newer
+          // autosave recreate the old draft while native storage is moving it.
+          result = await moveInternalDraft(writePath, moveTo);
+        }
+        if (targetSession !== documentSessionRef.current) {
+          if (isDesktopRuntime()) {
+            const currentPath = documentPathRef.current;
+            if (currentPath) await activateLocalDocument(currentPath);
+            else await clearActiveDocument();
+          }
+          return { result, stale: true } as const;
+        }
+        const nextBinding = moveTo ?? (newBinding ? writePath : null);
+        if (nextBinding) {
+          protectedUnboundSourceContent.current = null;
+          protectedUnboundSourceDocument.current = null;
+          protectedUnboundSourcePath.current = null;
+          protectedBrowserSourceNameRef.current = null;
+          setProtectedBrowserSourceName(null);
+          documentPathRef.current = nextBinding;
+          sourceDocumentPathRef.current = nextBinding;
+          sourceHashRef.current = result.sourceHash;
+          setDocumentPath(nextBinding);
+          setSourceDocumentPath(nextBinding);
+          setRecentDocuments((current) => rememberRecentDocument(
+            moveTo && previousBinding && previousBinding !== nextBinding
+              ? forgetRecentDocument(current, previousBinding)
+              : current,
+            nextBinding,
+            target.title,
+          ));
+        }
         if (savingCurrentBinding) {
           sourceHashRef.current = result.sourceHash;
         }
-        return result;
+        if (
+          recoveredWorkPendingRef.current &&
+          (savingCurrentBinding || nextBinding !== null) &&
+          !viewportOnly
+        ) {
+          // Any committed content save keeps the restored work — explicit
+          // save, first edit, or a document switch all resolve the banner
+          // instead of leaving a stale "discard" offer on committed content.
+          recoveredWorkPendingRef.current = false;
+          recoveredBaselineDocumentRef.current = null;
+          setRecoveredWorkPending(false);
+          setStartupNotice(null);
+        }
+        return { result, stale: false } as const;
       });
     saveQueue.current = queued;
 
     try {
-      const result = await queued;
-      if (request === saveRequest.current) {
+      const outcome = await queued;
+      if (outcome.stale || !outcome.result) return null;
+      const result = outcome.result;
+      if (
+        targetSession === documentSessionRef.current &&
+        request === saveRequest.current
+      ) {
         setSaveState("saved");
         setSaveError(null);
         setSaveWarning(result.auxiliaryWarning ?? null);
       }
       return result;
     } catch (error) {
-      if (request === saveRequest.current) {
+      if (
+        targetSession === documentSessionRef.current &&
+        request === saveRequest.current
+      ) {
         setSaveState("error");
         setSaveWarning(null);
         setSaveError(
@@ -250,7 +392,7 @@ export function useMindMap({
       }
       return null;
     }
-  }, []);
+  }, [recoveryCoordinator]);
 
   const saveNow = useCallback(async (
     document?: MindMapDocument,
@@ -311,12 +453,33 @@ export function useMindMap({
           protectedBrowserSourceNameRef.current =
             loaded.protectedSourceName ?? null;
           setProtectedBrowserSourceName(loaded.protectedSourceName ?? null);
+          recoveryCoordinator.adoptDocument(
+            loaded.document,
+            loaded.recoveryKind === "restored"
+              ? loaded.recoveryGeneration ?? null
+              : null,
+            loaded.recoveryKind === "restored"
+              ? loaded.recoveryEditorDraftGeneration ?? null
+              : null,
+          );
+          recoveredWorkPendingRef.current =
+            loaded.recoveryKind === "restored";
+          recoveredBaselineDocumentRef.current =
+            loaded.recoveryKind === "restored" ? loaded.document : null;
+          setRecoveredWorkPending(loaded.recoveryKind === "restored");
           if (
             !loaded.recoveredFromBackup &&
-            protectedUnboundSourceContent.current === null
+            protectedUnboundSourceContent.current === null &&
+            loaded.recoveryKind !== "restored"
           ) {
             skipNextSave.current = loaded.document;
             lastPersistedContentDocument.current = loaded.document;
+          } else if (loaded.recoveryKind === "restored") {
+            // The source still contains the last committed version. Keep the
+            // recovered document visible without silently accepting it as the
+            // committed baseline until the owner keeps or edits it.
+            skipNextSave.current = loaded.document;
+            lastPersistedContentDocument.current = null;
           } else {
             lastPersistedContentDocument.current = null;
           }
@@ -359,6 +522,10 @@ export function useMindMap({
           protectedUnboundSourcePath.current = null;
           protectedBrowserSourceNameRef.current = null;
           setProtectedBrowserSourceName(null);
+          recoveryCoordinator.adoptDocument(latestDocument.current);
+          recoveredWorkPendingRef.current = false;
+          recoveredBaselineDocumentRef.current = null;
+          setRecoveredWorkPending(false);
           lastPersistedContentDocument.current = freshPath
             ? latestDocument.current
             : null;
@@ -397,7 +564,7 @@ export function useMindMap({
     return () => {
       cancelled = true;
     };
-  }, [advanceDocumentSession, refreshBrowserDocuments]);
+  }, [advanceDocumentSession, recoveryCoordinator, refreshBrowserDocuments]);
 
   useEffect(() => {
     persistRecentDocuments(recentDocuments);
@@ -423,6 +590,24 @@ export function useMindMap({
     documentPath,
     snapshot.document.title,
     sourceDocumentPath,
+  ]);
+
+  useEffect(() => {
+    if (startupMode === "loading") return;
+    recoveryCoordinator.observeDocument(
+      snapshot.document,
+      {
+        documentPath,
+        protectedSourcePath: protectedUnboundSourcePath.current,
+        sourceHash: sourceHashRef.current,
+      },
+      documentSessionRef.current,
+    );
+  }, [
+    documentPath,
+    recoveryCoordinator,
+    snapshot.document,
+    startupMode,
   ]);
 
   useEffect(() => {
@@ -485,7 +670,17 @@ export function useMindMap({
     );
   }, []);
 
+  const getSaveVersion = useCallback(
+    () => latestDocument.current,
+    [],
+  );
+  const reportLifecycleSaveBlocked = useCallback(() => {
+    setLifecycleSaveBlockedRequest((current) => current + 1);
+  }, []);
+
   useApplicationSaveLifecycle({
+    getSaveVersion,
+    onSaveBlocked: reportLifecycleSaveBlocked,
     prepareForSave: prepareForLifecycleSave,
     saveBrowserNow,
     saveNow,
@@ -546,6 +741,10 @@ export function useMindMap({
       : null;
     protectedBrowserSourceNameRef.current = browserSourceName;
     setProtectedBrowserSourceName(browserSourceName);
+    recoveryCoordinator.adoptDocument(document);
+    recoveredWorkPendingRef.current = false;
+    recoveredBaselineDocumentRef.current = null;
+    setRecoveredWorkPending(false);
     skipNextSave.current =
       skipAutosave && !protectUnboundCopy ? document : null;
     lastPersistedContentDocument.current =
@@ -562,7 +761,7 @@ export function useMindMap({
         selection: singleSelection(document.rootId),
       }),
     );
-  }, [advanceDocumentSession]);
+  }, [advanceDocumentSession, recoveryCoordinator]);
 
   const replaceDocument = useCallback((document: MindMapDocument) => {
     installDocument(document, null, null, false);
@@ -587,6 +786,79 @@ export function useMindMap({
       browserSourceName,
     );
   }, [installDocument]);
+
+  const keepRecoveredWork = useCallback(async (): Promise<boolean> => {
+    if (!recoveredWorkPending) return true;
+    const saved = await saveNow();
+    if (!saved) return false;
+    recoveredWorkPendingRef.current = false;
+    recoveredBaselineDocumentRef.current = null;
+    setRecoveredWorkPending(false);
+    setStartupNotice(null);
+    return true;
+  }, [recoveredWorkPending, saveNow]);
+
+  const discardRecoveredWork = useCallback(async (): Promise<boolean> => {
+    if (!recoveredWorkPending || !isDesktopRuntime()) return false;
+    const sourcePath = documentPathRef.current;
+    try {
+      await discardDesktopPendingRecovery();
+      const loaded = sourcePath
+        ? await openLocalDocument(sourcePath)
+        : await loadLocalDocument();
+      if (!loaded.document) {
+        throw new Error("没有可重新打开的已保存内容");
+      }
+      installDocument(
+        loaded.document,
+        loaded.documentPath,
+        loaded.sourcePath,
+        true,
+        loaded.importedAsCopy,
+        loaded.sourceHash,
+        loaded.protectedSourceName ?? null,
+      );
+      recoveredWorkPendingRef.current = false;
+      recoveredBaselineDocumentRef.current = null;
+      setRecoveredWorkPending(false);
+      setStartupNotice("已放弃中断前的临时修改");
+      setSaveState("saved");
+      setSaveError(null);
+      return true;
+    } catch (error) {
+      setRecoveryError(
+        error instanceof Error
+          ? error.message
+          : "无法重新打开已保存的内容。",
+      );
+      return false;
+    }
+  }, [installDocument, recoveredWorkPending]);
+
+  const protectEditorDraft = useCallback((
+    target: RecoveryEditorTarget,
+    text: string,
+  ) => {
+    recoveryCoordinator.protectEditorDraft(
+      latestDocument.current,
+      {
+        documentPath: documentPathRef.current,
+        protectedSourcePath: protectedUnboundSourcePath.current,
+        sourceHash: sourceHashRef.current,
+      },
+      documentSessionRef.current,
+      target,
+      text,
+    );
+  }, [recoveryCoordinator]);
+
+  const finishEditorDraft = useCallback((cancelled: boolean) => {
+    recoveryCoordinator.finishEditorDraft(cancelled);
+  }, [recoveryCoordinator]);
+
+  const retryRecoveryProtection = useCallback(() => {
+    recoveryCoordinator.retryLastCheckpoint();
+  }, [recoveryCoordinator]);
 
   const restoreActiveDocument = useCallback(async (): Promise<void> => {
     const path = documentPathRef.current ?? sourceDocumentPathRef.current;
@@ -672,12 +944,19 @@ export function useMindMap({
     setSaveState("saving");
     setSaveError(null);
     setSaveWarning(null);
+    const target = latestDocument.current;
+    const targetSession = documentSessionRef.current;
     try {
-      const created = await createMarkdownDraft(latestDocument.current);
+      const created = await createMarkdownDraft(target);
+      if (targetSession !== documentSessionRef.current) {
+        await discardInternalDraft(created.documentPath);
+        await restoreActiveDocument();
+        return false;
+      }
       protectedUnboundSourceContent.current = null;
       protectedUnboundSourceDocument.current = null;
       protectedUnboundSourcePath.current = null;
-      lastPersistedContentDocument.current = latestDocument.current;
+      lastPersistedContentDocument.current = target;
       documentPathRef.current = created.documentPath;
       sourceDocumentPathRef.current = created.documentPath;
       sourceHashRef.current = created.sourceHash;
@@ -687,7 +966,7 @@ export function useMindMap({
         rememberRecentDocument(
           current,
           created.documentPath,
-          latestDocument.current.title,
+          target.title,
         ),
       );
       if (request === saveRequest.current) {
@@ -708,16 +987,24 @@ export function useMindMap({
       }
       return false;
     }
-  }, [saveNow]);
+  }, [restoreActiveDocument, saveNow]);
 
   const saveBeforeSwitch = useCallback((): Promise<boolean> => {
-    const queued = saveBeforeSwitchQueue.current.then(
-      performSaveBeforeSwitch,
-      performSaveBeforeSwitch,
-    );
+    const targetSession = documentSessionRef.current;
+    const saveLatest = async () => {
+      while (targetSession === documentSessionRef.current) {
+        prepareForLifecycleSave?.();
+        const target = latestDocument.current;
+        if (!await performSaveBeforeSwitch()) return false;
+        if (targetSession !== documentSessionRef.current) return false;
+        if (target === latestDocument.current) return true;
+      }
+      return false;
+    };
+    const queued = saveBeforeSwitchQueue.current.then(saveLatest, saveLatest);
     saveBeforeSwitchQueue.current = queued;
     return queued;
-  }, [performSaveBeforeSwitch]);
+  }, [performSaveBeforeSwitch, prepareForLifecycleSave]);
 
   const newDocument = useCallback(async (
     document: MindMapDocument = createBlankDocument(),
@@ -739,73 +1026,12 @@ export function useMindMap({
     path: string,
   ): Promise<boolean> => {
     const previousPath = documentPathRef.current;
-    let saved: {
-      sourceHash: string | null;
-      auxiliaryWarning?: string | null;
-    } | null = null;
-    if (
-      previousPath &&
-      previousPath !== path &&
-      isInternalDocumentPath(previousPath)
-    ) {
-      const currentSaved = await performSave(
-        latestDocument.current,
-        previousPath,
-      );
-      if (!currentSaved) return false;
-      const request = ++saveRequest.current;
-      setSaveState("saving");
-      setSaveError(null);
-      setSaveWarning(null);
-      try {
-        saved = await moveInternalDraft(previousPath, path);
-        if (request === saveRequest.current) {
-          setSaveState("saved");
-          setSaveError(null);
-          setSaveWarning(saved.auxiliaryWarning ?? null);
-        }
-      } catch (error) {
-        if (request === saveRequest.current) {
-          setSaveState("error");
-          setSaveWarning(null);
-          setSaveError(
-            error instanceof Error
-              ? error.message
-              : "无法移动本地草稿。",
-          );
-        }
-        return false;
-      }
-    } else {
-      saved = await performSave(
-        latestDocument.current,
-        path,
-        { newBinding: true },
-      );
-    }
-    if (saved) {
-      protectedUnboundSourceContent.current = null;
-      protectedUnboundSourceDocument.current = null;
-      protectedUnboundSourcePath.current = null;
-      protectedBrowserSourceNameRef.current = null;
-      setProtectedBrowserSourceName(null);
-      lastPersistedContentDocument.current = latestDocument.current;
-      documentPathRef.current = path;
-      sourceDocumentPathRef.current = path;
-      sourceHashRef.current = saved.sourceHash;
-      setDocumentPath(path);
-      setSourceDocumentPath(path);
-      setRecentDocuments((current) =>
-        rememberRecentDocument(
-          previousPath && previousPath !== path
-            ? forgetRecentDocument(current, previousPath)
-            : current,
-          path,
-          latestDocument.current.title,
-        ),
-      );
-    }
-    return Boolean(saved);
+    const movingDraft = previousPath && previousPath !== path && isInternalDocumentPath(previousPath);
+    return Boolean(await performSave(
+      latestDocument.current,
+      movingDraft ? previousPath : path,
+      movingDraft ? { moveTo: path } : { newBinding: true },
+    ));
   }, [performSave]);
 
   const moveRecentDocument = useCallback(async (
@@ -896,6 +1122,25 @@ export function useMindMap({
     });
   }, []);
 
+  const setFlowPositions = useCallback((
+    spaceId: string,
+    positions: Record<string, { x: number; y: number }>,
+  ) => {
+    setHistory((current) => {
+      const document = setDocumentFlowPositions(
+        current.present.document,
+        spaceId,
+        positions,
+      );
+      if (document === current.present.document) return current;
+      silentAutosaveDocuments.current.add(document);
+      return {
+        ...current,
+        present: { ...current.present, document },
+      };
+    });
+  }, []);
+
   const setMapSpaceViewport = useCallback((spaceId: string, viewport: Viewport) => {
     setHistory((current) => {
       const document = setDocumentMapSpaceViewport(
@@ -966,12 +1211,20 @@ export function useMindMap({
     saveState,
     saveError,
     saveWarning,
+    recoveryError,
+    recoveredWorkPending,
+    lifecycleSaveBlockedRequest,
     startupNotice,
     startupMode,
     recentDocuments,
     canUndo: history.past.length > 0,
     canRedo: history.future.length > 0,
     applyMutation,
+    protectEditorDraft,
+    finishEditorDraft,
+    keepRecoveredWork,
+    discardRecoveredWork,
+    retryRecoveryProtection,
     isDocumentSessionCurrent,
     newDocument,
     openDocument,
@@ -983,6 +1236,7 @@ export function useMindMap({
     selectNode,
     setSelection,
     setViewport,
+    setFlowPositions,
     setFlowViewport,
     setMapSpaceViewport,
     retrySave: saveNow,

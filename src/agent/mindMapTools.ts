@@ -228,6 +228,12 @@ function inputNodeCount(node: AgentTreeInput): number {
         "Every Agent-created tree item must be an object with text and optional children.",
       );
     }
+    if (Object.keys(current.node).some((key) => key !== "text" && key !== "children")) {
+      throw new MindMapToolError(
+        "invalid_operation",
+        "Agent-created nodes accept only text and optional children; unknown fields cannot be silently discarded.",
+      );
+    }
     if (visited.has(current.node)) {
       throw new MindMapToolError(
         "invalid_operation",

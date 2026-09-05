@@ -3,3 +3,10 @@ dist/
 src-tauri/target/
 .DS_Store
 *.log
+
+# agent tool caches
+.codex-ppt-build/
+.codex-ppt-output/
+.v2c/
+.video_agent/
+.zcode/

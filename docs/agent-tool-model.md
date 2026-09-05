@@ -12,6 +12,8 @@
 - 第一版面向本地 Markdown 文件，不连接账号、云数据库或远程同步服务。
 - 人类创建的 Map Space 与 Flow Space 都是持久内容，写入版本化 Markdown 区块并
   出现在 Agent 读取结果中；Space 类型是创建时确定的不可变属性。
+- 父画布中的 Space 概要子节点只是人类操作代理；它不进入普通大纲、不获得 `node:` ref，
+  Agent 仍通过锚点节点上的只读 `subspace` 字段读取真实内容。
 
 ## 共享内容边界
 
@@ -55,7 +57,9 @@
   `file_too_large`、`invalid_path`、`not_found`、`invalid_ref`、`invalid_operation`、
   `protected_source`、`too_deep`、`too_large`、`permission_denied`、`io_error` 与
   `request_too_large`。
-  MCP 输入 schema 拒绝仍使用协议标准的 invalid-params 错误。
+  MCP 输入 schema 拒绝仍使用协议标准的 invalid-params 错误。输入对象与操作对象拒绝
+  未知字段，递归创建节点也只接受 `text` 和 `children`；不能把拼错的 `dryRun`
+  或插入位置静默丢弃后提交写入。
 - 完整工具请求上限是 524,288 UTF-8 JSON bytes；这个累计预算覆盖整棵创建输入或
   全部 update operations，超限返回 `request_too_large`，并且在任何文件副作用前停止。
 

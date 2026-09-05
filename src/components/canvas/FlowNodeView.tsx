@@ -2,14 +2,35 @@ import {
   memo,
   useEffect,
   useRef,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { FlowLayoutNode } from "../../model/flowLayout";
-import type { FlowNode } from "../../types/mindmap";
+import type {
+  FlowNode,
+  FlowNodeKind,
+  FlowPlacementDirection,
+} from "../../types/mindmap";
+import {
+  isInputMethodKey,
+  markInputMethodComposition,
+} from "../../model/inputMethod";
+import { useTextEditorHistory } from "../../hooks/useTextEditorHistory";
+import { Icon } from "../icons/Icon";
 
 interface FlowNodeViewProps {
   draft: string;
   editing: boolean;
   node: FlowNode;
+  canStartConnection: boolean;
+  connectableTarget: boolean;
+  connectionTarget: boolean;
+  connectionTargetPort: FlowPlacementDirection | null;
+  connectingSource: boolean;
+  onAddNode: (
+    id: string,
+    kind: Extract<FlowNodeKind, "step" | "decision">,
+    direction: FlowPlacementDirection,
+  ) => void;
   onBeginEdit: (id: string) => void;
   onCancelEdit: () => void;
   onCommitEdit: (id: string, value: string) => void;
@@ -18,6 +39,19 @@ interface FlowNodeViewProps {
     nodeId: string,
     targetRect: { left: number; right: number; top: number; bottom: number },
     returnFocus: HTMLElement,
+  ) => void;
+  onConnectPointerDown: (
+    id: string,
+    port: FlowPlacementDirection,
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) => void;
+  onNodePointerDown: (
+    id: string,
+    event: ReactPointerEvent<HTMLButtonElement>,
+  ) => void;
+  onPortClick: (id: string, port: FlowPlacementDirection) => void;
+  onPortIntentChange: (
+    intent: { id: string; port: FlowPlacementDirection } | null,
   ) => void;
   onSelect: (id: string) => void;
   position: FlowLayoutNode;
@@ -28,29 +62,49 @@ export const FlowNodeView = memo(function FlowNodeView({
   draft,
   editing,
   node,
+  canStartConnection,
+  connectableTarget,
+  connectionTarget,
+  connectionTargetPort,
+  connectingSource,
+  onAddNode,
   onBeginEdit,
   onCancelEdit,
   onCommitEdit,
   onDraftChange,
   onOpenMenu,
+  onConnectPointerDown,
+  onNodePointerDown,
+  onPortClick,
+  onPortIntentChange,
   onSelect,
   position,
   selected,
 }: FlowNodeViewProps) {
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
+  const commitAfterCompositionRef = useRef(false);
   const editFinishedByKeyRef = useRef(false);
+  const editorHistory = useTextEditorHistory({
+    active: editing,
+    editorRef,
+    onRestore: onDraftChange,
+    sessionKey: editing ? node.id : null,
+  });
 
   useEffect(() => {
     if (!editing) return;
     editFinishedByKeyRef.current = false;
     editorRef.current?.focus({ preventScroll: true });
     editorRef.current?.select();
-  }, [editing]);
+    if (editorRef.current) editorHistory.reset(editorRef.current);
+  }, [editing, editorHistory.reset]);
 
   return (
     <div
-      className={`flow-node flow-node--${node.kind}${selected ? " is-selected" : ""}`}
+      className={`flow-node flow-node--${node.kind}${selected ? " is-selected" : ""}${connectableTarget ? " is-connectable-target" : ""}${connectionTarget ? " is-connection-target" : ""}${connectingSource ? " is-connecting-source" : ""}`}
+      data-connection-target-port={connectionTargetPort ?? undefined}
+      data-flow-node-id={node.id}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -94,23 +148,39 @@ export const FlowNodeView = memo(function FlowNodeView({
           ref={editorRef}
           rows={1}
           onBlur={(event) => {
-            if (!composingRef.current && !editFinishedByKeyRef.current) {
+            if (composingRef.current) {
+              commitAfterCompositionRef.current = true;
+              return;
+            }
+            if (!editFinishedByKeyRef.current) {
               onCommitEdit(node.id, event.currentTarget.value);
             }
           }}
           onChange={(event) => {
-            if (!composingRef.current) onDraftChange(event.target.value);
+            if (!composingRef.current) {
+              editorHistory.record(event.currentTarget);
+              onDraftChange(event.target.value);
+            }
           }}
           onCompositionEnd={(event) => {
             composingRef.current = false;
+            markInputMethodComposition(event.currentTarget, false);
+            editorHistory.record(event.currentTarget);
             onDraftChange(event.currentTarget.value);
+            if (commitAfterCompositionRef.current) {
+              commitAfterCompositionRef.current = false;
+              onCommitEdit(node.id, event.currentTarget.value);
+            }
           }}
-          onCompositionStart={() => {
+          onCompositionStart={(event) => {
             composingRef.current = true;
+            commitAfterCompositionRef.current = false;
+            markInputMethodComposition(event.currentTarget, true);
           }}
           onKeyDown={(event) => {
             event.stopPropagation();
-            if (composingRef.current || event.nativeEvent.isComposing) return;
+            if (isInputMethodKey(event.nativeEvent, composingRef.current)) return;
+            if (editorHistory.handleKeyDown(event)) return;
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
               editFinishedByKeyRef.current = true;
@@ -125,13 +195,98 @@ export const FlowNodeView = memo(function FlowNodeView({
       ) : (
         <button
           aria-pressed={selected}
-          className="flow-node__content"
+          className={`flow-node__content ${node.text ? "" : "is-placeholder"}`}
           onClick={() => onSelect(node.id)}
           onDoubleClick={() => onBeginEdit(node.id)}
+          onPointerDown={(event) => onNodePointerDown(node.id, event)}
           type="button"
         >
-          {node.text || "输入步骤"}
+          {node.text || (node.kind === "start" || node.kind === "end" ? "输入文字" : "输入步骤")}
         </button>
+      )}
+      {!editing && (
+        <div className="flow-node__ports">
+          {(["up", "right", "down", "left"] as const).map((port) => (
+            <button
+              aria-label={`从${port === "up" ? "上方" : port === "right" ? "右侧" : port === "down" ? "下方" : "左侧"}创建或拖线`}
+              className={`flow-node__port flow-node__port--${port}`}
+              key={port}
+              tabIndex={selected ? 0 : -1}
+              onClick={(event) => {
+                event.stopPropagation();
+                onPortClick(node.id, port);
+              }}
+              onBlur={() => onPortIntentChange(null)}
+              onFocus={() => onPortIntentChange({ id: node.id, port })}
+              onPointerLeave={() => onPortIntentChange(null)}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                onConnectPointerDown(node.id, port, event);
+              }}
+              title="点击创建步骤，拖动连接已有节点"
+              type="button"
+            >
+              <span
+                aria-hidden="true"
+                onPointerEnter={() => onPortIntentChange({ id: node.id, port })}
+                onPointerLeave={() => onPortIntentChange(null)}
+              />
+            </button>
+          ))}
+        </div>
+      )}
+      {selected && !editing && (
+        <>
+          <div
+            aria-label="快速添加流程节点"
+            className="flow-node__quick-actions"
+            onPointerDown={(event) => event.stopPropagation()}
+            role="group"
+          >
+            <button
+              aria-label="添加步骤"
+              onClick={() => onAddNode(node.id, "step", "right")}
+              title="添加步骤"
+              type="button"
+            >
+              <span aria-hidden="true" className="flow-node__quick-shape flow-node__quick-shape--step" />
+            </button>
+            <button
+              aria-label="添加判断"
+              onClick={() => onAddNode(node.id, "decision", "right")}
+              title="添加判断"
+              type="button"
+            >
+              <span aria-hidden="true" className="flow-node__quick-shape flow-node__quick-shape--decision" />
+            </button>
+            {canStartConnection && (
+              <button
+                aria-label="拖动连线"
+                className="flow-node__quick-connect"
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onConnectPointerDown(node.id, "right", event);
+                }}
+                title="拖动到已有节点以连接"
+                type="button"
+              >
+                <span aria-hidden="true" />
+              </button>
+            )}
+            <button
+              aria-label="更多流程操作"
+              onClick={(event) => {
+                const bounds = event.currentTarget.getBoundingClientRect();
+                onOpenMenu(node.id, bounds, event.currentTarget);
+              }}
+              title="更多"
+              type="button"
+            >
+              <Icon name="more" size={15} />
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

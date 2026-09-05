@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { useCanvasGestures } from "../../hooks/useCanvasGestures";
+import { hasActiveCanvasDrag } from "../../hooks/useDragInterruption";
 import { useNodeDrag } from "../../hooks/useNodeDrag";
 import {
   draftForNode,
@@ -17,6 +18,7 @@ import {
 } from "../../model/canvasRender";
 import {
   applyDraftWidth,
+  canvasContentBounds,
   computeLayout,
   mainBranchAnchorForCollapseTransition,
   shareStableLayout,
@@ -37,16 +39,25 @@ import {
   shareStableVisibleIds,
   viewportNeedsRenderWindowRefresh,
   visibleLayoutNodeIds,
+  visibleLayoutPortalAnchorIds,
 } from "../../model/viewportCulling";
 import {
   canvasZoomToFit,
   canvasZoomFromWheel,
   clampCanvasZoom,
   minCanvasZoom,
+  steppedCanvasZoom,
+  wheelPanPixelDelta,
 } from "../../model/zoom";
+import { clientPointToCanvas } from "../../model/nodeDrag";
+import {
+  mindNodeInteractionTarget,
+  type CanvasInteractionTarget,
+} from "../../model/canvasInteraction";
 import { Connectors } from "./Connectors";
 import { MindMapNode } from "./MindMapNode";
 import { SelectionMarquee } from "./SelectionMarquee";
+import { SubspacePortalNode } from "./SubspacePortalNode";
 import { createCanvasTextWidthMeasurer } from "./textMeasure";
 
 export interface CanvasHandle {
@@ -71,13 +82,18 @@ interface MindMapCanvasProps {
   onPasteStructured: (id: string, value: string) => boolean;
   onCommitEdit: (id: string, value: string) => void;
   onCancelEdit: (id: string) => void;
+  onEditTab?: (id: string, value: string, shiftKey: boolean) => void;
   onToggle: (id: string) => void;
   onOpenNodeContextMenu?: (
     id: string,
     targetRect: { left: number; right: number; top: number; bottom: number },
     returnFocus: HTMLElement,
+    targetKind: CanvasInteractionTarget["kind"],
   ) => void;
   onOpenSubspace?: (id: string) => void;
+  onMoveSubspace?: (sourceNodeId: string, targetNodeId: string) => void;
+  onSelectSubspace?: (anchorId: string) => void;
+  interactionTarget?: CanvasInteractionTarget;
   onAttachNode: (
     ids: readonly string[],
     parentId: string,
@@ -88,6 +104,13 @@ interface MindMapCanvasProps {
   ) => void;
   onViewportChange: (viewport: Viewport) => void;
   onZoomPreview?: (zoom: number) => void;
+  onOpenCanvasContextMenu?: (anchor: {
+    clientX: number;
+    clientY: number;
+    contentX: number;
+    contentY: number;
+  }) => void;
+  onCreateFloatingAt?: (contentX: number, contentY: number) => void;
 }
 
 export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
@@ -105,20 +128,31 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onPasteStructured,
       onCommitEdit,
       onCancelEdit,
+      onEditTab,
       onToggle,
       onOpenNodeContextMenu = () => undefined,
       onOpenSubspace = () => undefined,
+      onMoveSubspace = () => undefined,
+      onSelectSubspace = () => undefined,
+      interactionTarget = mindNodeInteractionTarget,
       onAttachNode,
       onDetachNode,
       onViewportChange,
       onZoomPreview,
+      onOpenCanvasContextMenu = () => undefined,
+      onCreateFloatingAt = () => undefined,
     },
     ref,
   ) {
+    const selectedSubspaceAnchorId =
+      interactionTarget.kind === "subspace-portal"
+        ? interactionTarget.anchorNodeId
+        : null;
     const containerRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
     const dragPreviewRef = useRef<HTMLDivElement>(null);
     const dragConnectorPreviewRef = useRef<SVGPathElement>(null);
+    const dragAnnouncementRef = useRef<HTMLDivElement>(null);
     const persistTimer = useRef<number | null>(null);
     const pendingViewportCommitRef = useRef<{
       emit: (viewport: Viewport) => void;
@@ -138,6 +172,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       layout: LayoutResult;
       selection: SelectionState;
     } | null>(null);
+    const lastSingleSelectionIdRef = useRef(
+      selection.selectedIds.length === 1 ? selection.primaryId : null,
+    );
     const draftHeightLayoutRef = useRef<{
       base: LayoutResult;
       editingId: string;
@@ -187,6 +224,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         document.floatingRoots,
         document.nodes,
         document.rootId,
+        document.spaces,
         measureTextWidth,
       ],
     );
@@ -267,19 +305,25 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           if (contentRef.current) {
             contentRef.current.style.transform = `translate3d(${live.x}px, ${live.y}px, 0) scale(${live.zoom})`;
           }
-          if (
-            !viewportNeedsRenderWindowRefresh(
-              renderViewportStateRef.current,
-              live,
-              containerSizeRef.current,
-            )
-          ) {
-            return;
-          }
-          renderViewportStateRef.current = live;
-          setRenderViewportState(live);
+          applyRenderWindowRefresh(live);
         });
       }
+    }, []);
+
+    // Render-window maintenance for one viewport sample. Committed viewports
+    // apply it synchronously so contraction never depends on a frame firing.
+    const applyRenderWindowRefresh = useCallback((live: Viewport) => {
+      if (
+        !viewportNeedsRenderWindowRefresh(
+          renderViewportStateRef.current,
+          live,
+          containerSizeRef.current,
+        )
+      ) {
+        return;
+      }
+      renderViewportStateRef.current = live;
+      setRenderViewportState(live);
     }, []);
 
     // The delayed pan commit must target the surface that was panned, not the
@@ -314,8 +358,31 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         persistTimer.current = null;
       }
       pendingViewportCommitRef.current = null;
+      renderViewport(next);
+      applyRenderWindowRefresh(next);
       onViewportChange(next);
-    }, [onViewportChange]);
+    }, [applyRenderWindowRefresh, onViewportChange, renderViewport]);
+
+    const zoomAtCenter = (nextZoom: number) => {
+      const bounds = containerRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const current = liveViewport.current;
+      const clamped = clampCanvasZoom(
+        nextZoom,
+        Math.min(current.zoom, minCanvasZoom),
+      );
+      const centerX = bounds.width / 2;
+      const centerY = bounds.height / 2;
+      const contentX = (centerX - current.x) / current.zoom;
+      const contentY = (centerY - current.y) / current.zoom;
+      const target = {
+        zoom: clamped,
+        x: centerX - contentX * clamped,
+        y: centerY - contentY * clamped,
+      };
+      onZoomPreview?.(clamped);
+      commitViewportImmediately(target);
+    };
 
     const handleWheel = useCallback((event: WheelEvent) => {
       const editor =
@@ -323,10 +390,18 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         event.target.classList.contains("mind-node__editor")
           ? event.target
           : null;
-      if (editor && editor.scrollHeight > editor.clientHeight) {
+      if (
+        editor &&
+        editor.scrollHeight > editor.clientHeight &&
+        !event.metaKey &&
+        !event.ctrlKey
+      ) {
         return;
       }
       event.preventDefault();
+      // Pointer-owned geometry is calculated from the viewport captured when
+      // the gesture begins. Wheel movement yields until that owner finishes.
+      if (hasActiveCanvasDrag()) return;
       if (event.metaKey || event.ctrlKey) {
         const bounds =
           containerBoundsRef.current ??
@@ -356,10 +431,18 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         return;
       }
       const current = liveViewport.current;
+      const panDelta = wheelPanPixelDelta(
+        event.deltaX,
+        event.deltaY,
+        event.deltaMode,
+        containerBoundsRef.current?.height ??
+          containerRef.current?.getBoundingClientRect().height ??
+          0,
+      );
       scheduleViewportCommit({
         ...current,
-        x: current.x - event.deltaX,
-        y: current.y - event.deltaY,
+        x: current.x - panDelta.x,
+        y: current.y - panDelta.y,
       });
     }, [onZoomPreview, scheduleViewportCommit]);
 
@@ -381,24 +464,20 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       onViewportChange: commitViewportImmediately,
     });
     activeSelectionRef.current = activeSelection;
-    const {
-      beginNodeDrag,
-      bindings: nodeDragBindings,
-      draggingId,
-      draggingIds,
-      dropTargetId,
-      dropPosition,
-      dropIntent,
-    } = useNodeDrag({
+    const { beginNodeDrag, bindings: nodeDragBindings } = useNodeDrag({
       containerRef,
+      containerBoundsRef,
       connectorPreviewRef: dragConnectorPreviewRef,
       previewRef: dragPreviewRef,
+      announcementRef: dragAnnouncementRef,
       panModifierHeld,
       document,
       layout,
       selection: activeSelection,
       editingId,
       liveViewport,
+      renderViewport,
+      commitViewport: commitViewportImmediately,
       onSelectionChange,
       onAttach: onAttachNode,
       onDetach: onDetachNode,
@@ -407,26 +486,15 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       () => new Set(activeSelection.selectedIds),
       [activeSelection.selectedIds],
     );
-    const draggingIdSet = useMemo(
-      () => new Set(draggingIds),
-      [draggingIds],
-    );
-    const pinnedIds = useMemo(() => {
-      const required = nodeIdsRequiredInDom(
+    const pinnedIds = useMemo(
+      () => nodeIdsRequiredInDom(
         activeSelection.primaryId,
         editingId,
-        draggingId,
-        dropTargetId,
-      );
-      draggingIds.forEach((id) => required.add(id));
-      return required;
-    }, [
-      activeSelection.primaryId,
-      draggingId,
-      draggingIds,
-      dropTargetId,
-      editingId,
-    ]);
+        null,
+        null,
+      ),
+      [activeSelection.primaryId, editingId],
+    );
     const renderedIds = useMemo(() => {
       const next = visibleLayoutNodeIds(
           layout,
@@ -438,33 +506,21 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       renderedIdsRef.current = stable;
       return stable;
     }, [containerSize, layout, pinnedIds, renderViewportState]);
-    const dragPreviewLayout = useMemo(() => {
-      const roots = draggingIds
-        .map((id) => layout.nodes[id])
-        .filter((node): node is NonNullable<typeof node> => Boolean(node));
-      if (roots.length === 0) return null;
-      const bounds = roots.reduce(
-        (current, node) => ({
-          minX: Math.min(current.minX, node.x),
-          minY: Math.min(current.minY, node.y),
-          maxX: Math.max(current.maxX, node.x + node.width),
-          maxY: Math.max(current.maxY, node.y + node.height),
-        }),
-        {
-          minX: Number.POSITIVE_INFINITY,
-          minY: Number.POSITIVE_INFINITY,
-          maxX: Number.NEGATIVE_INFINITY,
-          maxY: Number.NEGATIVE_INFINITY,
-        },
-      );
-      return {
-        minX: bounds.minX,
-        minY: bounds.minY,
-        width: bounds.maxX - bounds.minX,
-        height: bounds.maxY - bounds.minY,
-        roots,
-      };
-    }, [draggingIds, layout]);
+    const renderedPortalAnchorIds = useMemo(
+      () =>
+        visibleLayoutPortalAnchorIds(
+          layout,
+          renderViewportState,
+          containerSize,
+          selectedSubspaceAnchorId,
+        ),
+      [
+        containerSize,
+        layout,
+        renderViewportState,
+        selectedSubspaceAnchorId,
+      ],
+    );
     const handleNodeSelect = useCallback(
       (id: string, additive: boolean) => {
         onSelectionChange(
@@ -480,40 +536,21 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       [onSelectionChange],
     );
 
-    const zoomAtCenter = (nextZoom: number) => {
-      const bounds = containerRef.current?.getBoundingClientRect();
-      if (!bounds) return;
-      const current = liveViewport.current;
-      const clamped = clampCanvasZoom(
-        nextZoom,
-        Math.min(current.zoom, minCanvasZoom),
-      );
-      const centerX = bounds.width / 2;
-      const centerY = bounds.height / 2;
-      const contentX = (centerX - current.x) / current.zoom;
-      const contentY = (centerY - current.y) / current.zoom;
-      onZoomPreview?.(clamped);
-      commitViewportImmediately({
-        zoom: clamped,
-        x: centerX - contentX * clamped,
-        y: centerY - contentY * clamped,
-      });
-    };
-
     const fit = useCallback(() => {
       const bounds = containerRef.current?.getBoundingClientRect();
       if (!bounds) return;
+      const content = canvasContentBounds(layout);
       const zoom = canvasZoomToFit(
-        layout.width,
-        layout.height,
+        content.width,
+        content.height,
         bounds.width,
         bounds.height,
       );
       onZoomPreview?.(zoom);
       commitViewportImmediately({
         zoom,
-        x: (bounds.width - layout.width * zoom) / 2,
-        y: (bounds.height - layout.height * zoom) / 2,
+        x: (bounds.width - content.width * zoom) / 2 - content.minX * zoom,
+        y: (bounds.height - content.height * zoom) / 2 - content.minY * zoom,
       });
     }, [commitViewportImmediately, layout, onZoomPreview]);
 
@@ -532,7 +569,9 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     const focusSelected = () => {
       const bounds = containerRef.current?.getBoundingClientRect();
       const node = selection.primaryId
-        ? layout.nodes[selection.primaryId]
+        ? selectedSubspaceAnchorId === selection.primaryId
+          ? layout.portals?.[selection.primaryId]
+          : layout.nodes[selection.primaryId]
         : null;
       if (!bounds || !node) return;
       const current = liveViewport.current;
@@ -554,18 +593,32 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         focusCanvas: () =>
           containerRef.current?.focus({ preventScroll: true }),
         focusSelected,
-        zoomIn: () => zoomAtCenter(liveViewport.current.zoom + 0.1),
-        zoomOut: () => zoomAtCenter(liveViewport.current.zoom - 0.1),
+        zoomIn: () => zoomAtCenter(steppedCanvasZoom(liveViewport.current.zoom, 1)),
+        zoomOut: () => zoomAtCenter(steppedCanvasZoom(liveViewport.current.zoom, -1)),
         resetZoom: () => {
+          const bounds = containerRef.current?.getBoundingClientRect();
+          if (!bounds) return;
+          const current = liveViewport.current;
+          const anchorNode = selection.primaryId
+            ? selectedSubspaceAnchorId === selection.primaryId
+              ? layout.portals?.[selection.primaryId]
+              : layout.nodes[selection.primaryId]
+            : null;
+          const anchorX = anchorNode
+            ? anchorNode.x + anchorNode.width / 2
+            : (bounds.width / 2 - current.x) / current.zoom;
+          const anchorY = anchorNode
+            ? anchorNode.y + anchorNode.height / 2
+            : (bounds.height / 2 - current.y) / current.zoom;
           onZoomPreview?.(1);
           commitViewportImmediately({
             zoom: 1,
-            x: 96,
-            y: -24,
+            x: bounds.width / 2 - anchorX,
+            y: bounds.height / 2 - anchorY,
           });
         },
       }),
-      [commitViewportImmediately, fit, layout, onZoomPreview, selection.primaryId, viewport],
+      [fit, layout, onZoomPreview, selectedSubspaceAnchorId, selection.primaryId, viewport],
     );
 
     useLayoutEffect(() => {
@@ -639,20 +692,24 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     );
 
     useEffect(() => {
+      const selectedId =
+        selection.selectedIds.length === 1 ? selection.primaryId : null;
       const fitGuard = fitSelectionRevealGuardRef.current;
       if (fitGuard?.layout === layout && fitGuard.selection === selection) {
         fitSelectionRevealGuardRef.current = null;
+        lastSingleSelectionIdRef.current = selectedId;
         return;
       }
       fitSelectionRevealGuardRef.current = null;
-      if (
-        selection.selectedIds.length !== 1 ||
-        !selection.primaryId ||
-        selecting
-      ) {
-        return;
-      }
-      const node = layout.nodes[selection.primaryId];
+      if (selecting) return;
+      const previousSelectedId = lastSingleSelectionIdRef.current;
+      lastSingleSelectionIdRef.current = selectedId;
+      // A selection transition may reveal its new target for keyboard
+      // navigation. Layout refreshes, draft edits, and viewport persistence
+      // must never act as a watchdog that drags the user back to an already
+      // selected node after a deliberate pan.
+      if (!selectedId || selectedId === previousSelectedId) return;
+      const node = layout.nodes[selectedId];
       const bounds = containerRef.current?.getBoundingClientRect();
       if (!node || !bounds) return;
       const current = liveViewport.current;
@@ -670,24 +727,63 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       if (bottom > bounds.height - inset) y -= bottom - (bounds.height - inset);
 
       if (x !== current.x || y !== current.y) {
-        onViewportChange({ ...current, x, y });
+        commitViewportImmediately({ ...current, x, y });
       }
-    }, [layout, onViewportChange, selecting, selection]);
+    }, [commitViewportImmediately, layout, selecting, selection]);
+
+    const canvasPointFromClient = (clientX: number, clientY: number) =>
+      clientPointToCanvas(
+        clientX,
+        clientY,
+        containerBoundsRef.current ??
+          containerRef.current?.getBoundingClientRect() ?? {
+            left: 0,
+            top: 0,
+            width: 0,
+            height: 0,
+          },
+        liveViewport.current,
+      );
 
     return (
       <div
         aria-label="思维导图画布"
-        className={`${className}${draggingId ? " is-node-dragging" : ""}`}
+        className={className}
         onClickCapture={(event) => {
           nodeDragBindings.onClickCapture(event);
           if (!event.defaultPrevented) bindings.onClickCapture(event);
+        }}
+        onContextMenu={(event) => {
+          if (event.target !== event.currentTarget) return;
+          event.preventDefault();
+          const point = canvasPointFromClient(
+            event.clientX,
+            event.clientY,
+          );
+          onOpenCanvasContextMenu({
+            clientX: event.clientX,
+            clientY: event.clientY,
+            contentX: point.x,
+            contentY: point.y,
+          });
+        }}
+        onDoubleClick={(event) => {
+          if (event.target !== event.currentTarget) return;
+          const point = canvasPointFromClient(
+            event.clientX,
+            event.clientY,
+          );
+          onCreateFloatingAt(point.x, point.y);
         }}
         onPointerCancel={(event) => {
           nodeDragBindings.onPointerCancel(event);
           bindings.onPointerCancel(event);
         }}
         onPointerDown={bindings.onPointerDown}
-        onLostPointerCapture={nodeDragBindings.onLostPointerCapture}
+        onLostPointerCapture={(event) => {
+          nodeDragBindings.onLostPointerCapture(event);
+          bindings.onLostPointerCapture(event);
+        }}
         onPointerMove={(event) => {
           nodeDragBindings.onPointerMove(event);
           bindings.onPointerMove(event);
@@ -713,6 +809,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           <Connectors
             document={document}
             layout={layout}
+            renderedPortalAnchorIds={renderedPortalAnchorIds}
             renderedIds={renderedIds}
           />
           <svg
@@ -729,12 +826,11 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           </svg>
           {renderedIds.map((id) => {
             const node = document.nodes[id];
-            const selected = selectedIdSet.has(id);
+            const selected =
+              selectedIdSet.has(id) && selectedSubspaceAnchorId !== id;
             return (
               <MindMapNode
                 draft={draftForNode(id, editingId, draft)}
-                dragging={draggingIdSet.has(id)}
-                dropTarget={dropTargetId === id}
                 editing={editingId === id}
                 key={id}
                 layout={layout.nodes[id]}
@@ -743,80 +839,79 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
                 onCancelEdit={onCancelEdit}
                 onCommitEdit={onCommitEdit}
                 onDraftChange={onDraftChange}
-                onOpenContextMenu={onOpenNodeContextMenu}
+                onEditTab={onEditTab}
+                onOpenContextMenu={(id, targetRect, returnFocus) =>
+                  onOpenNodeContextMenu(
+                    id,
+                    targetRect,
+                    returnFocus,
+                    "mind-node",
+                  )
+                }
                 onDragPointerDown={beginNodeDrag}
                 onPasteStructured={onPasteStructured}
                 onSelect={handleNodeSelect}
                 onToggle={onToggle}
-                onOpenSubspace={onOpenSubspace}
-                portalSummary={
-                  node.subspaceId && document.spaces?.[node.subspaceId]
-                    ? document.spaces[node.subspaceId].type === "map"
-                      ? `思维图 · ${Object.keys(document.spaces[node.subspaceId].nodes).length} 个节点`
-                      : `流程 · ${Object.keys(document.spaces[node.subspaceId].nodes).length} 步`
-                    : undefined
+                primary={
+                  activeSelection.primaryId === id &&
+                  selectedSubspaceAnchorId !== id
                 }
-                primary={activeSelection.primaryId === id}
                 selected={selected}
               />
             );
           })}
-          {draggingId && dragPreviewLayout && (
-            <div
-              aria-hidden="true"
-              className="node-drag-preview"
-              ref={dragPreviewRef}
-              style={{
-                height: dragPreviewLayout.height,
-                width: dragPreviewLayout.width,
-              }}
-            >
-              {dragPreviewLayout.roots.map((root) => (
-                <div
-                  className="node-drag-preview__item"
-                  key={root.id}
-                  style={{
-                    height: root.height,
-                    left: root.x - dragPreviewLayout.minX,
-                    top: root.y - dragPreviewLayout.minY,
-                    width: root.width,
-                    fontSize:
-                      root.rootKind === "main"
-                        ? 19
-                        : root.rootKind === "floating"
-                          ? 17
-                          : root.depth === 1
-                            ? 16
-                            : 15,
-                    fontWeight:
-                      root.rootKind === "main"
-                        ? 580
-                        : root.rootKind === "floating"
-                          ? 650
-                          : root.depth === 1
-                            ? 620
-                            : 530,
-                  }}
-                >
-                  {document.nodes[root.id]?.text}
-                </div>
-              ))}
-            </div>
-          )}
+          {renderedPortalAnchorIds.map((anchorId) => {
+            const subspaceId = document.nodes[anchorId]?.subspaceId;
+            const space = subspaceId
+              ? document.spaces?.[subspaceId]
+              : undefined;
+            const portalLayout = layout.portals?.[anchorId];
+            if (!space || !portalLayout) return null;
+            return (
+              <SubspacePortalNode
+                anchorId={anchorId}
+                canMoveTo={(targetId) =>
+                  targetId !== anchorId &&
+                  Boolean(document.nodes[targetId]) &&
+                  !document.nodes[targetId].subspaceId
+                }
+                key={`subspace:${anchorId}`}
+                layout={portalLayout}
+                onMove={onMoveSubspace}
+                onOpen={onOpenSubspace}
+                onOpenContextMenu={(id, targetRect, returnFocus) =>
+                  onOpenNodeContextMenu(
+                    id,
+                    targetRect,
+                    returnFocus,
+                    "subspace-portal",
+                  )
+                }
+                onSelect={onSelectSubspace}
+                selected={selectedSubspaceAnchorId === anchorId}
+                space={space}
+                zoom={document.viewport.zoom}
+              />
+            );
+          })}
+          <div
+            aria-hidden="true"
+            className="node-drag-preview"
+            hidden
+            ref={dragPreviewRef}
+          />
         </div>
         {marqueeRect && <SelectionMarquee rect={marqueeRect} />}
-        <div aria-live="polite" className="sr-only">
-          {draggingId
-            ? dropTargetId
-              ? `松手将${draggingIds.length > 1 ? `${draggingIds.length} 个分支` : "分支"}移入“${document.nodes[dropTargetId]?.text || "未命名节点"}”${dropPosition === null ? "" : `，排在第 ${dropPosition + 1} 个`}`
-              : dropIntent === "detach"
-                ? `松手将${draggingIds.length > 1 ? `${draggingIds.length} 个分支` : "分支"}移到画布空白处`
-                : "继续拖动以选择上级节点"
-            : selection.selectedIds.length === 0
-              ? "未选择节点"
-              : selection.selectedIds.length === 1
-                ? "已选择 1 个节点"
-                : `已选择 ${selection.selectedIds.length} 个节点`}
+        <div
+          aria-live="polite"
+          className="sr-only"
+          ref={dragAnnouncementRef}
+        >
+          {selection.selectedIds.length === 0
+            ? "未选择节点"
+            : selection.selectedIds.length === 1
+              ? "已选择 1 个节点"
+              : `已选择 ${selection.selectedIds.length} 个节点`}
         </div>
       </div>
     );

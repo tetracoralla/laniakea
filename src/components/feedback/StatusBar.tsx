@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { AppNotice } from "../../types/feedback";
 import type { SaveState } from "../../types/mindmap";
+import { MOTION } from "../../styles/tokens";
 
 interface StatusBarProps {
   saveState: SaveState;
@@ -26,9 +27,12 @@ interface DisplayedSaveStatus {
   state: Exclude<SaveState, "saved">;
 }
 
-const contentExitDuration = 160;
-const shellExitDuration = 240;
+// Exit timers come from the shared token sheet; the shell timer must stay at
+// or beyond the width transition (--motion-standard) it waits for.
+const contentExitDuration = MOTION.statusContentExitMs;
+const shellExitDuration = MOTION.statusShellExitMs;
 const collapsedShellWidth = 38;
+const saveProgressDelay = 1000;
 
 function useAnimatedPresence<T>(value: T | null) {
   const [displayedValue, setDisplayedValue] = useState<T | null>(value);
@@ -136,7 +140,7 @@ export function StatusBar({
     }
     const timer = window.setTimeout(() => {
       setProgressVisible(true);
-    }, 1000);
+    }, saveProgressDelay);
     return () => window.clearTimeout(timer);
   }, [saveState]);
 
@@ -183,6 +187,8 @@ export function StatusBar({
     displayedNotice?.actionLabel,
     displayedNotice?.message,
     displayedNotice?.onAction,
+    displayedNotice?.onSecondaryAction,
+    displayedNotice?.secondaryActionLabel,
     displayedSaveStatus,
     measureWidth,
     saveLabel,
@@ -196,7 +202,14 @@ export function StatusBar({
 
   const runNoticeAction = () => {
     displayedNotice?.onAction?.();
-    onNoticeActionComplete();
+    // A persistent decision bar stays until its action resolves the pending
+    // state (which clears it) or fails (which brings it back).
+    if (!displayedNotice?.persistent) onNoticeActionComplete();
+  };
+
+  const runNoticeSecondaryAction = () => {
+    displayedNotice?.onSecondaryAction?.();
+    if (!displayedNotice?.persistent) onNoticeActionComplete();
   };
 
   const renderedSaveState = displayedSaveStatus?.state;
@@ -279,6 +292,16 @@ export function StatusBar({
                 {displayedNotice.actionLabel}
               </button>
             )}
+            {displayedNotice.secondaryActionLabel &&
+              displayedNotice.onSecondaryAction && (
+                <button
+                  className="status-bar__action status-bar__action--secondary"
+                  onClick={runNoticeSecondaryAction}
+                  type="button"
+                >
+                  {displayedNotice.secondaryActionLabel}
+                </button>
+              )}
           </span>
         )}
       </div>

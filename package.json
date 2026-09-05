@@ -1,7 +1,7 @@
 {
   "name": "laniakea",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "快速、轻量的思维导图",
   "author": "openAdam",
   "license": "Apache-2.0",
@@ -22,14 +22,17 @@
     "desktop:build": "tauri build",
     "test": "vitest run --maxWorkers=2",
     "test:watch": "vitest",
-    "check:regression": "npm test && npm run build:web && npm run check:mcp && npm run check:release-hygiene && cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:regression": "npm run check:graph-view-compiler && npm test && npm run build:web && npm run check:mcp && npm run check:release-hygiene && cargo test --manifest-path src-tauri/Cargo.toml",
     "check:release-hygiene": "node scripts/checkReleaseHygiene.mjs",
+    "check:graph-view-compiler": "node scripts/checkGraphViewCompiler.mjs",
     "measure:overview-drag": "npm run build:web && node scripts/measureOverviewDrag.mjs",
+    "measure:bundle": "node scripts/measureBundle.mjs",
     "check:desktop-runtime": "./script/build_and_run.sh --verify",
     "preview": "vite preview"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@openadam/graph-view-compiler": "0.5.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "mdast-util-to-string": "^4.0.0",

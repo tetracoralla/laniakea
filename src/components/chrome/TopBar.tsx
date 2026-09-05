@@ -5,12 +5,20 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { RecentDocument } from "../../persistence/recentDocuments";
+import type { SaveState } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
+import { moveMenuFocus } from "../menu/menuKeyboard";
+import {
+  isInputMethodKey,
+  markInputMethodComposition,
+} from "../../model/inputMethod";
 import { DocumentSwitcher } from "./DocumentSwitcher";
 
 interface TopBarProps {
   title: string;
   onTitleChange: (title: string) => void;
+  onTitleDraftChange?: (title: string) => void;
+  onTitleDraftFinish?: (cancelled: boolean) => void;
   onSearch: (returnFocus: HTMLElement) => void;
   onNew: () => void;
   onImport: () => void;
@@ -19,10 +27,12 @@ interface TopBarProps {
   onCopyMarkdown: () => void;
   onShortcutSettings: (returnFocus: HTMLElement) => void;
   currentDocumentPath: string | null;
+  currentSourceDocumentPath?: string | null;
   recentDocuments: RecentDocument[];
   onOpenRecent: (path: string) => void;
+  onRevealCurrent: (path: string) => void;
   onRevealRecent: (path: string) => void;
-  onCopyRecentPath: (path: string) => void;
+  onCopyDocumentPath: (path: string) => void;
   onMoveRecent: (path: string) => void;
   onForgetRecent: (path: string) => void;
   onDeleteDocument?: (path: string) => void;
@@ -31,11 +41,14 @@ interface TopBarProps {
   onRestoreFullBackup?: () => void;
   spacePath?: Array<{ id: string; label: string; typeLabel: string }>;
   onNavigateBack?: () => void;
+  saveState?: SaveState;
 }
 
 export function TopBar({
   title,
   onTitleChange,
+  onTitleDraftChange = () => undefined,
+  onTitleDraftFinish = () => undefined,
   onSearch,
   onNew,
   onImport,
@@ -44,10 +57,12 @@ export function TopBar({
   onCopyMarkdown,
   onShortcutSettings,
   currentDocumentPath,
+  currentSourceDocumentPath = null,
   recentDocuments,
   onOpenRecent,
+  onRevealCurrent,
   onRevealRecent,
-  onCopyRecentPath,
+  onCopyDocumentPath,
   onMoveRecent,
   onForgetRecent,
   onDeleteDocument,
@@ -56,6 +71,7 @@ export function TopBar({
   onRestoreFullBackup,
   spacePath = [],
   onNavigateBack,
+  saveState = "saved",
 }: TopBarProps) {
   const [draft, setDraft] = useState(title);
   const [openMenu, setOpenMenu] = useState<"documents" | "more" | null>(
@@ -65,6 +81,8 @@ export function TopBar({
   const currentSpace = spacePath[spacePath.length - 1];
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const composingTitleRef = useRef(false);
+  const cancelTitleRef = useRef(false);
 
   useEffect(() => setDraft(title), [title]);
 
@@ -112,8 +130,6 @@ export function TopBar({
   };
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const items = menuItems();
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -124,22 +140,10 @@ export function TopBar({
       setOpenMenu(null);
       return;
     }
-    if (
-      !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) ||
-      items.length === 0
-    ) {
-      return;
+    const menu = menuRef.current;
+    if (menu && moveMenuFocus(menu, event.key)) {
+      event.preventDefault();
     }
-    event.preventDefault();
-    const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? items.length - 1
-          : event.key === "ArrowDown"
-            ? (Math.max(index, -1) + 1) % items.length
-            : (index <= 0 ? items.length : index) - 1;
-    items[nextIndex]?.focus();
   };
 
   const runMenuAction = (
@@ -150,9 +154,16 @@ export function TopBar({
     action();
   };
 
-  const commitTitle = () => {
-    if (draft.trim() !== title) onTitleChange(draft);
+  const finishTitle = (value: string) => {
+    if (cancelTitleRef.current) {
+      cancelTitleRef.current = false;
+      setDraft(title);
+      onTitleDraftFinish(true);
+      return;
+    }
+    if (value.trim() !== title) onTitleChange(value);
     else setDraft(title);
+    onTitleDraftFinish(false);
   };
 
   return (
@@ -165,33 +176,75 @@ export function TopBar({
             onClick={onNavigateBack}
             type="button"
           >
-            <span aria-hidden="true">‹</span>
+            <Icon name="chevron" size={16} />
           </button>
         )}
         <label className="document-title">
           <span className="sr-only">文档标题</span>
           <input
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={commitTitle}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              if (!composingTitleRef.current) {
+                onTitleDraftChange(event.target.value);
+              }
+            }}
+            onBlur={(event) => finishTitle(event.currentTarget.value)}
+            onCompositionEnd={(event) => {
+              composingTitleRef.current = false;
+              markInputMethodComposition(event.currentTarget, false);
+              setDraft(event.currentTarget.value);
+              onTitleDraftChange(event.currentTarget.value);
+            }}
+            onCompositionStart={(event) => {
+              composingTitleRef.current = true;
+              cancelTitleRef.current = false;
+              markInputMethodComposition(event.currentTarget, true);
+            }}
+            onFocus={() => {
+              cancelTitleRef.current = false;
+            }}
             onKeyDown={(event) => {
+              if (isInputMethodKey(event.nativeEvent, composingTitleRef.current)) return;
               if (event.key === "Enter") event.currentTarget.blur();
               if (event.key === "Escape") {
+                cancelTitleRef.current = true;
                 setDraft(title);
                 event.currentTarget.blur();
               }
             }}
           />
+          {(saveState === "saving" || saveState === "error") && (
+            <span
+              aria-label={
+                saveState === "error" ? "保存失败" : "有未保存的更改"
+              }
+              className={`document-title__dirty${
+                saveState === "error"
+                  ? " document-title__dirty--error"
+                  : ""
+              }`}
+              role="img"
+              title={
+                saveState === "error"
+                  ? "保存失败，可在左下角状态条重试"
+                  : "有未保存的更改"
+              }
+            />
+          )}
         </label>
         <DocumentSwitcher
           currentPath={currentDocumentPath}
+          currentSourcePath={currentSourceDocumentPath}
+          currentTitle={title}
           onOpenChange={(open) =>
             setOpenMenu(open ? "documents" : null)
           }
           onOpenFile={onImport}
           onOpenRecent={onOpenRecent}
+          onRevealCurrent={onRevealCurrent}
           onRevealRecent={onRevealRecent}
-          onCopyRecentPath={onCopyRecentPath}
+          onCopyDocumentPath={onCopyDocumentPath}
           onForgetRecent={onForgetRecent}
           onDeleteDocument={onDeleteDocument}
           onMoveRecent={onMoveRecent}

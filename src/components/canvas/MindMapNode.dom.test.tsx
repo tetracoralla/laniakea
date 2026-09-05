@@ -4,6 +4,7 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createBlankDocument, createSeedDocument } from "../../data/seed";
+import { useKeyboardCommands } from "../../hooks/useKeyboardCommands";
 import { computeLayout } from "../../model/layout";
 import { MindMapNode } from "./MindMapNode";
 
@@ -42,8 +43,6 @@ describe("node editor input method handling", () => {
       return (
         <MindMapNode
           draft={draft}
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}
@@ -147,6 +146,57 @@ describe("node editor input method handling", () => {
     ).toBe("中文 English 后续");
   });
 
+  it("waits for compositionend after blur and commits only the final text", async () => {
+    const mindMapDocument = createBlankDocument();
+    const node = mindMapDocument.nodes[mindMapDocument.rootId];
+    const layout = computeLayout(mindMapDocument).nodes[mindMapDocument.rootId];
+    const onCommitEdit = vi.fn();
+
+    function Harness() {
+      const [draft, setDraft] = useState(node.text);
+      const [editing, setEditing] = useState(true);
+      return editing ? (
+        <MindMapNode
+          draft={draft}
+          editing
+          layout={layout}
+          node={node}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onCommitEdit={(id, value) => {
+            onCommitEdit(id, value);
+            setEditing(false);
+          }}
+          onDraftChange={setDraft}
+          onDragPointerDown={() => undefined}
+          onPasteStructured={() => false}
+          onSelect={() => undefined}
+          onToggle={() => undefined}
+          primary
+          selected
+        />
+      ) : <output>{draft}</output>;
+    }
+
+    await act(async () => root.render(<Harness />));
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => {
+      editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      editor.value = "zhong wen";
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.blur();
+    });
+    expect(onCommitEdit).not.toHaveBeenCalled();
+    expect(container.querySelector("textarea")).toBe(editor);
+
+    await act(async () => {
+      editor.value = "中文";
+      editor.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    });
+    expect(onCommitEdit).toHaveBeenCalledOnce();
+    expect(onCommitEdit).toHaveBeenCalledWith(node.id, "中文");
+  });
+
   it("keeps the native draft and caret stable while canvas sizing catches up", async () => {
     const mindMapDocument = createBlankDocument();
     const node = mindMapDocument.nodes[mindMapDocument.rootId];
@@ -158,8 +208,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft="初始"
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}
@@ -200,6 +248,122 @@ describe("node editor input method handling", () => {
     focus.mockRestore();
   });
 
+  it("owns undo and redo inside one edit session and discards that history on exit", async () => {
+    const mindMapDocument = createBlankDocument();
+    const baseNode = mindMapDocument.nodes[mindMapDocument.rootId];
+    const layout = computeLayout(mindMapDocument).nodes[mindMapDocument.rootId];
+    const onCanvasCommand = vi.fn();
+
+    function Harness() {
+      const [draft, setDraft] = useState(baseNode.text);
+      const [editing, setEditing] = useState(true);
+      useKeyboardCommands({
+        enabled: true,
+        selectionEnabled: true,
+        onBeginTyping: vi.fn(),
+        onCommand: onCanvasCommand,
+        onPasteText: vi.fn(),
+      });
+      return (
+        <MindMapNode
+          draft={draft}
+          editing={editing}
+          layout={layout}
+          node={{ ...baseNode, text: draft }}
+          onBeginEdit={() => setEditing(true)}
+          onCancelEdit={() => setEditing(false)}
+          onCommitEdit={(_id, value) => {
+            setDraft(value);
+            setEditing(false);
+          }}
+          onDraftChange={setDraft}
+          onDragPointerDown={() => undefined}
+          onPasteStructured={() => false}
+          onSelect={() => undefined}
+          onToggle={() => undefined}
+          primary
+          selected
+        />
+      );
+    }
+
+    await act(async () => root.render(<Harness />));
+    const editor = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    const setEditorValue = (value: string) => {
+      Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set?.call(editor, value);
+      editor.setSelectionRange(value.length, value.length);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+
+    await act(async () => {
+      setEditorValue("第一版");
+      setEditorValue("第二版");
+    });
+
+    const undoEvent = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      code: "KeyZ",
+      key: "z",
+      metaKey: true,
+    });
+    await act(async () => editor.dispatchEvent(undoEvent));
+    expect(undoEvent.defaultPrevented).toBe(true);
+    expect(editor.value).toBe("第一版");
+
+    const redoEvent = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      code: "KeyZ",
+      key: "z",
+      metaKey: true,
+      shiftKey: true,
+    });
+    await act(async () => editor.dispatchEvent(redoEvent));
+    expect(redoEvent.defaultPrevented).toBe(true);
+    expect(editor.value).toBe("第二版");
+    expect(onCanvasCommand).not.toHaveBeenCalled();
+
+    await act(async () => {
+      editor.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        key: "Enter",
+      }));
+    });
+    const canvasUndoEvent = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "z",
+      metaKey: true,
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".mind-node__content")!
+        .dispatchEvent(canvasUndoEvent);
+    });
+    expect(onCanvasCommand).toHaveBeenLastCalledWith("history.undo");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".mind-node__content")!
+        .dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+
+    const nextEditor = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    const nextUndoEvent = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      code: "KeyZ",
+      key: "z",
+      metaKey: true,
+    });
+    await act(async () => nextEditor.dispatchEvent(nextUndoEvent));
+    expect(nextUndoEvent.defaultPrevented).toBe(true);
+    expect(nextEditor.value).toBe("第二版");
+    expect(onCanvasCommand).toHaveBeenCalledOnce();
+  });
+
   it("keeps existing text visible while an input-method composition is pending", async () => {
     const mindMapDocument = createBlankDocument();
     const node = mindMapDocument.nodes[mindMapDocument.rootId];
@@ -210,8 +374,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft="已有文字"
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}
@@ -284,8 +446,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft=""
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}
@@ -337,8 +497,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft=""
-          dragging={false}
-          dropTarget={false}
           editing={false}
           layout={layout}
           node={node}
@@ -381,8 +539,6 @@ describe("node editor input method handling", () => {
       root.render(
         <MindMapNode
           draft={node.text}
-          dragging={false}
-          dropTarget={false}
           editing
           layout={layout}
           node={node}
@@ -405,5 +561,8 @@ describe("node editor input method handling", () => {
     );
     expect(branch?.classList.contains("mind-node--branch")).toBe(true);
     expect(branch?.classList.contains("is-editing")).toBe(true);
+    expect(branch?.style.getPropertyValue("--node-padding-inline")).toBe(
+      "20px",
+    );
   });
 });

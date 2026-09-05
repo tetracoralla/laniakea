@@ -14,6 +14,7 @@ export const shallowNodeDropVerticalReach = 72;
 export const nodeDropOverlapAllowance = 6;
 export const nodeDropInvalidSubtreeRadius = 16;
 export const nodeDropSpatialBucketSize = 256;
+export const nodeDropMaximumPreciseScale = 8;
 
 export interface CanvasBounds {
   left: number;
@@ -46,24 +47,33 @@ export interface NodeDropProbe {
 
 export interface NodeDropSpatialIndex {
   bucketSize: number;
-  buckets: Map<number, number[]>;
+  buckets: Map<string, number[]>;
   visibleIds: readonly string[];
+}
+
+function spatialBucketKey(x: number, y: number): string {
+  return `${x}:${y}`;
 }
 
 export function buildNodeDropSpatialIndex(
   layout: LayoutResult,
   bucketSize = nodeDropSpatialBucketSize,
 ): NodeDropSpatialIndex {
-  const buckets = new Map<number, number[]>();
+  const buckets = new Map<string, number[]>();
   layout.visibleIds.forEach((id, visibleIndex) => {
     const node = layout.nodes[id];
     if (!node) return;
-    const firstBucket = Math.floor(node.y / bucketSize);
-    const lastBucket = Math.floor((node.y + node.height) / bucketSize);
-    for (let bucket = firstBucket; bucket <= lastBucket; bucket += 1) {
-      const entries = buckets.get(bucket);
-      if (entries) entries.push(visibleIndex);
-      else buckets.set(bucket, [visibleIndex]);
+    const firstX = Math.floor(node.x / bucketSize);
+    const lastX = Math.floor((node.x + node.width) / bucketSize);
+    const firstY = Math.floor(node.y / bucketSize);
+    const lastY = Math.floor((node.y + node.height) / bucketSize);
+    for (let x = firstX; x <= lastX; x += 1) {
+      for (let y = firstY; y <= lastY; y += 1) {
+        const key = spatialBucketKey(x, y);
+        const entries = buckets.get(key);
+        if (entries) entries.push(visibleIndex);
+        else buckets.set(key, [visibleIndex]);
+      }
     }
   });
   return { bucketSize, buckets, visibleIds: layout.visibleIds };
@@ -74,16 +84,25 @@ export function nodeDropCandidateIds(
   probe: NodeDropProbe,
   screenToCanvasScale = 1,
 ): string[] {
-  const reach = shallowNodeDropVerticalReach * screenToCanvasScale;
-  const firstBucket = Math.floor((probe.y - reach) / index.bucketSize);
-  const lastBucket = Math.floor(
-    (probe.y + probe.height + reach) / index.bucketSize,
+  if (screenToCanvasScale >= nodeDropMaximumPreciseScale) return [];
+  const horizontalReach = shallowNodeDropForwardReach * screenToCanvasScale;
+  const verticalReach = shallowNodeDropVerticalReach * screenToCanvasScale;
+  const firstX = Math.floor((probe.x - horizontalReach) / index.bucketSize);
+  const lastX = Math.floor(
+    (probe.x + probe.width + nodeDropInvalidSubtreeRadius * screenToCanvasScale) /
+      index.bucketSize,
+  );
+  const firstY = Math.floor((probe.y - verticalReach) / index.bucketSize);
+  const lastY = Math.floor(
+    (probe.y + probe.height + verticalReach) / index.bucketSize,
   );
   const visibleIndexes = new Set<number>();
-  for (let bucket = firstBucket; bucket <= lastBucket; bucket += 1) {
-    index.buckets.get(bucket)?.forEach((visibleIndex) => {
-      visibleIndexes.add(visibleIndex);
-    });
+  for (let x = firstX; x <= lastX; x += 1) {
+    for (let y = firstY; y <= lastY; y += 1) {
+      index.buckets.get(spatialBucketKey(x, y))?.forEach((visibleIndex) => {
+        visibleIndexes.add(visibleIndex);
+      });
+    }
   }
   return [...visibleIndexes]
     .sort((left, right) => left - right)
@@ -234,6 +253,7 @@ export function nodeDropParentHitTest(
   excludedIds: ReadonlySet<string> = new Set(),
   screenToCanvasScale = 1,
   candidateIds: readonly string[] = layout.visibleIds,
+  preferredTargetId: string | null = null,
 ): NodeDropHit {
   let closestId: string | null = null;
   let closestSquaredDistance = Number.POSITIVE_INFINITY;
@@ -279,9 +299,17 @@ export function nodeDropParentHitTest(
       Math.max(0, forwardGap) ** 2 + verticalGap ** 2;
     const squaredDistanceToCenter = squaredCenterDistance(probe, node);
     if (
-      squaredDistance > closestSquaredDistance ||
-      (squaredDistance === closestSquaredDistance &&
-        squaredDistanceToCenter >= closestSquaredCenterDistance)
+      preferredTargetId !== null &&
+      closestId === preferredTargetId &&
+      id !== preferredTargetId
+    ) {
+      continue;
+    }
+    if (
+      id !== preferredTargetId &&
+      (squaredDistance > closestSquaredDistance ||
+        (squaredDistance === closestSquaredDistance &&
+          squaredDistanceToCenter >= closestSquaredCenterDistance))
     ) {
       continue;
     }

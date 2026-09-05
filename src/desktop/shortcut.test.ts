@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   displayGlobalShortcut,
   shortcutFromKeyboardEvent,
 } from "./shortcut";
 
 describe("desktop global shortcut recording", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("records a macOS command combination in Tauri syntax", () => {
     expect(
       shortcutFromKeyboardEvent({
@@ -14,7 +16,7 @@ describe("desktop global shortcut recording", () => {
         key: "j",
         metaKey: true,
         shiftKey: true,
-      }),
+      }, true),
     ).toBe("CommandOrControl+Shift+J");
   });
 
@@ -27,7 +29,7 @@ describe("desktop global shortcut recording", () => {
         key: "m",
         metaKey: false,
         shiftKey: false,
-      }),
+      }, true),
     ).toBeNull();
     expect(
       displayGlobalShortcut("CommandOrControl+Alt+Space"),
@@ -43,7 +45,29 @@ describe("desktop global shortcut recording", () => {
         key: "k",
         metaKey: true,
         shiftKey: false,
-      }),
+      }, true),
     ).toBe("CommandOrControl+Control+K");
+  });
+
+  it("shows registry Meta shortcuts as Ctrl on Windows", () => {
+    vi.stubGlobal("navigator", {
+      platform: "Win32",
+      userAgentData: { platform: "Windows" },
+    });
+
+    expect(displayGlobalShortcut("Meta+K")).toBe("Ctrl+K");
+  });
+
+  it("rejects Super combinations instead of recording a different Ctrl shortcut", () => {
+    expect(
+      shortcutFromKeyboardEvent({
+        altKey: false,
+        code: "KeyK",
+        ctrlKey: false,
+        key: "k",
+        metaKey: true,
+        shiftKey: false,
+      }, false),
+    ).toBeNull();
   });
 });

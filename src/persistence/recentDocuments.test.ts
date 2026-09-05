@@ -2,6 +2,8 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  configureInternalDocumentRoot,
+  describeCurrentDocument,
   documentParentDirectory,
   forgetRecentDocument,
   isInternalDocumentPath,
@@ -16,7 +18,28 @@ import {
 } from "./recentDocuments";
 
 describe("recent document index", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    configureInternalDocumentRoot(
+      "/Volumes/Workspace/Library/Application Support/com.openadam.origin",
+    );
+  });
+
+  it.each([
+    ["/Users/test/Library/Application Support/com.openadam.origin.verify", "/Users/test/Library/Application Support/com.openadam.origin.verify/drafts/想法.md"],
+    ["/custom-xdg/laniakea", "/custom-xdg/laniakea/drafts/想法.md"],
+    ["C:\\Users\\Test\\AppData\\Roaming\\com.openadam.origin", "c:/users/test/appdata/roaming/com.openadam.origin/drafts/想法.md"],
+  ])("uses the current host data directory: %s", (root, draft) => {
+    configureInternalDocumentRoot(root);
+    expect(isInternalDocumentPath(draft)).toBe(true);
+    expect(isInternalDocumentPath(`${root}-other/drafts/想法.md`)).toBe(false);
+    expect(isInternalDocumentPath(`/backup${root}/drafts/想法.md`)).toBe(false);
+  });
+
+  it("preserves files as external when the host directory is unavailable", () => {
+    configureInternalDocumentRoot(null);
+    expect(isInternalDocumentPath("/Users/test/Library/Application Support/com.openadam.origin/drafts/想法.md")).toBe(false);
+  });
 
   it("keeps newest documents first and excludes the current document", () => {
     let documents: RecentDocument[] = [];
@@ -178,5 +201,34 @@ describe("recent document index", () => {
     expect(
       documentParentDirectory("C:\\Workspace\\想法.md"),
     ).toBe("C:/Workspace");
+  });
+
+  it("keeps the writable binding distinct from an unbound source", () => {
+    expect(
+      describeCurrentDocument({
+        documentPath: "/Users/openadam/Desktop/方案.md",
+        sourcePath: "/Users/openadam/Desktop/方案.md",
+      }),
+    ).toEqual({
+      associatedPath: "/Users/openadam/Desktop/方案.md",
+      compactLocation: "桌面",
+      exactDescription: "正在保存到：/Users/openadam/Desktop/方案.md",
+      metadata: "保存到 · 桌面",
+      pathRole: "binding",
+    });
+
+    expect(
+      describeCurrentDocument({
+        documentPath: null,
+        sourcePath: "/Users/openadam/Downloads/复杂方案.md",
+      }),
+    ).toEqual({
+      associatedPath: "/Users/openadam/Downloads/复杂方案.md",
+      compactLocation: "待另存",
+      exactDescription:
+        "当前修改尚未写回来源文件，来源：/Users/openadam/Downloads/复杂方案.md",
+      metadata: "尚未另存 · 来源：下载",
+      pathRole: "source",
+    });
   });
 });

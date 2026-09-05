@@ -93,6 +93,32 @@ try {
   });
   assert.equal(searched.structuredContent?.nodes?.[0]?.ref, "/0/0/0");
 
+  const beforeMisspelledRequest = await readFile(mapPath, "utf8");
+  const misspelledDryRun = await client.callTool({
+    name: "update_mind_map",
+    arguments: {
+      filePath: mapPath,
+      expectedRevision: createdRevision,
+      dry_run: true,
+      operations: [{ type: "set_text", ref: "/0/1", text: "Must not commit" }],
+    },
+  });
+  assert.equal(misspelledDryRun.isError, true, "unknown dry_run must not be silently discarded before a write");
+  assert.equal(await readFile(mapPath, "utf8"), beforeMisspelledRequest);
+  for (const operation of [
+    { type: "set_text", ref: "/0/1", text: "Must not commit", expected_revision: createdRevision },
+    { type: "add_child", parentRef: "/0", node: {
+      text: "Must not lose children", children: [{ text: "Child", chidlren: [{ text: "Lost" }] }],
+    } },
+  ]) {
+    const rejected = await client.callTool({
+      name: "update_mind_map",
+      arguments: { filePath: mapPath, expectedRevision: createdRevision, operations: [operation] },
+    });
+    assert.equal(rejected.isError, true, "unknown operation and nested tree fields must be rejected");
+    assert.equal(await readFile(mapPath, "utf8"), beforeMisspelledRequest);
+  }
+
   const beforeDryRun = await readFile(mapPath, "utf8");
   const dryRun = await client.callTool({
     name: "update_mind_map",
@@ -302,7 +328,7 @@ try {
   }
 
   console.log(
-    "MCP runtime check passed: discovery, cumulative request and response budgets, stable structured errors, complete large-map search, depth guard, create/read/search, dry-run, atomic update, 40-round cross-process serialization, stale conflict, rich-source protection, and no-overwrite create.",
+    "MCP runtime check passed: discovery, cumulative request and response budgets, stable structured errors, complete large-map search, depth guard, create/read/search, dry-run, unknown-field rejection, atomic update, 40-round cross-process serialization, stale conflict, rich-source protection, and no-overwrite create.",
   );
 } finally {
   await concurrentClient.close().catch(() => undefined);
