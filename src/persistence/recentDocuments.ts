@@ -1,6 +1,7 @@
 const recentDocumentsKey = "origin.recent-documents.v1";
 const maximumStoredDocuments = 20;
 const browserDocumentPrefix = "browser://laniakea/";
+let internalDocumentRoot: string | null = null;
 
 export interface RecentDocument {
   path: string;
@@ -36,18 +37,23 @@ export function documentParentDirectory(path: string): string | null {
   return /^[A-Za-z]:$/.test(parent) ? `${parent}/` : parent;
 }
 
+function comparablePath(path: string): string {
+  const normalized = normalizedPath(path);
+  return /^[A-Za-z]:\//.test(normalized) || normalized.startsWith("//")
+    ? normalized.toLocaleLowerCase("en-US")
+    : normalized;
+}
+
+/** Supplied by the running desktop host before documents are restored. */
+export function configureInternalDocumentRoot(path: string | null): void {
+  internalDocumentRoot = path ? comparablePath(path) : null;
+}
+
 export function isInternalDocumentPath(path: string): boolean {
-  const normalized = normalizedPath(path).toLocaleLowerCase("en-US");
-  const internalRoots = [
-    "/library/application support/com.openadam.origin",
-    "/library/containers/com.openadam.origin",
-    "/library/group containers/com.openadam.origin",
-  ];
-  return internalRoots.some(
-    (root) =>
-      normalized.endsWith(root) ||
-      normalized.includes(`${root}/`),
-  );
+  if (!internalDocumentRoot) return false;
+  const normalized = comparablePath(path);
+  return normalized === internalDocumentRoot ||
+    normalized.startsWith(`${internalDocumentRoot}/`);
 }
 
 export function recentDocumentLocation(path: string): string {

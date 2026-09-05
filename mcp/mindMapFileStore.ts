@@ -159,8 +159,25 @@ async function writeExclusive(filePath: string, markdown: string, mode?: number)
   }
 }
 
-export function updateLockPath(filePath: string): string {
-  const digest = createHash("sha256").update(filePath).digest("hex").slice(0, 32);
+export function normalizeUpdateLockKey(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== "win32") return filePath;
+  const normalized = filePath.replaceAll("/", "\\");
+  if (normalized.startsWith("\\\\?\\UNC\\")) {
+    return `\\\\${normalized.slice(8)}`;
+  }
+  if (normalized.startsWith("\\\\?\\")) return normalized.slice(4);
+  return normalized;
+}
+
+export function updateLockPath(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const key = normalizeUpdateLockKey(filePath, platform);
+  const digest = createHash("sha256").update(key).digest("hex").slice(0, 32);
   return join(dirname(filePath), `.laniakea-lock-${digest}`);
 }
 

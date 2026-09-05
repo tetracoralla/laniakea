@@ -2,12 +2,19 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FlowNode } from "../../types/mindmap";
 import { isInputMethodKey } from "../../model/inputMethod";
 import { trapDialogTab } from "../overlays/focus";
+import { usePagedResults, useRevealActiveOption } from "../../hooks/usePagedResults";
+import { ResultPagination } from "../overlays/ResultPagination";
+import { Icon } from "../icons/Icon";
 
 interface FlowTargetPickerProps {
   candidates: FlowNode[];
+  description?: string;
+  eyebrow?: string;
+  listLabel?: string;
   onChoose: (nodeId: string) => void;
   onClose: () => void;
   sourceLabel: string;
+  title?: string;
 }
 
 const kindLabel = {
@@ -21,9 +28,13 @@ const visibleOptionLimit = 20;
 
 export function FlowTargetPicker({
   candidates,
+  description,
+  eyebrow = "流程汇合",
+  listLabel = "可汇合的步骤",
   onChoose,
   onClose,
   sourceLabel,
+  title = "选择已有步骤",
 }: FlowTargetPickerProps) {
   const titleId = useId();
   const listId = useId();
@@ -31,7 +42,6 @@ export function FlowTargetPicker({
   const dialogRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
   const searchableCandidates = useMemo(
     () => candidates.map((node) => ({
       node,
@@ -39,27 +49,16 @@ export function FlowTargetPicker({
     })),
     [candidates],
   );
-  const result = useMemo(() => {
+  const matches = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
-    const items: FlowNode[] = [];
-    let total = 0;
-    searchableCandidates.forEach(({ node, searchableText }) => {
-      if (normalized && !searchableText.includes(normalized)) return;
-      total += 1;
-      if (items.length < visibleOptionLimit) items.push(node);
-    });
-    return { items, total };
+    return searchableCandidates.filter(({ searchableText }) => !normalized || searchableText.includes(normalized)).map(({ node }) => node);
   }, [query, searchableCandidates]);
+  const results = usePagedResults(matches, visibleOptionLimit);
+  const { activeIndex, pageStart, visibleItems } = results;
 
   useEffect(() => inputRef.current?.focus({ preventScroll: true }), []);
-  useEffect(() => setActiveIndex(0), [query]);
-  useEffect(() => {
-    setActiveIndex((index) => Math.min(index, Math.max(0, result.items.length - 1)));
-  }, [result.items.length]);
-
-  const activeOptionId = result.items[activeIndex]
-    ? `${optionIdPrefix}-${result.items[activeIndex].id}`
-    : undefined;
+  const activeOptionId = results.activeItem ? `${optionIdPrefix}-${results.activeItem.id}` : undefined;
+  useRevealActiveOption(activeOptionId, matches);
 
   return (
     <div
@@ -86,12 +85,16 @@ export function FlowTargetPicker({
       >
         <header>
           <div>
-            <p>流程汇合</p>
-            <h2 id={titleId}>选择已有步骤</h2>
+            <p>{eyebrow}</p>
+            <h2 id={titleId}>{title}</h2>
           </div>
-          <button aria-label="关闭" onClick={onClose} type="button">×</button>
+          <button aria-label="关闭" onClick={onClose} type="button">
+            <Icon aria-hidden="true" name="close" size={16} />
+          </button>
         </header>
-        <p className="flow-target-picker__source">从“{sourceLabel || "未命名步骤"}”连接</p>
+        <p className="flow-target-picker__source">
+          {description ?? `从“${sourceLabel || "未命名步骤"}”连接`}
+        </p>
         <input
           aria-activedescendant={activeOptionId}
           aria-autocomplete="list"
@@ -103,17 +106,16 @@ export function FlowTargetPicker({
             if (isInputMethodKey(event.nativeEvent)) return;
             if (event.key === "ArrowDown") {
               event.preventDefault();
-              setActiveIndex((index) =>
-                result.items.length === 0
-                  ? 0
-                  : Math.min(result.items.length - 1, index + 1),
-              );
+              results.move(1);
             } else if (event.key === "ArrowUp") {
               event.preventDefault();
-              setActiveIndex((index) => Math.max(0, index - 1));
-            } else if (event.key === "Enter" && result.items[activeIndex]) {
+              results.move(-1);
+            } else if (event.key === "PageDown" || event.key === "PageUp") {
               event.preventDefault();
-              onChoose(result.items[activeIndex].id);
+              results.move(event.key === "PageDown" ? visibleOptionLimit : -visibleOptionLimit);
+            } else if (event.key === "Enter" && results.activeItem) {
+              event.preventDefault();
+              onChoose(results.activeItem.id);
             }
           }}
           placeholder="搜索步骤…"
@@ -122,38 +124,32 @@ export function FlowTargetPicker({
           value={query}
         />
         <div
-          aria-label="可汇合的步骤"
+          aria-label={listLabel}
           className="flow-target-picker__list"
           id={listId}
           role="listbox"
         >
-          {result.total === 0 ? (
+          {results.total === 0 ? (
             <div className="flow-target-picker__empty">没有可连接的步骤</div>
-          ) : result.items.map((node, index) => (
+          ) : visibleItems.map((node, index) => (
             <button
-              aria-selected={activeIndex === index}
-              className={activeIndex === index ? "is-active" : ""}
+              aria-selected={activeIndex === pageStart + index}
+              className={activeIndex === pageStart + index ? "is-active" : ""}
               id={`${optionIdPrefix}-${node.id}`}
               key={node.id}
               onClick={() => onChoose(node.id)}
-              onPointerMove={() => setActiveIndex(index)}
+              onPointerMove={() => results.select(pageStart + index)}
               role="option"
               type="button"
             >
-              <span>{node.text || "未命名步骤"}</span>
+              <span title={node.text}>{node.text || "未命名步骤"}</span>
               <small>{kindLabel[node.kind]}</small>
             </button>
           ))}
         </div>
-        {result.total > result.items.length && (
-          <div
-            aria-live="polite"
-            className="flow-target-picker__truncation"
-            role="status"
-          >
-            显示前 {result.items.length} 步，共 {result.total} 步；继续输入可缩小范围
-          </div>
-        )}
+        <ResultPagination start={pageStart} count={visibleItems.length} total={results.total}
+          onPrevious={() => { results.previousPage(); inputRef.current?.focus({ preventScroll: true }); }}
+          onNext={() => { results.nextPage(); inputRef.current?.focus({ preventScroll: true }); }} />
       </section>
     </div>
   );

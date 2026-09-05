@@ -176,10 +176,11 @@ export function useMindMap({
     pathOverride?: string | null,
     options: {
       newBinding?: boolean;
+      moveTo?: string;
       silent?: boolean;
     } = {},
   ) => {
-    const { newBinding = false, silent = false } = options;
+    const { newBinding = false, moveTo, silent = false } = options;
     const target = document ?? latestDocument.current;
     const targetSession = documentSessionRef.current;
     const targetPath =
@@ -219,17 +220,19 @@ export function useMindMap({
     const queued = saveQueue.current
       .catch(() => undefined)
       .then(async () => {
-        if (
-          !newBinding &&
-          targetSession !== documentSessionRef.current
-        ) {
+        if (targetSession !== documentSessionRef.current) {
           return { result: null, stale: true } as const;
         }
+        // Ordinary saves follow the binding at execution time. A preceding
+        // queued Save As may have moved the draft since this save was requested.
+        const writePath = pathOverride === undefined
+          ? documentPathRef.current
+          : targetPath;
+        const previousBinding = documentPathRef.current;
         const savingCurrentBinding =
-          !newBinding &&
           targetSession === documentSessionRef.current &&
-          targetPath !== null &&
-          targetPath === documentPathRef.current;
+          writePath !== null &&
+          writePath === documentPathRef.current;
         // Resolve the lease only when this queued write starts. A preceding
         // save from the same document may have advanced it legitimately.
         const expectedSourceHash = savingCurrentBinding
@@ -271,10 +274,10 @@ export function useMindMap({
           recoveryCutoff.checkpointGeneration ||
           recoveryCutoff.editorDraftGeneration,
         );
-        const result = viewportOnly || hasRecoveryCutoff
+        let result = viewportOnly || hasRecoveryCutoff
           ? await saveLocalDocument(
               target,
-              targetPath,
+              writePath,
               expectedSourceHash,
               protectedSourceForSave,
               {
@@ -295,10 +298,24 @@ export function useMindMap({
             )
           : await saveLocalDocument(
               target,
-              targetPath,
+              writePath,
               expectedSourceHash,
               protectedSourceForSave,
             );
+        if (targetSession === documentSessionRef.current) {
+          // The source save has committed even if the subsequent move fails.
+          // Retain its lease so retrying never reports a false source conflict.
+          if (savingCurrentBinding) sourceHashRef.current = result.sourceHash;
+          if (!viewportOnly || !recoveredBaselineDocumentRef.current) {
+            lastPersistedContentDocument.current = target;
+          }
+          recoveryCoordinator.markSaveCompleted(target, recoveryCutoff);
+        }
+        if (moveTo && writePath) {
+          // Rename and source writes use the same queue. Do not let a newer
+          // autosave recreate the old draft while native storage is moving it.
+          result = await moveInternalDraft(writePath, moveTo);
+        }
         if (targetSession !== documentSessionRef.current) {
           if (isDesktopRuntime()) {
             const currentPath = documentPathRef.current;
@@ -307,16 +324,32 @@ export function useMindMap({
           }
           return { result, stale: true } as const;
         }
-        if (!viewportOnly || !recoveredBaselineDocumentRef.current) {
-          lastPersistedContentDocument.current = target;
+        const nextBinding = moveTo ?? (newBinding ? writePath : null);
+        if (nextBinding) {
+          protectedUnboundSourceContent.current = null;
+          protectedUnboundSourceDocument.current = null;
+          protectedUnboundSourcePath.current = null;
+          protectedBrowserSourceNameRef.current = null;
+          setProtectedBrowserSourceName(null);
+          documentPathRef.current = nextBinding;
+          sourceDocumentPathRef.current = nextBinding;
+          sourceHashRef.current = result.sourceHash;
+          setDocumentPath(nextBinding);
+          setSourceDocumentPath(nextBinding);
+          setRecentDocuments((current) => rememberRecentDocument(
+            moveTo && previousBinding && previousBinding !== nextBinding
+              ? forgetRecentDocument(current, previousBinding)
+              : current,
+            nextBinding,
+            target.title,
+          ));
         }
-        recoveryCoordinator.markSaveCompleted(target, recoveryCutoff);
         if (savingCurrentBinding) {
           sourceHashRef.current = result.sourceHash;
         }
         if (
           recoveredWorkPendingRef.current &&
-          savingCurrentBinding &&
+          (savingCurrentBinding || nextBinding !== null) &&
           !viewportOnly
         ) {
           // Any committed content save keeps the restored work — explicit
@@ -911,12 +944,19 @@ export function useMindMap({
     setSaveState("saving");
     setSaveError(null);
     setSaveWarning(null);
+    const target = latestDocument.current;
+    const targetSession = documentSessionRef.current;
     try {
-      const created = await createMarkdownDraft(latestDocument.current);
+      const created = await createMarkdownDraft(target);
+      if (targetSession !== documentSessionRef.current) {
+        await discardInternalDraft(created.documentPath);
+        await restoreActiveDocument();
+        return false;
+      }
       protectedUnboundSourceContent.current = null;
       protectedUnboundSourceDocument.current = null;
       protectedUnboundSourcePath.current = null;
-      lastPersistedContentDocument.current = latestDocument.current;
+      lastPersistedContentDocument.current = target;
       documentPathRef.current = created.documentPath;
       sourceDocumentPathRef.current = created.documentPath;
       sourceHashRef.current = created.sourceHash;
@@ -926,7 +966,7 @@ export function useMindMap({
         rememberRecentDocument(
           current,
           created.documentPath,
-          latestDocument.current.title,
+          target.title,
         ),
       );
       if (request === saveRequest.current) {
@@ -947,16 +987,24 @@ export function useMindMap({
       }
       return false;
     }
-  }, [saveNow]);
+  }, [restoreActiveDocument, saveNow]);
 
   const saveBeforeSwitch = useCallback((): Promise<boolean> => {
-    const queued = saveBeforeSwitchQueue.current.then(
-      performSaveBeforeSwitch,
-      performSaveBeforeSwitch,
-    );
+    const targetSession = documentSessionRef.current;
+    const saveLatest = async () => {
+      while (targetSession === documentSessionRef.current) {
+        prepareForLifecycleSave?.();
+        const target = latestDocument.current;
+        if (!await performSaveBeforeSwitch()) return false;
+        if (targetSession !== documentSessionRef.current) return false;
+        if (target === latestDocument.current) return true;
+      }
+      return false;
+    };
+    const queued = saveBeforeSwitchQueue.current.then(saveLatest, saveLatest);
     saveBeforeSwitchQueue.current = queued;
     return queued;
-  }, [performSaveBeforeSwitch]);
+  }, [performSaveBeforeSwitch, prepareForLifecycleSave]);
 
   const newDocument = useCallback(async (
     document: MindMapDocument = createBlankDocument(),
@@ -978,73 +1026,12 @@ export function useMindMap({
     path: string,
   ): Promise<boolean> => {
     const previousPath = documentPathRef.current;
-    let saved: {
-      sourceHash: string | null;
-      auxiliaryWarning?: string | null;
-    } | null = null;
-    if (
-      previousPath &&
-      previousPath !== path &&
-      isInternalDocumentPath(previousPath)
-    ) {
-      const currentSaved = await performSave(
-        latestDocument.current,
-        previousPath,
-      );
-      if (!currentSaved) return false;
-      const request = ++saveRequest.current;
-      setSaveState("saving");
-      setSaveError(null);
-      setSaveWarning(null);
-      try {
-        saved = await moveInternalDraft(previousPath, path);
-        if (request === saveRequest.current) {
-          setSaveState("saved");
-          setSaveError(null);
-          setSaveWarning(saved.auxiliaryWarning ?? null);
-        }
-      } catch (error) {
-        if (request === saveRequest.current) {
-          setSaveState("error");
-          setSaveWarning(null);
-          setSaveError(
-            error instanceof Error
-              ? error.message
-              : "无法移动本地草稿。",
-          );
-        }
-        return false;
-      }
-    } else {
-      saved = await performSave(
-        latestDocument.current,
-        path,
-        { newBinding: true },
-      );
-    }
-    if (saved) {
-      protectedUnboundSourceContent.current = null;
-      protectedUnboundSourceDocument.current = null;
-      protectedUnboundSourcePath.current = null;
-      protectedBrowserSourceNameRef.current = null;
-      setProtectedBrowserSourceName(null);
-      lastPersistedContentDocument.current = latestDocument.current;
-      documentPathRef.current = path;
-      sourceDocumentPathRef.current = path;
-      sourceHashRef.current = saved.sourceHash;
-      setDocumentPath(path);
-      setSourceDocumentPath(path);
-      setRecentDocuments((current) =>
-        rememberRecentDocument(
-          previousPath && previousPath !== path
-            ? forgetRecentDocument(current, previousPath)
-            : current,
-          path,
-          latestDocument.current.title,
-        ),
-      );
-    }
-    return Boolean(saved);
+    const movingDraft = previousPath && previousPath !== path && isInternalDocumentPath(previousPath);
+    return Boolean(await performSave(
+      latestDocument.current,
+      movingDraft ? previousPath : path,
+      movingDraft ? { moveTo: path } : { newBinding: true },
+    ));
   }, [performSave]);
 
   const moveRecentDocument = useCallback(async (

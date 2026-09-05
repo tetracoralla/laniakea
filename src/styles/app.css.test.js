@@ -1,7 +1,26 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import {
+  EDGE_TONES,
+  FONT_STACK,
+  MOTION,
+  NODE_FONT_WEIGHT,
+  NODE_INLINE_PADDING,
+  NODE_LETTER_SPACING_RATIO,
+  NODE_LINE_HEIGHT,
+} from "./tokens";
 
 const appStyles = readFileSync(new URL("./app.css", import.meta.url), "utf8");
+const tokenStyles = readFileSync(
+  new URL("./tokens.css", import.meta.url),
+  "utf8",
+);
+
+function cssToken(name) {
+  const match = tokenStyles.match(new RegExp(`--${name}:\\s*([^;]+);`));
+  expect(match, `token --${name} must exist in tokens.css`).not.toBeNull();
+  return match[1].replace(/\s+/g, " ").trim();
+}
 
 describe("node editor styles", () => {
   it("uses one vertically centered surface for display and editing", () => {
@@ -144,7 +163,98 @@ describe("node editor styles", () => {
   it("keeps flow creation and connection controls contextual to selection", () => {
     expect(appStyles).toContain(".flow-node__quick-actions {");
     expect(appStyles).toContain(".flow-node__port {");
-    expect(appStyles).toContain(".flow-node.is-connection-target .flow-node__content {");
+    expect(appStyles).toContain(
+      ".flow-node.is-connection-target:not(.flow-node--decision) .flow-node__content {",
+    );
+    expect(appStyles).toContain(
+      ".flow-node--decision.is-connection-target .flow-node__decision-shape polygon {",
+    );
+  });
+});
+
+describe("design token consistency", () => {
+  it("keeps the font stack identical between tokens.css and tokens.ts", () => {
+    expect(cssToken("font-sans").replace(/"/g, "")).toBe(
+      FONT_STACK.replace(/"/g, ""),
+    );
+  });
+
+  it("keeps node optical constants single-sourced", () => {
+    expect(Number(cssToken("fw-node-root"))).toBe(NODE_FONT_WEIGHT.root);
+    expect(Number(cssToken("fw-node-floating"))).toBe(
+      NODE_FONT_WEIGHT.floating,
+    );
+    expect(Number(cssToken("fw-node-branch"))).toBe(NODE_FONT_WEIGHT.branch);
+    expect(Number(cssToken("fw-node"))).toBe(NODE_FONT_WEIGHT.secondary);
+    expect(Number(cssToken("fw-quiet"))).toBe(NODE_FONT_WEIGHT.leaf);
+    // The rendered default matches the depth-2 padding used by layout.ts.
+    expect(appStyles).toContain(
+      `--node-padding-inline: ${NODE_INLINE_PADDING.secondary}px;`,
+    );
+    expect(appStyles).toContain(`line-height: ${NODE_LINE_HEIGHT};`);
+    expect(appStyles).toContain(
+      `letter-spacing: ${NODE_LETTER_SPACING_RATIO}em;`,
+    );
+  });
+
+  it("keeps edge tone swatches and strokes on the same tokens", () => {
+    expect(cssToken("edge-blue")).toBe(EDGE_TONES.blue);
+    expect(cssToken("edge-emerald")).toBe(EDGE_TONES.emerald);
+    expect(cssToken("edge-amber")).toBe(EDGE_TONES.amber);
+    expect(appStyles).toContain(
+      ".flow-edge-style-choice--blue i { background: var(--edge-blue); }",
+    );
+    expect(appStyles).toContain(
+      ".flow-edge-style-choice--emerald i { background: var(--edge-emerald); }",
+    );
+    expect(appStyles).toContain(
+      ".flow-edge-style-choice--amber i { background: var(--edge-amber); }",
+    );
+  });
+
+  it("keeps JS motion timers aligned with the CSS duration tokens", () => {
+    expect(cssToken("motion-fast")).toBe(`${MOTION.fastMs}ms`);
+    expect(cssToken("motion-standard")).toBe(`${MOTION.standardMs}ms`);
+    // The status-bar exit timers must never be shorter than the CSS
+    // transitions they wait for, or the shell vanishes mid-animation.
+    expect(MOTION.statusShellExitMs).toBeGreaterThanOrEqual(
+      MOTION.standardMs,
+    );
+    expect(MOTION.statusContentExitMs).toBeGreaterThanOrEqual(
+      MOTION.fastMs,
+    );
+  });
+
+  it("keeps the application theme color aligned with the canvas token", () => {
+    const indexHtml = readFileSync(
+      new URL("../../index.html", import.meta.url),
+      "utf8",
+    );
+    expect(cssToken("canvas")).toBe(
+      indexHtml.match(/name="theme-color" content="(#[0-9a-f]+)"/)[1],
+    );
+  });
+
+  it("forbids raw chrome-layer z-index digits outside the token scale", () => {
+    // Each usage string is unique to its rule, so this pins that every
+    // chrome/modal layer actually consumes its token.
+    for (const usage of [
+      "z-index: var(--z-chrome);",
+      "z-index: var(--z-status);",
+      "z-index: var(--z-overlay);",
+      "z-index: var(--z-settings);",
+      "z-index: var(--z-context-menu);",
+      "z-index: var(--z-confirm);",
+      "z-index: var(--z-choice);",
+      "z-index: var(--z-drag-ghost);",
+    ]) {
+      expect(appStyles).toContain(usage);
+    }
+    for (const layer of [19, 20, 40, 50, 55, 60, 65, 100]) {
+      expect(appStyles, `z-index ${layer} must use its token`).not.toContain(
+        `z-index: ${layer};`,
+      );
+    }
   });
 });
 

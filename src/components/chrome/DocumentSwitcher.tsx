@@ -14,6 +14,7 @@ import {
   type RecentDocument,
 } from "../../persistence/recentDocuments";
 import { Icon } from "../icons/Icon";
+import { moveMenuFocus } from "../menu/menuKeyboard";
 
 interface DocumentSwitcherProps {
   currentPath: string | null;
@@ -277,8 +278,6 @@ export function DocumentSwitcher({
     ) {
       return;
     }
-    const items = menuItems();
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -289,35 +288,23 @@ export function DocumentSwitcher({
       onOpenChange(false);
       return;
     }
+    // Arrow flow stays on the switcher's own list entries; the hover-managed
+    // actions submenu and the row-level "更多操作" trigger join only through
+    // their own entry points.
     if (
-      !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) ||
-      items.length === 0
+      moveMenuFocus(
+        event.currentTarget,
+        event.key,
+        "[role='menuitem'][data-document-switcher-item='true']:not(:disabled)",
+      )
     ) {
-      return;
+      event.preventDefault();
     }
-    event.preventDefault();
-    const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? items.length - 1
-          : event.key === "ArrowDown"
-            ? (Math.max(index, -1) + 1) % items.length
-            : (index <= 0 ? items.length : index) - 1;
-    items[nextIndex]?.focus();
   };
 
   const handleActionsKeyDown = (
     event: KeyboardEvent<HTMLDivElement>,
   ) => {
-    const items = Array.from(
-      event.currentTarget.querySelectorAll<HTMLButtonElement>(
-        "[role='menuitem']",
-      ),
-    );
-    const index = items.indexOf(
-      document.activeElement as HTMLButtonElement,
-    );
     if (event.key === "Escape" || event.key === "ArrowLeft") {
       event.preventDefault();
       event.stopPropagation();
@@ -328,23 +315,10 @@ export function DocumentSwitcher({
       close(false);
       return;
     }
-    if (
-      !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) ||
-      items.length === 0
-    ) {
-      return;
+    if (moveMenuFocus(event.currentTarget, event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
     }
-    event.preventDefault();
-    event.stopPropagation();
-    const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? items.length - 1
-          : event.key === "ArrowDown"
-            ? (Math.max(index, -1) + 1) % items.length
-            : (index <= 0 ? items.length : index) - 1;
-    items[nextIndex]?.focus();
   };
 
   useEffect(() => {
@@ -471,6 +445,7 @@ export function DocumentSwitcher({
                       aria-haspopup="menu"
                       aria-label={`当前文件操作：${currentTitle}`}
                       className="document-switcher__recent-more"
+                      data-document-switcher-item="true"
                       onClick={() => {
                         if (actionsIsCurrent) {
                           closeActions(false);

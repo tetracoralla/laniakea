@@ -53,7 +53,8 @@ if [[ "$MODE" == "--verify" || "$MODE" == "verify" ]]; then
   open_verify_app "$VERIFY_APP_BUNDLE"
   for _ in 1 2 3 4 5; do
     if pgrep -f "$VERIFY_APP_BINARY" >/dev/null; then
-      echo "isolated desktop runtime verified: $VERIFY_APP_BUNDLE"
+      echo "PASS: isolated desktop launch only: $VERIFY_APP_BUNDLE"
+      echo "Editor, file, clipboard, shortcut and exit flows require separate runtime observations."
       # The check only needs proof the app stays up; leave no verify
       # instance running on the owner's desktop afterwards.
       pkill -f "$VERIFY_APP_BINARY" >/dev/null 2>&1 || true

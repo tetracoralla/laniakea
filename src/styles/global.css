@@ -39,7 +39,7 @@ textarea {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  box-shadow: 0 0 0 3px var(--violet-ring);
+  box-shadow: var(--focus-ring);
 }
 
 kbd {

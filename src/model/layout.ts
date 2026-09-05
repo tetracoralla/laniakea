@@ -6,6 +6,12 @@ import type {
 } from "../types/mindmap";
 import { nodePlaceholder } from "./canvasRender";
 import { sizeForSubspacePreview } from "./subspacePreview";
+import {
+  NODE_FONT_WEIGHT,
+  NODE_LETTER_SPACING_RATIO,
+  NODE_LINE_HEIGHT,
+  NODE_INLINE_PADDING,
+} from "../styles/tokens";
 
 const tones: BranchTone[] = ["violet", "blue", "emerald", "amber"];
 const emphasizedNodeHeight = 48;
@@ -21,18 +27,19 @@ type NodeRootKind = LayoutNode["rootKind"];
 
 /**
  * Horizontal node padding is geometry, not merely decoration: layout sizing,
- * rendered nodes, and drag previews must agree on it. Keep the value here so
- * left-aligned text does not expose sizing slack on only its right side.
+ * rendered nodes, and drag previews must agree on it. The values live in
+ * styles/tokens.ts (mirrored into the rendered surface) so left-aligned text
+ * does not expose sizing slack on only its right side.
  */
 export function nodeInlinePadding(
   depth: number,
   rootKind: NodeRootKind = null,
 ): number {
-  if (rootKind === "main") return 25;
-  if (rootKind === "floating") return 22;
-  if (depth === 1) return 20;
-  if (depth === 2) return 18;
-  return 14;
+  if (rootKind === "main") return NODE_INLINE_PADDING.main;
+  if (rootKind === "floating") return NODE_INLINE_PADDING.floating;
+  if (depth === 1) return NODE_INLINE_PADDING.branch;
+  if (depth === 2) return NODE_INLINE_PADDING.secondary;
+  return NODE_INLINE_PADDING.leaf;
 }
 
 export interface LayoutTextOverride {
@@ -113,15 +120,17 @@ export function sizeForNode(
           ? 560
           : 500;
   const fontWeight = isMainRoot
-    ? 580
+    ? NODE_FONT_WEIGHT.root
     : isFloatingRoot
-      ? 650
+      ? NODE_FONT_WEIGHT.floating
       : depth === 1
-        ? 620
+        ? NODE_FONT_WEIGHT.branch
         : isSecondary
-          ? 530
-          : 500;
-  const letterSpacing = isMainRoot ? fontSize * 0.01 : 0;
+          ? NODE_FONT_WEIGHT.secondary
+          : NODE_FONT_WEIGHT.leaf;
+  const letterSpacing = isMainRoot
+    ? fontSize * NODE_LETTER_SPACING_RATIO
+    : 0;
   const measuredText = visibleText(depth, text, rootKind);
   const explicitLines = measuredText.split("\n");
   const lineWidths = explicitLines.map((line) =>
@@ -158,7 +167,7 @@ export function sizeForNode(
     height: Math.max(
       minimumHeight,
       Math.ceil(
-        lineCount * fontSize * 1.35 +
+        lineCount * fontSize * NODE_LINE_HEIGHT +
           verticalPadding +
           verticalBorders,
       ),

@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -20,6 +18,9 @@ import { TopBar } from "./components/chrome/TopBar";
 import { CanvasBlankMenu } from "./components/canvas/CanvasBlankMenu";
 import type { OverlayMode } from "./components/commands/CommandOverlay";
 import { StatusBar } from "./components/feedback/StatusBar";
+import {
+  createRetryableLazySection,
+} from "./components/feedback/RetryableLazySection";
 import { DeleteSubspaceDialog } from "./components/overlays/DeleteSubspaceDialog";
 import { restoreFocus } from "./components/overlays/focus";
 import { NodeSpaceMenu } from "./components/spaces/NodeSpaceMenu";
@@ -160,71 +161,55 @@ export function resolveSurfaceAfterInvalidation(
   };
 }
 
-let flowWorkspaceModule: Promise<
-  typeof import("./components/spaces/FlowWorkspace")
-> | null = null;
-
-function loadFlowWorkspace() {
-  flowWorkspaceModule ??= import("./components/spaces/FlowWorkspace");
-  return flowWorkspaceModule;
-}
-
-function preloadFlowWorkspace() {
-  const request = loadFlowWorkspace();
-  void request.catch(() => {
-    if (flowWorkspaceModule === request) flowWorkspaceModule = null;
-  });
-}
-
-const LazyFlowWorkspace = lazy(() =>
-  loadFlowWorkspace().then(({ FlowWorkspace }) => ({
-    default: FlowWorkspace,
-  })),
+const flowWorkspaceSection = createRetryableLazySection(
+  () => import("./components/spaces/FlowWorkspace").then(
+    ({ FlowWorkspace }) => ({ default: FlowWorkspace }),
+  ),
+  {
+    errorLabel: "无法打开流程",
+    loadingFallback: (
+      <div
+        aria-label="正在打开流程"
+        className="flow-canvas flow-canvas--loading"
+        role="status"
+      />
+    ),
+  },
 );
+const LazyFlowWorkspace = flowWorkspaceSection.Component;
+const preloadFlowWorkspace = flowWorkspaceSection.preload;
 
-let commandOverlayModule: Promise<
-  typeof import("./components/commands/CommandOverlay")
-> | null = null;
-
-function loadCommandOverlay() {
-  commandOverlayModule ??= import("./components/commands/CommandOverlay");
-  return commandOverlayModule;
-}
-
-function preloadCommandOverlay() {
-  const request = loadCommandOverlay();
-  void request.catch(() => {
-    if (commandOverlayModule === request) commandOverlayModule = null;
-  });
-}
-
-const LazyCommandOverlay = lazy(() =>
-  loadCommandOverlay().then(({ CommandOverlay }) => ({
-    default: CommandOverlay,
-  })),
+const commandOverlaySection = createRetryableLazySection(
+  () => import("./components/commands/CommandOverlay").then(
+    ({ CommandOverlay }) => ({ default: CommandOverlay }),
+  ),
+  {
+    errorLabel: "无法打开命令面板",
+    loadingFallback: (
+      <div aria-label="正在打开" className="overlay-backdrop" role="status" />
+    ),
+  },
 );
+const LazyCommandOverlay = commandOverlaySection.Component;
+const preloadCommandOverlay = commandOverlaySection.preload;
 
-let shortcutSettingsModule: Promise<
-  typeof import("./components/settings/ShortcutSettings")
-> | null = null;
-
-function loadShortcutSettings() {
-  shortcutSettingsModule ??= import("./components/settings/ShortcutSettings");
-  return shortcutSettingsModule;
-}
-
-function preloadShortcutSettings() {
-  const request = loadShortcutSettings();
-  void request.catch(() => {
-    if (shortcutSettingsModule === request) shortcutSettingsModule = null;
-  });
-}
-
-const LazyShortcutSettings = lazy(() =>
-  loadShortcutSettings().then(({ ShortcutSettings }) => ({
-    default: ShortcutSettings,
-  })),
+const shortcutSettingsSection = createRetryableLazySection(
+  () => import("./components/settings/ShortcutSettings").then(
+    ({ ShortcutSettings }) => ({ default: ShortcutSettings }),
+  ),
+  {
+    errorLabel: "无法打开快捷键设置",
+    loadingFallback: (
+      <div
+        aria-label="正在打开快捷键设置"
+        className="overlay-backdrop"
+        role="status"
+      />
+    ),
+  },
 );
+const LazyShortcutSettings = shortcutSettingsSection.Component;
+const preloadShortcutSettings = shortcutSettingsSection.preload;
 
 export function App() {
   const desktopRuntime = isDesktopRuntime();
@@ -316,7 +301,12 @@ export function App() {
     clientY: number;
     contentX: number;
     contentY: number;
+    documentSessionId: number;
   } | null>(null);
+  const activeCanvasBlankMenu =
+    canvasBlankMenu?.documentSessionId === documentSessionId
+      ? canvasBlankMenu
+      : null;
   const [surface, setSurface] = useState<EditorSurface>(rootMapSurface);
   const [surfaceStack, setSurfaceStack] = useState<SurfaceRestorePoint[]>([]);
   const [shortcutSettingsOpen, setShortcutSettingsOpen] =
@@ -461,6 +451,7 @@ export function App() {
     setCanvasInteractionTarget(mindNodeInteractionTarget);
     setDeleteSubspaceRequest(null);
     setNodeSpaceMenu(null);
+    setCanvasBlankMenu(null);
     drillDownReturnFocusRef.current = null;
   }, [documentSessionId]);
 
@@ -1076,6 +1067,9 @@ export function App() {
     });
 
   const executeAppCommand = useCallback((command: CommandId) => {
+    if (command === "map.new" || command === "map.open") {
+      setCanvasBlankMenu(null);
+    }
     switch (command) {
       case "space.copy-summary": {
         if (canvasInteractionTarget.kind !== "subspace-portal") return;
@@ -1149,11 +1143,14 @@ export function App() {
   );
 
   const createFloatingFromBlankMenu = useCallback(() => {
-    if (!canvasBlankMenu) return;
-    const { contentX, contentY } = canvasBlankMenu;
+    if (!activeCanvasBlankMenu) {
+      setCanvasBlankMenu(null);
+      return;
+    }
+    const { contentX, contentY } = activeCanvasBlankMenu;
     setCanvasBlankMenu(null);
     createFloatingAtPoint(contentX, contentY);
-  }, [canvasBlankMenu, createFloatingAtPoint]);
+  }, [activeCanvasBlankMenu, createFloatingAtPoint]);
 
   useKeyboardCommands({
     enabled:
@@ -1292,7 +1289,7 @@ export function App() {
             onDetachNode={detachNodeToCanvas}
             onOpenCanvasContextMenu={(anchor) => {
               setNodeSpaceMenu(null);
-              setCanvasBlankMenu(anchor);
+              setCanvasBlankMenu({ ...anchor, documentSessionId });
             }}
             onCreateFloatingAt={createFloatingAtPoint}
             onMoveSubspace={moveSubspacePortal}
@@ -1334,49 +1331,39 @@ export function App() {
           />
         </>
       ) : activeFlow ? (
-        <Suspense
-          fallback={(
-            <div
-              aria-label="正在打开流程"
-              className="flow-canvas flow-canvas--loading"
-              role="status"
-            />
-          )}
-        >
-          <LazyFlowWorkspace
-            entryRequest={surface.entryRequest}
-            fitOnMount={surface.fitOnMount}
-            initialEditing={surface.initialEditing}
-            initialSelectedId={surface.initialSelectedId}
-            keyboardEnabled={
-              startupMode !== "loading" &&
-              overlay === null &&
-              !shortcutSettingsOpen
-            }
-            key={`${documentSessionId}:${activeFlow.id}`}
-            notify={notify}
-            onBack={navigateBack}
-            onRedo={redo}
-            onUndo={undo}
-            onEditorDraftChange={(target, value) =>
-              protectEditorDraft({
-                ...target,
-                spaceId: activeFlow.id,
-                surface: "flow",
-              }, value)
-            }
-            onEditorDraftFinish={finishEditorDraft}
-            onUpdateSpace={updateActiveFlow}
-            onPositionsChange={(positions) =>
-              setFlowPositions(activeFlow.id, positions)
-            }
-            onViewportChange={(viewport) =>
-              setFlowViewport(activeFlow.id, viewport)
-            }
-            ref={flowWorkspaceRef}
-            space={activeFlow}
-          />
-        </Suspense>
+        <LazyFlowWorkspace
+          entryRequest={surface.entryRequest}
+          fitOnMount={surface.fitOnMount}
+          initialEditing={surface.initialEditing}
+          initialSelectedId={surface.initialSelectedId}
+          keyboardEnabled={
+            startupMode !== "loading" &&
+            overlay === null &&
+            !shortcutSettingsOpen
+          }
+          key={`${documentSessionId}:${activeFlow.id}`}
+          notify={notify}
+          onBack={navigateBack}
+          onRedo={redo}
+          onUndo={undo}
+          onEditorDraftChange={(target, value) =>
+            protectEditorDraft({
+              ...target,
+              spaceId: activeFlow.id,
+              surface: "flow",
+            }, value)
+          }
+          onEditorDraftFinish={finishEditorDraft}
+          onUpdateSpace={updateActiveFlow}
+          onPositionsChange={(positions) =>
+            setFlowPositions(activeFlow.id, positions)
+          }
+          onViewportChange={(viewport) =>
+            setFlowViewport(activeFlow.id, viewport)
+          }
+          ref={flowWorkspaceRef}
+          space={activeFlow}
+        />
       ) : null}
 
       <StatusBar
@@ -1391,72 +1378,70 @@ export function App() {
       />
 
       {overlay && (
-        <Suspense
-          fallback={(
-            <div
-              aria-label="正在打开"
-              className="overlay-backdrop"
-              role="status"
-            />
-          )}
-        >
-          <LazyCommandOverlay
-            commandTarget={canvasInteractionTarget.kind}
-            document={mindMap}
-            key={overlay}
-            mode={overlay}
-            onClose={closeOverlay}
-            onExecute={executeAppCommand}
-            onSelectNode={(id, spaceId) => {
-              setCanvasInteractionTarget(mindNodeInteractionTarget);
-              if (spaceId) {
-                const space = documentSpaces(mindMap)[spaceId];
-                if (!space?.nodes[id]) return;
-                if (space.type === "map") {
-                  if (surface.kind !== "map" || surface.spaceId !== spaceId) {
-                    // The jump already resets the target above; the restore
-                    // point must record that same fresh node target instead
-                    // of the render-time closure value.
-                    pushCurrentSurface(mindNodeInteractionTarget);
-                  }
-                  setSurface({ kind: "map", spaceId });
-                  setSelection(singleSelection(id));
-                  window.requestAnimationFrame(() =>
-                    window.requestAnimationFrame(() =>
-                      canvasRef.current?.focusSelected(),
-                    ),
-                  );
-                } else {
-                  preloadFlowWorkspace();
-                  if (surface.kind !== "flow" || surface.spaceId !== spaceId) {
-                    pushCurrentSurface(mindNodeInteractionTarget);
-                  }
-                  setSurface({
-                    kind: "flow",
-                    spaceId,
-                    anchorNodeId: space.anchorNodeId,
-                    entryRequest: ++flowEntryRequestRef.current,
-                    fitOnMount: false,
-                    initialEditing: false,
-                    initialSelectedId: id,
-                  });
-                  setSelection(singleSelection(space.anchorNodeId));
+        <LazyCommandOverlay
+          commandTarget={canvasInteractionTarget.kind}
+          document={mindMap}
+          key={overlay}
+          mode={overlay}
+          onClose={closeOverlay}
+          onExecute={executeAppCommand}
+          onSelectNode={(id, spaceId) => {
+            setCanvasInteractionTarget(mindNodeInteractionTarget);
+            if (spaceId) {
+              const space = documentSpaces(mindMap)[spaceId];
+              if (!space?.nodes[id]) return;
+              if (space.type === "map") {
+                if (surface.kind !== "map" || surface.spaceId !== spaceId) {
+                  // The jump already resets the target above; the restore
+                  // point must record that same fresh node target instead
+                  // of the render-time closure value.
+                  pushCurrentSurface(mindNodeInteractionTarget);
                 }
-                return;
-              }
-              setSurface(rootMapSurface);
-              setSurfaceStack([]);
-              applyMutation((current) =>
-                revealNode(current.document, id),
-              );
-              window.requestAnimationFrame(() =>
+                setSurface({ kind: "map", spaceId });
+                applyMutation((current) => {
+                  const scoped = mapSpaceDocument(current.document, spaceId);
+                  if (!scoped?.nodes[id]) return current;
+                  const revealed = revealNode(scoped, id);
+                  return {
+                    ...revealed,
+                    document: mergeMapSpaceDocument(current.document, spaceId, revealed.document),
+                  };
+                });
                 window.requestAnimationFrame(() =>
-                  canvasRef.current?.focusSelected(),
-                ),
-              );
-            }}
-          />
-        </Suspense>
+                  window.requestAnimationFrame(() =>
+                    canvasRef.current?.focusSelected(),
+                  ),
+                );
+              } else {
+                preloadFlowWorkspace();
+                if (surface.kind !== "flow" || surface.spaceId !== spaceId) {
+                  pushCurrentSurface(mindNodeInteractionTarget);
+                }
+                setSurface({
+                  kind: "flow",
+                  spaceId,
+                  anchorNodeId: space.anchorNodeId,
+                  entryRequest: ++flowEntryRequestRef.current,
+                  fitOnMount: false,
+                  initialEditing: false,
+                  initialSelectedId: id,
+                });
+                setSelection(singleSelection(space.anchorNodeId));
+              }
+              return;
+            }
+            setSurface(rootMapSurface);
+            setSurfaceStack([]);
+            applyMutation((current) =>
+              revealNode(current.document, id),
+            );
+            window.requestAnimationFrame(() =>
+              window.requestAnimationFrame(() =>
+                canvasRef.current?.focusSelected(),
+              ),
+            );
+          }}
+        />
       )}
 
       {nodeSpaceMenu && activeMap.nodes[nodeSpaceMenu.nodeId] && (
@@ -1471,10 +1456,10 @@ export function App() {
         />
       )}
 
-      {canvasBlankMenu && (
+      {activeCanvasBlankMenu && (
         <CanvasBlankMenu
-          clientX={canvasBlankMenu.clientX}
-          clientY={canvasBlankMenu.clientY}
+          clientX={activeCanvasBlankMenu.clientX}
+          clientY={activeCanvasBlankMenu.clientY}
           onClose={closeCanvasBlankMenu}
           onCreateNode={createFloatingFromBlankMenu}
           onFit={() => {
@@ -1520,27 +1505,17 @@ export function App() {
       })()}
 
       {shortcutSettingsOpen && (
-        <Suspense
-          fallback={(
-            <div
-              aria-label="正在打开快捷键设置"
-              className="overlay-backdrop"
-              role="status"
-            />
-          )}
-        >
-          <LazyShortcutSettings
-            currentShortcut={
-              desktopRuntimeStatus?.globalShortcut ??
-              "CommandOrControl+Shift+M"
-            }
-            onClose={closeShortcutSettings}
-            onSave={saveGlobalShortcut}
-            registered={
-              desktopRuntimeStatus?.globalShortcutRegistered ?? false
-            }
-          />
-        </Suspense>
+        <LazyShortcutSettings
+          currentShortcut={
+            desktopRuntimeStatus?.globalShortcut ??
+            "CommandOrControl+Shift+M"
+          }
+          onClose={closeShortcutSettings}
+          onSave={saveGlobalShortcut}
+          registered={
+            desktopRuntimeStatus?.globalShortcutRegistered ?? false
+          }
+        />
       )}
 
       <input

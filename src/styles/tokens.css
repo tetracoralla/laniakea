@@ -1,8 +1,11 @@
 :root {
   color-scheme: light;
+  /* 跨平台正文栈：macOS 走系统字体 + PingFang，Windows 走 Segoe UI + 雅黑，
+     Linux 走 Noto。字体栈的权威副本在 src/styles/tokens.ts（测量与布局共用），
+     两处由 app.css.test.js 一致性检查锁定。 */
   --font-sans:
-    -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC",
-    "Hiragino Sans GB", "Segoe UI", sans-serif;
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
 
   /* 表面与文字 */
   --canvas: #f8f9fc;
@@ -11,7 +14,7 @@
   --surface-hover: #f4f4f8;
   --ink: #17182b;
   --ink-strong: #111225;
-  --muted: #777a8d;
+  --muted: #686c80;
   --muted-soft: #a2a5b4;
   --line: #e1e3eb;
   --line-strong: #d3d5df;
@@ -29,6 +32,12 @@
   --amber: #ee9b18;
   --danger: #d84646;
   --success: #27845f;
+
+  /* 连线色板：与 FlowEdgeLayer.edgeStroke 的实际渲染值一致（TS 副本在
+     src/styles/tokens.ts），色板 swatch 与连线必须同源。 */
+  --edge-blue: #5689df;
+  --edge-emerald: #4b9b7b;
+  --edge-amber: #bd8436;
 
   /* 字号刻度：节点角色沿用产品视觉规格，框架界面共用一套 UI 刻度 */
   --fs-10: 10px;
@@ -88,6 +97,13 @@
   --shadow-selection:
     0 0 0 4px var(--violet-ring), 0 8px 24px rgba(54, 43, 98, 0.09);
   --shadow-float: var(--shadow-overlay);
+  /* 画布对象上的紫色海拔变体：与 --shadow-hover 同几何、紫色调，
+     供悬浮端口等画布控件使用。 */
+  --shadow-hover-violet: 0 4px 12px rgba(73, 52, 170, 0.12);
+  /* 判断节点的 SVG 轮廓辉光，配 filter: drop-shadow() 使用：
+     选中/编辑态与连接目标态强度不同，保持两档。 */
+  --glow-decision: 0 3px 6px rgba(84, 61, 180, 0.12);
+  --glow-decision-strong: 0 3px 8px rgba(84, 61, 180, 0.18);
 
   /* 覆盖层遮罩：命令/搜索/设置用轻遮罩，不可逆确认用重遮罩 */
   --veil-light: rgba(244, 245, 249, 0.38);
@@ -105,4 +121,50 @@
 
   --motion-fast: 140ms;
   --motion-standard: 220ms;
+
+  /* 间距刻度：数值是当前在用的规范档位，只收编不重排。奇数档（5/7/9px）
+     是与 1px 边框配合的光学补偿（如 9px 内边距 + 1px 边框 = 10px 视觉），
+     不要“偶数化”。新样式从这里取值；新增档位前先确认现有档不适用。 */
+  --space-nudge: 2px;
+  --space-1: 3px;
+  --space-2: 4px;
+  --space-3: 5px;
+  --space-4: 6px;
+  --space-5: 7px;
+  --space-6: 8px;
+  --space-7: 9px;
+  --space-8: 10px;
+  --space-9: 11px;
+  --space-10: 12px;
+  --space-11: 14px;
+  --space-12: 16px;
+  --space-13: 18px;
+  --space-14: 20px;
+  --space-15: 22px;
+  --space-16: 26px;
+
+  /* 控件尺寸：图标按钮、紧凑按钮、胶囊壳、菜单行四档。宽高不成对时
+     （如 30×28 工具条按钮）高度取档、宽度保留原值。 */
+  --control-icon: 34px;
+  --control-sm: 30px;
+  --shell-h: 42px;
+  --menu-row-h: 40px;
+
+  /* 页面留白：悬浮控件距窗口边缘的统一内缩，窄屏由媒体查询覆盖。 */
+  --page-inset: 27px;
+
+  /* 焦点环：键盘焦点的默认配方（global.css 全局消费）。画布对象选中、
+     搜索输入等表面按各自契约使用安静式反馈，不复用此环。 */
+  --focus-ring: 0 0 0 3px var(--violet-ring);
+
+  /* 层叠刻度：画布内临时层 < 悬浮控件 < 覆盖层栈。应用框架与弹层
+     必须从这里取值，禁止再引入裸数字。 */
+  --z-status: 19;
+  --z-chrome: 20;
+  --z-overlay: 40;
+  --z-settings: 50;
+  --z-context-menu: 55;
+  --z-confirm: 60;
+  --z-choice: 65;
+  --z-drag-ghost: 100;
 }

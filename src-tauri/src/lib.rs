@@ -260,28 +260,34 @@ fn validate_reveal_target(document_path: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-fn reveal_document_in_file_manager(document_path: String) -> Result<(), String> {
-    let target = validate_reveal_target(&document_path)?;
+async fn reveal_document_in_file_manager(document_path: String) -> Result<(), String> {
+    // Waiting on the file-manager process must not occupy the main thread;
+    // the validation and spawn both run on the blocking pool.
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = validate_reveal_target(&document_path)?;
 
-    #[cfg(target_os = "macos")]
-    let status = Command::new("open").arg("-R").arg(&target).status();
+        #[cfg(target_os = "macos")]
+        let status = Command::new("open").arg("-R").arg(&target).status();
 
-    #[cfg(target_os = "windows")]
-    let status = Command::new("explorer")
-        .arg(format!("/select,{}", target.display()))
-        .status();
+        #[cfg(target_os = "windows")]
+        let status = Command::new("explorer")
+            .arg(format!("/select,{}", target.display()))
+            .status();
 
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let status = Command::new("xdg-open")
-        .arg(target.parent().unwrap_or_else(|| Path::new("/")))
-        .status();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let status = Command::new("xdg-open")
+            .arg(target.parent().unwrap_or_else(|| Path::new("/")))
+            .status();
 
-    let status = status.map_err(|_| "无法打开文件管理器".to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err("无法在文件管理器中显示这个文件".to_string())
-    }
+        let status = status.map_err(|_| "无法打开文件管理器".to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("无法在文件管理器中显示这个文件".to_string())
+        }
+    })
+    .await
+    .map_err(|error| format!("无法打开文件管理器: {error}"))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { AppNotice } from "../../types/feedback";
 import type { SaveState } from "../../types/mindmap";
+import { MOTION } from "../../styles/tokens";
 
 interface StatusBarProps {
   saveState: SaveState;
@@ -26,8 +27,10 @@ interface DisplayedSaveStatus {
   state: Exclude<SaveState, "saved">;
 }
 
-const contentExitDuration = 160;
-const shellExitDuration = 240;
+// Exit timers come from the shared token sheet; the shell timer must stay at
+// or beyond the width transition (--motion-standard) it waits for.
+const contentExitDuration = MOTION.statusContentExitMs;
+const shellExitDuration = MOTION.statusShellExitMs;
 const collapsedShellWidth = 38;
 const saveProgressDelay = 1000;
 

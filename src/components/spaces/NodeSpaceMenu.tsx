@@ -1,5 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { LaniakeaSpace } from "../../types/mindmap";
+import {
+  moveMenuFocus,
+  useMenuDismissal,
+  useMenuFocusOnOpen,
+} from "../menu/menuKeyboard";
 
 interface NodeSpaceMenuProps {
   nodeLabel: string;
@@ -57,31 +62,13 @@ export function NodeSpaceMenu({
     );
   }, [space]);
 
-  useEffect(() => {
-    menuRef.current
-      ?.querySelector<HTMLButtonElement>("[role='menuitem']")
-      ?.focus({ preventScroll: true });
-    const closeForOutsidePointer = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onClose(false);
-    };
-    const closeForOutsideFocus = (event: FocusEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onClose(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      onClose(true);
-    };
-    window.addEventListener("pointerdown", closeForOutsidePointer);
-    window.addEventListener("focusin", closeForOutsideFocus);
-    window.addEventListener("keydown", closeOnEscape, true);
-    return () => {
-      window.removeEventListener("pointerdown", closeForOutsidePointer);
-      window.removeEventListener("focusin", closeForOutsideFocus);
-      window.removeEventListener("keydown", closeOnEscape, true);
-    };
-  }, [onClose]);
+  useMenuFocusOnOpen(menuRef);
+  useMenuDismissal({
+    containerRef: menuRef,
+    onEscape: () => onClose(true),
+    onOutsidePointer: () => onClose(false),
+    onOutsideFocus: () => onClose(false),
+  });
 
   const run = (action: () => void) => () => {
     onClose(false);
@@ -94,15 +81,9 @@ export function NodeSpaceMenu({
       className="node-space-menu"
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
-        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-        event.preventDefault();
-        const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-          "[role='menuitem']:not(:disabled)",
-        )];
-        const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-        const direction = event.key === "ArrowDown" ? 1 : -1;
-        const nextIndex = (currentIndex + direction + items.length) % items.length;
-        items[nextIndex]?.focus();
+        if (moveMenuFocus(event.currentTarget, event.key)) {
+          event.preventDefault();
+        }
       }}
       ref={menuRef}
       role="menu"

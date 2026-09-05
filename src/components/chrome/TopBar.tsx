@@ -7,6 +7,7 @@ import {
 import type { RecentDocument } from "../../persistence/recentDocuments";
 import type { SaveState } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
+import { moveMenuFocus } from "../menu/menuKeyboard";
 import {
   isInputMethodKey,
   markInputMethodComposition,
@@ -129,8 +130,6 @@ export function TopBar({
   };
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const items = menuItems();
-    const index = items.indexOf(document.activeElement as HTMLButtonElement);
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -141,22 +140,10 @@ export function TopBar({
       setOpenMenu(null);
       return;
     }
-    if (
-      !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) ||
-      items.length === 0
-    ) {
-      return;
+    const menu = menuRef.current;
+    if (menu && moveMenuFocus(menu, event.key)) {
+      event.preventDefault();
     }
-    event.preventDefault();
-    const nextIndex =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? items.length - 1
-          : event.key === "ArrowDown"
-            ? (Math.max(index, -1) + 1) % items.length
-            : (index <= 0 ? items.length : index) - 1;
-    items[nextIndex]?.focus();
   };
 
   const runMenuAction = (

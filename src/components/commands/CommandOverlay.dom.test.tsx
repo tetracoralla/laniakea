@@ -23,7 +23,7 @@ describe("CommandOverlay result limits", () => {
     container.remove();
   });
 
-  it("states when matching nodes exceed the rendered result limit", async () => {
+  it("shows a bounded page and a route to the remaining matches", async () => {
     const document = createSeedDocument();
     const now = "2026-08-27T00:00:00.000Z";
     document.nodes = Object.fromEntries(
@@ -63,7 +63,27 @@ describe("CommandOverlay result limits", () => {
       overlayItemLimit,
     );
     expect(container.querySelector("[role='status']")?.textContent)
-      .toBe(`显示前 ${overlayItemLimit} 条，共 ${overlayItemLimit + 3} 条`);
+      .toBe(`1–${overlayItemLimit} / ${overlayItemLimit + 3}`);
+  });
+
+  it("lets keyboard users reach repeated matches beyond the first page", async () => {
+    const document = createSeedDocument();
+    const base = document.nodes[document.rootId];
+    document.nodes = Object.fromEntries(Array.from({ length: 28 }, (_, index) => {
+      const id = `repeated-${index}`;
+      return [id, { ...base, id, text: "待确认", parentId: null, children: [] }];
+    }));
+    document.rootId = "repeated-0";
+    document.floatingRoots = Object.keys(document.nodes).slice(1).map((id) => ({ id, x: 0, y: 0 }));
+    const onSelectNode = vi.fn();
+    await act(async () => root.render(<CommandOverlay document={document} mode="search" onClose={() => undefined} onExecute={() => undefined} onSelectNode={onSelectNode} />));
+    const input = container.querySelector("input")!;
+    for (let i = 0; i < 24; i += 1) {
+      await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+    }
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(onSelectNode).toHaveBeenCalledWith("repeated-24", undefined);
+    expect(container.querySelectorAll("[role='option']").length).toBeLessThanOrEqual(overlayItemLimit);
   });
 
   it("shows a nested result's ancestor trail instead of a flat list", async () => {

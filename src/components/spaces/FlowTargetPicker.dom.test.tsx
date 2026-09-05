@@ -54,7 +54,7 @@ describe("FlowTargetPicker", () => {
     const input = container.querySelector("input")!;
     const list = container.querySelector('[role="listbox"]')!;
     expect(container.querySelectorAll('[role="option"]')).toHaveLength(20);
-    expect(container.textContent).toContain("显示前 20 步，共 25 步");
+    expect(container.textContent).toContain("1–20 / 25");
     expect(input.getAttribute("aria-controls")).toBe(list.id);
     expect(input.getAttribute("aria-activedescendant")).toBe(
       container.querySelector('[role="option"]')?.id,
@@ -99,5 +99,51 @@ describe("FlowTargetPicker", () => {
       }));
     });
     expect(onChoose).not.toHaveBeenCalled();
+  });
+
+  it("reaches later identical steps and returns focus to search after paging", async () => {
+    const onChoose = vi.fn();
+    const nodes = candidates(25).map((node) => ({ ...node, text: "复核" }));
+    await act(async () => root.render(
+      <FlowTargetPicker candidates={nodes} onChoose={onChoose}
+        onClose={() => undefined} sourceLabel="入口" />,
+    ));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[aria-label='下一页结果']")!.click();
+    });
+    const input = container.querySelector("input")!;
+    expect(document.activeElement).toBe(input);
+    expect(container.querySelectorAll("[role='option']")).toHaveLength(5);
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+    expect(onChoose).toHaveBeenCalledWith("node-20");
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowUp" }));
+    });
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+    expect(onChoose).toHaveBeenLastCalledWith("node-19");
+  });
+
+  it("resets stale selection when the available target set changes", async () => {
+    const onChoose = vi.fn();
+    const nodes = candidates(25);
+    const render = (items: FlowNode[]) => (
+      <FlowTargetPicker candidates={items} onChoose={onChoose}
+        onClose={() => undefined} sourceLabel="入口" />
+    );
+    await act(async () => root.render(render(nodes)));
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[aria-label='下一页结果']")!.click();
+    });
+    await act(async () => root.render(render([nodes[3]])));
+    const input = container.querySelector("input")!;
+    expect(document.getElementById(input.getAttribute("aria-activedescendant")!)).not.toBeNull();
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+    });
+    expect(onChoose).toHaveBeenCalledWith("node-3");
   });
 });

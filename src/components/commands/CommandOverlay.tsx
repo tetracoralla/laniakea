@@ -12,10 +12,13 @@ import {
   type CommandId,
   type CommandTarget,
 } from "../../commands/registry";
+import { displayShortcutParts } from "../../model/shortcutDisplay";
 import type { MindMapDocument } from "../../types/mindmap";
 import { findMindNode } from "../../model/spaces";
 import { isInputMethodKey } from "../../model/inputMethod";
 import { Icon } from "../icons/Icon";
+import { usePagedResults, useRevealActiveOption } from "../../hooks/usePagedResults";
+import { ResultPagination } from "../overlays/ResultPagination";
 import { trapDialogTab } from "../overlays/focus";
 
 export type OverlayMode = "commands" | "search";
@@ -45,17 +48,6 @@ interface SearchEntry extends OverlayItem {
 
 export const overlayItemLimit = 12;
 
-export function moveOverlayIndex(
-  current: number,
-  delta: -1 | 1,
-  renderedCount: number,
-): number {
-  return Math.max(
-    0,
-    Math.min(Math.max(0, renderedCount - 1), current + delta),
-  );
-}
-
 export function CommandOverlay({
   mode,
   document,
@@ -65,7 +57,6 @@ export function CommandOverlay({
   onSelectNode,
 }: CommandOverlayProps) {
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const listId = useId();
@@ -118,12 +109,9 @@ export function CommandOverlay({
       });
     });
     return entries;
-  }, [document.nodes, document.spaces, mode]);
+  }, [document.nodes, document.rootId, document.spaces, mode]);
 
-  const result = useMemo<{
-    items: OverlayItem[];
-    total: number;
-  }>(() => {
+  const matches = useMemo<OverlayItem[]>(() => {
     const normalized = query.trim().toLocaleLowerCase();
     if (mode === "commands") {
       const matches = commandRegistry
@@ -141,22 +129,15 @@ export function CommandOverlay({
           metaKind: "shortcut" as const,
           command,
         }));
-      return {
-        items: matches.slice(0, overlayItemLimit),
-        total: matches.length,
-      };
+      return matches;
     }
 
-    const items: OverlayItem[] = [];
-    let total = 0;
-    searchEntries.forEach((entry) => {
-      if (normalized && !entry.normalizedTitle.includes(normalized)) return;
-      total += 1;
-      if (items.length < overlayItemLimit) items.push(entry);
-    });
-    return { items, total };
+    return searchEntries.filter((entry) => !normalized || entry.normalizedTitle.includes(normalized));
   }, [commandTarget, mode, query, searchEntries]);
-  const renderedItems = result.items;
+  const results = usePagedResults(matches, overlayItemLimit);
+  const { activeIndex, pageStart, visibleItems: renderedItems } = results;
+  const activeOptionId = results.activeItem ? `${listId}-option-${activeIndex}` : undefined;
+  useRevealActiveOption(activeOptionId, matches);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -164,10 +145,7 @@ export function CommandOverlay({
 
   useEffect(() => {
     setQuery("");
-    setActiveIndex(0);
   }, [mode]);
-
-  useEffect(() => setActiveIndex(0), [query]);
 
   const choose = (item: OverlayItem | undefined) => {
     if (!item) return;
@@ -204,11 +182,7 @@ export function CommandOverlay({
         <div className="command-overlay__search">
           <Icon name={mode === "commands" ? "command" : "search"} />
           <input
-            aria-activedescendant={
-              renderedItems[activeIndex]
-                ? `${listId}-option-${activeIndex}`
-                : undefined
-            }
+            aria-activedescendant={activeOptionId}
             aria-controls={listId}
             aria-autocomplete="list"
             aria-expanded="true"
@@ -218,19 +192,19 @@ export function CommandOverlay({
               if (isInputMethodKey(event.nativeEvent)) return;
               if (event.key === "ArrowDown") {
                 event.preventDefault();
-                setActiveIndex((index) =>
-                  moveOverlayIndex(index, 1, renderedItems.length),
-                );
+                results.move(1);
               }
               if (event.key === "ArrowUp") {
                 event.preventDefault();
-                setActiveIndex((index) =>
-                  moveOverlayIndex(index, -1, renderedItems.length),
-                );
+                results.move(-1);
+              }
+              if (event.key === "PageDown" || event.key === "PageUp") {
+                event.preventDefault();
+                results.move(event.key === "PageDown" ? overlayItemLimit : -overlayItemLimit);
               }
               if (event.key === "Enter") {
                 event.preventDefault();
-                choose(renderedItems[activeIndex]);
+                choose(results.activeItem);
               }
             }}
             placeholder={mode === "commands" ? "输入命令…" : "搜索内容…"}
@@ -245,40 +219,37 @@ export function CommandOverlay({
           id={listId}
           role="listbox"
         >
-          {result.total === 0 ? (
+          {results.total === 0 ? (
             <div className="command-overlay__empty">没有匹配结果</div>
           ) : (
             renderedItems.map((item, index) => (
               <button
-                aria-selected={activeIndex === index}
-                className={activeIndex === index ? "is-active" : ""}
-                id={`${listId}-option-${index}`}
+                aria-selected={activeIndex === pageStart + index}
+                className={activeIndex === pageStart + index ? "is-active" : ""}
+                id={`${listId}-option-${pageStart + index}`}
                 key={item.id}
                 onClick={() => choose(item)}
-                onPointerMove={() => setActiveIndex(index)}
+                onPointerMove={() => results.select(pageStart + index)}
                 role="option"
                 type="button"
+                title={item.title}
               >
                 <span>
                   <strong>{item.title}</strong>
-                  {item.command && <small>{item.command.group}</small>}
+                  {item.command ? <small>{item.command.group}</small> : item.meta ? (
+                    <small className="command-overlay__meta" title={item.meta}>{item.meta}</small>
+                  ) : null}
                 </span>
                 {item.metaKind === "shortcut" ? (
-                  <kbd>
-                    {item.meta.replaceAll("Meta", "⌘").replaceAll("+", "")}
-                  </kbd>
-                ) : item.meta ? (
-                  <small className="command-overlay__meta">{item.meta}</small>
+                  <kbd>{displayShortcutParts(item.meta.split("+"))}</kbd>
                 ) : null}
               </button>
             ))
           )}
         </div>
-        {result.total > renderedItems.length && (
-          <div className="command-overlay__truncation" role="status">
-            显示前 {renderedItems.length} 条，共 {result.total} 条
-          </div>
-        )}
+        <ResultPagination start={pageStart} count={renderedItems.length} total={results.total}
+          onPrevious={() => { results.previousPage(); inputRef.current?.focus({ preventScroll: true }); }}
+          onNext={() => { results.nextPage(); inputRef.current?.focus({ preventScroll: true }); }} />
       </section>
     </div>
   );

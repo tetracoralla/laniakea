@@ -895,6 +895,28 @@ describe("rendered interaction regressions", () => {
     ).toBeNull();
   });
 
+  it("reveals a search result beneath a collapsed Map Space ancestor", async () => {
+    const created = createMapSpace(largeDocument(2), "node-1");
+    const space = created.document.spaces![created.spaceId];
+    if (space.type !== "map") throw new Error("Expected map space");
+    space.nodes[space.rootId].collapsed = true;
+    space.nodes[space.rootId].children = ["hidden-detail"];
+    space.nodes["hidden-detail"] = { ...space.nodes[space.rootId], id: "hidden-detail", parentId: space.rootId, text: "隐藏的搜索目标", children: [], collapsed: false };
+    window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(created.document));
+    await act(async () => { root.render(<App />); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { animationFrames.splice(0).forEach((callback) => callback(0)); });
+    await act(async () => { container.querySelector<HTMLButtonElement>("button[aria-label='搜索']")!.click(); await Promise.resolve(); await Promise.resolve(); });
+    const search = container.querySelector<HTMLInputElement>("input[aria-label='搜索内容']")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(search, "隐藏的搜索目标");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => container.querySelector<HTMLButtonElement>("[role='option']")!.click());
+    await act(async () => { animationFrames.splice(0).forEach((callback) => callback(0)); });
+    expect(container.querySelector("[data-node-id='hidden-detail'].is-primary")).not.toBeNull();
+    expect(container.querySelector("button[aria-label='返回上层图']")).not.toBeNull();
+  });
+
   it("restores a fresh node target when returning from a search jump into a space", async () => {
     const mindMap = createMapSpace(largeDocument(2), "node-1").document;
     window.localStorage.setItem("origin.mindmap.v1", JSON.stringify(mindMap));

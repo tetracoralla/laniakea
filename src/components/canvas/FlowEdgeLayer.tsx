@@ -28,6 +28,7 @@ import {
   markInputMethodComposition,
 } from "../../model/inputMethod";
 import { useFlowEdgeRouteDrag } from "../../hooks/useFlowEdgeRouteDrag";
+import { EDGE_TONES } from "../../styles/tokens";
 import { FlowEdgeSelectionControls } from "./FlowEdgeSelectionControls";
 
 interface FlowEdgeLayerProps {
@@ -51,7 +52,13 @@ interface FlowEdgeLayerProps {
     fixedPort: FlowPlacementDirection,
     event: ReactPointerEvent<SVGCircleElement>,
   ) => void;
-  onSelectEdge: (edgeId: string) => void;
+  onEndpointKeyboardActivate: (
+    edge: FlowEdge,
+    endpoint: "from" | "to",
+    movingPort: FlowPlacementDirection,
+    returnFocus: SVGCircleElement,
+  ) => void;
+  onSelectEdge: (edgeId: string, restoreCanvasFocus?: boolean) => void;
   selectedEdgeId: string | null;
   spaceId: string;
   zoom: number;
@@ -60,9 +67,9 @@ interface FlowEdgeLayerProps {
 function edgeStroke(edge: FlowEdge, selected: boolean): string {
   if (selected) return "var(--violet)";
   if (edge.style?.tone === "violet") return "var(--violet)";
-  if (edge.style?.tone === "blue") return "#5689df";
-  if (edge.style?.tone === "emerald") return "#4b9b7b";
-  if (edge.style?.tone === "amber") return "#bd8436";
+  if (edge.style?.tone === "blue") return EDGE_TONES.blue;
+  if (edge.style?.tone === "emerald") return EDGE_TONES.emerald;
+  if (edge.style?.tone === "amber") return EDGE_TONES.amber;
   return "color-mix(in srgb, var(--violet) 42%, var(--muted-soft))";
 }
 
@@ -132,6 +139,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   onDraftChange = () => undefined,
   onDraftFinish = () => undefined,
   onEndpointPointerDown,
+  onEndpointKeyboardActivate,
   onSelectEdge,
   selectedEdgeId,
   spaceId,
@@ -276,6 +284,8 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
                 style={pathStyle}
               />
               <path
+                aria-label={`选择连线：${nodes[edge.from]?.text || "未命名步骤"} 到 ${nodes[edge.to]?.text || "未命名步骤"}`}
+                aria-pressed={selectedEdgeId === edge.id}
                 className="flow-connector__hit"
                 d={flowConnectorPathFromRoute(
                   route,
@@ -291,7 +301,15 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
                   onSelectEdge(edge.id);
                   beginEdit(edge);
                 }}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelectEdge(edge.id, false);
+                }}
+                role="button"
                 strokeWidth={16 / zoom}
+                tabIndex={0}
               />
             </g>
           );
@@ -307,6 +325,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
           onChangeStyle={(patch) => onChangeStyle(selectedEdge.id, patch)}
           onClearSelection={onClearSelection}
           onDelete={() => onDeleteEdge(selectedEdge.id)}
+          onEndpointKeyboardActivate={onEndpointKeyboardActivate}
           onEndpointPointerDown={onEndpointPointerDown}
           route={selectedRoute}
           routeDrag={routeDrag}

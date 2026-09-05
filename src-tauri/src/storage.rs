@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::{
+    borrow::Cow,
     collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque},
     fs::{self, File, OpenOptions},
     hash::{Hash, Hasher},
@@ -643,6 +644,16 @@ fn sync_directory(path: &Path) -> Result<(), String> {
             .and_then(|directory| directory.sync_all())
             .map_err(|error| storage_error("无法同步本地目录", error))?;
     }
+    // Rust's standard library does not expose a supported Windows directory
+    // flush. Calling File::sync_all on a directory handle would reach
+    // FlushFileBuffers after the rename has already committed and can turn a
+    // successful save into a false failure. The temporary file itself is
+    // synced before replacement; keep the directory step Unix-only until a
+    // Windows implementation can be validated on the real platform.
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
     Ok(())
 }
 
@@ -681,11 +692,19 @@ fn write_atomic(target: &Path, content: &str) -> Result<(), String> {
         .parent()
         .ok_or_else(|| "无法定位目标文件目录".to_string())?;
     fs::create_dir_all(directory).map_err(|error| storage_error("无法创建本地目录", error))?;
-    let file_name = target
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("document.mindmap.json");
-    let temporary = directory.join(format!(".{file_name}.{}.tmp", unique_stamp()));
+    let existing_permissions = match fs::metadata(target) {
+        Ok(metadata) if metadata.is_file() => Some(metadata.permissions()),
+        Ok(_) => None,
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => return Err(storage_error("无法读取目标文件权限", error)),
+    };
+    // Keep the sibling name independent of the target basename: a legal
+    // 255-byte filename must not become an illegal longer temporary name.
+    let temporary = directory.join(format!(
+        ".laniakea-{}-{}.tmp",
+        std::process::id(),
+        unique_stamp(),
+    ));
     let result = (|| {
         let mut file = OpenOptions::new()
             .create_new(true)
@@ -694,6 +713,10 @@ fn write_atomic(target: &Path, content: &str) -> Result<(), String> {
             .map_err(|error| storage_error("无法创建临时文件", error))?;
         file.write_all(content.as_bytes())
             .map_err(|error| storage_error("无法写入临时文件", error))?;
+        if let Some(permissions) = existing_permissions {
+            file.set_permissions(permissions)
+                .map_err(|error| storage_error("无法保留目标文件权限", error))?;
+        }
         file.sync_all()
             .map_err(|error| storage_error("无法同步临时文件", error))?;
         #[cfg(test)]
@@ -738,13 +761,32 @@ impl Drop for UpdateFileLock {
     }
 }
 
+fn normalize_update_lock_key(path: &str, windows: bool) -> Cow<'_, str> {
+    if !windows {
+        return Cow::Borrowed(path);
+    }
+    let path = path.replace('/', "\\");
+    if let Some(rest) = path.strip_prefix(r"\\?\UNC\") {
+        Cow::Owned(format!(r"\\{rest}"))
+    } else if let Some(rest) = path.strip_prefix(r"\\?\") {
+        Cow::Owned(rest.to_string())
+    } else {
+        Cow::Owned(path)
+    }
+}
+
+fn update_lock_name_for_platform(path: &str, windows: bool) -> String {
+    let key = normalize_update_lock_key(path, windows);
+    let digest = sha256_hex(key.as_bytes());
+    format!(".laniakea-lock-{}", &digest[..32])
+}
+
 fn update_lock_path(canonical_target: &Path) -> PathBuf {
     let path = canonical_target.to_string_lossy();
-    let digest = sha256_hex(path.as_bytes());
     canonical_target
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join(format!(".laniakea-lock-{}", &digest[..32]))
+        .join(update_lock_name_for_platform(&path, cfg!(windows)))
 }
 
 #[cfg(unix)]
@@ -2379,6 +2421,8 @@ pub(crate) async fn clear_active_document(app: AppHandle) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     fn document(title: &str) -> String {
         format!(
@@ -2837,6 +2881,38 @@ mod tests {
         assert!(fs::read_to_string(&second).unwrap().contains("另一张图"));
         assert_eq!(backup_count(&app_data, &first), MAX_BACKUPS);
         assert_eq!(backup_count(&app_data, &second), 0);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_replacement_preserves_existing_file_permissions() {
+        let directory = test_directory("atomic-permissions");
+        fs::create_dir_all(&directory).unwrap();
+        let target = directory.join("shared.md");
+        fs::write(&target, "before").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o660)).unwrap();
+
+        write_atomic(&target, "after").unwrap();
+
+        assert_eq!(
+            fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o660
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "after");
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn atomic_replacement_supports_a_legal_long_filename() {
+        let directory = test_directory("atomic-long-name");
+        fs::create_dir_all(&directory).unwrap();
+        let target = directory.join(format!("{}.md", "m".repeat(230)));
+        fs::write(&target, "before").unwrap();
+
+        write_atomic(&target, "after").unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "after");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -3551,6 +3627,26 @@ mod tests {
         assert_eq!(
             update_lock_path(Path::new("/tmp/方案.md")),
             Path::new("/tmp/.laniakea-lock-1dd1bad2ed9e0344d0c85c386dd1e6ff")
+        );
+    }
+
+    #[test]
+    fn windows_extended_paths_use_the_node_lock_name() {
+        assert_eq!(
+            normalize_update_lock_key(r"\\?\C:\Users\Ada\方案.md", true),
+            r"C:\Users\Ada\方案.md",
+        );
+        assert_eq!(
+            update_lock_name_for_platform(r"\\?\C:\Users\Ada\方案.md", true),
+            ".laniakea-lock-863ef6696318b82b930aeb9cb8aa0120",
+        );
+        assert_eq!(
+            update_lock_name_for_platform(r"C:\Users\Ada\方案.md", true),
+            ".laniakea-lock-863ef6696318b82b930aeb9cb8aa0120",
+        );
+        assert_eq!(
+            update_lock_name_for_platform(r"\\?\UNC\server\share\方案.md", true),
+            ".laniakea-lock-14cdd96838d04620b1cc4db37cb17ebf",
         );
     }
 

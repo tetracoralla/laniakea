@@ -1,3 +1,8 @@
+import {
+  displayShortcutCombination,
+  isMacLikePlatform,
+} from "../model/shortcutDisplay";
+
 interface ShortcutKeyboardEvent {
   altKey: boolean;
   code: string;
@@ -24,8 +29,13 @@ function shortcutKey(event: ShortcutKeyboardEvent): string | null {
 
 export function shortcutFromKeyboardEvent(
   event: ShortcutKeyboardEvent,
+  macLike = isMacLikePlatform(),
 ): string | null {
   const key = shortcutKey(event);
+  // Tauri's CommandOrControl means Ctrl away from macOS. Silently accepting
+  // Super/Windows here would therefore register a different shortcut from
+  // the one the user actually pressed.
+  if (event.metaKey && !macLike) return null;
   const hasPrimaryModifier =
     event.metaKey || event.ctrlKey || event.altKey;
   if (!key || !hasPrimaryModifier) return null;
@@ -39,24 +49,6 @@ export function shortcutFromKeyboardEvent(
   return parts.join("+");
 }
 
-const displayParts: Record<string, string> = {
-  CommandOrControl: "⌘",
-  Command: "⌘",
-  Meta: "⌘",
-  Control: "⌃",
-  Alt: "⌥",
-  Option: "⌥",
-  Shift: "⇧",
-  Space: "空格",
-  ArrowLeft: "←",
-  ArrowRight: "→",
-  ArrowUp: "↑",
-  ArrowDown: "↓",
-};
-
 export function displayGlobalShortcut(shortcut: string): string {
-  return shortcut
-    .split("+")
-    .map((part) => displayParts[part] ?? part)
-    .join("");
+  return displayShortcutCombination(shortcut);
 }

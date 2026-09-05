@@ -1,3 +1,5 @@
+import { configureInternalDocumentRoot } from "./recentDocuments";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
 
@@ -19,6 +21,10 @@ import {
   saveLocalDocument,
   shouldFitLoadedDocument,
 } from "./localDocumentStore";
+
+configureInternalDocumentRoot(
+  "/Volumes/Workspace/Library/Application Support/com.openadam.origin",
+);
 
 describe("desktop Markdown document persistence", () => {
   beforeEach(() => invoke.mockReset());

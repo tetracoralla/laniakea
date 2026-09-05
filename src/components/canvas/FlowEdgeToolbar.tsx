@@ -8,6 +8,7 @@ import type {
   FlowEdge,
   FlowEdgeStyle,
 } from "../../types/mindmap";
+import { Icon } from "../icons/Icon";
 
 interface FlowEdgeToolbarProps {
   anchor: { x: number; y: number };
@@ -148,7 +149,7 @@ export function FlowEdgeToolbar({
             title={edge.label ? "编辑文字" : "添加文字"}
             type="button"
           >
-            T
+            <Icon aria-hidden="true" name="text" size={15} />
           </button>
           <button
             aria-label="删除连线"
@@ -157,7 +158,7 @@ export function FlowEdgeToolbar({
             title="删除连线（Delete）"
             type="button"
           >
-            <span aria-hidden="true" />
+            <Icon aria-hidden="true" name="trash" size={15} />
           </button>
         </div>
 
@@ -165,7 +166,7 @@ export function FlowEdgeToolbar({
           <div
             aria-label="连线样式"
             className="flow-edge-style-panel"
-            role="dialog"
+            role="group"
           >
             <ChoiceGroup
               current={style.kind ?? "rounded"}

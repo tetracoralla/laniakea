@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { configureInternalDocumentRoot } from "../persistence/recentDocuments";
+
 import "fake-indexeddb/auto";
 import { act } from "react";
 import { useState } from "react";
@@ -70,6 +72,10 @@ vi.mock("../persistence/localDocumentStore", () => ({
   ) => !loaded.viewStateRestored,
 }));
 
+configureInternalDocumentRoot(
+  "/Volumes/Workspace/Library/Application Support/com.openadam.origin",
+);
+
 describe("document workflow", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -109,6 +115,48 @@ describe("document workflow", () => {
       .showSaveFilePicker;
     delete (window as Window & { showOpenFilePicker?: unknown })
       .showOpenFilePicker;
+  });
+
+  it("saves edits made while a new draft and its activation are pending", async () => {
+    let resolveDraft!: (draft: ReturnType<typeof preparedNewDocument>) => void;
+    const preparing = new Promise<ReturnType<typeof preparedNewDocument>>((resolve) => {
+      resolveDraft = resolve;
+    });
+    let resolveActivation!: () => void;
+    mocks.activateLocalDocument.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveActivation = resolve;
+    }));
+    let current = createSeedDocument();
+    const savedTitles: string[] = [];
+    const saveBeforeSwitch = vi.fn(async () => {
+      savedTitles.push(current.title);
+      return true;
+    });
+    const openDocument = vi.fn();
+    function Harness() {
+      const workflow = useDocumentWorkflow({
+        document: current, documentPath: "/tmp/当前.md", currentDocumentPath: "/tmp/当前.md",
+        recentDocuments: [], saveState: "saved", saveError: null, notify: vi.fn(),
+        newDocument: () => preparing, openDocument, replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true), retrySave: vi.fn(async () => true),
+        saveBeforeSwitch, beginBlankDocument: vi.fn(), finishDocumentSwitch: vi.fn(),
+        moveRecentDocument: vi.fn(async () => true), removeRecentDocument: vi.fn(),
+      });
+      return <button onClick={workflow.createNewDocument}>新建</button>;
+    }
+    await act(async () => root.render(<Harness />));
+    await act(async () => container.querySelector("button")!.click());
+    current = { ...current, title: "创建等待期间的输入" };
+    await act(async () => root.render(<Harness />));
+    await act(async () => resolveDraft(preparedNewDocument()));
+    expect(savedTitles.at(-1)).toBe("创建等待期间的输入");
+    expect(openDocument).not.toHaveBeenCalled();
+    current = { ...current, title: "激活等待期间的输入" };
+    await act(async () => root.render(<Harness />));
+    await act(async () => resolveActivation());
+    expect(savedTitles.at(-1)).toBe("激活等待期间的输入");
+    expect(openDocument).toHaveBeenCalledOnce();
+    expect(mocks.activateLocalDocument).toHaveBeenCalledTimes(2);
   });
 
   it("confirms a successful explicit save through the shared notice surface", async () => {
@@ -1320,200 +1368,114 @@ describe("document workflow", () => {
     );
   });
 
-  it("routes Save to Save As for a protected browser Markdown source", async () => {
+  it("cancels a browser write if the document changes while the output stream opens", async () => {
     mocks.desktopRuntime = false;
-    const showSaveFilePicker = vi.fn(async () => ({
-      createWritable: async () => ({
-        write: async () => undefined,
-        close: async () => undefined,
-      }),
-    }));
+    const stream = deferred<{ write: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn>; abort: ReturnType<typeof vi.fn> }>();
+    const write = vi.fn(async () => undefined);
+    const close = vi.fn(async () => undefined);
+    const abort = vi.fn(async () => undefined);
+    let session = 0;
     Object.defineProperty(window, "showSaveFilePicker", {
       configurable: true,
-      value: showSaveFilePicker,
+      value: vi.fn(async () => ({ createWritable: () => stream.promise })),
     });
-    const retrySave = vi.fn(async () => true);
-
+    const notify = vi.fn();
     function Harness() {
+      const [document, setDocument] = useState(createSeedDocument());
       const workflow = useDocumentWorkflow({
-        document: createSeedDocument(),
-        documentPath: "browser://laniakea/protected-copy",
-        currentDocumentPath: "browser://laniakea/protected-copy",
-        protectedBrowserSourceName: "复杂原文.md",
-        recentDocuments: [],
-        saveState: "saved",
-        saveError: null,
-        notify: vi.fn(),
-        newDocument: async () => preparedNewDocument(),
-        openDocument: vi.fn(),
-        replaceDocument: vi.fn(),
-        saveDocumentAs: vi.fn(async () => true),
-        retrySave,
-        saveBeforeSwitch: vi.fn(async () => true),
-        beginBlankDocument: vi.fn(),
-        finishDocumentSwitch: vi.fn(),
-        moveRecentDocument: vi.fn(async () => true),
-        removeRecentDocument: vi.fn(),
+        document, documentPath: "/tmp/current.md", currentDocumentPath: "/tmp/current.md",
+        documentSessionId: session, isDocumentSessionCurrent: (id) => id === session,
+        recentDocuments: [], saveState: "saved", saveError: null, notify,
+        newDocument: async () => preparedNewDocument(), openDocument: vi.fn(), replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true), retrySave: vi.fn(async () => true),
+        saveBeforeSwitch: vi.fn(async () => true), beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(), moveRecentDocument: vi.fn(async () => true), removeRecentDocument: vi.fn(),
       });
-      return <button onClick={() => void workflow.saveCurrentDocument()}>保存</button>;
+      return <>
+        <button data-testid="save" onClick={() => void workflow.saveAsMarkdownDocument()}>另存为</button>
+        <button data-testid="switch" onClick={() => { session += 1; setDocument({ ...createSeedDocument(), title: "另一份私有文档" }); }}>切换</button>
+      </>;
     }
-
     await act(async () => root.render(<Harness />));
-    await act(async () => {
-      container.querySelector("button")!.click();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(showSaveFilePicker).toHaveBeenCalledOnce();
-    expect(retrySave).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-testid='save']")!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-testid='switch']")!.click());
+    await act(async () => stream.resolve({ write, close, abort }));
+    expect(write).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect(abort).toHaveBeenCalledOnce();
+    expect(notify).not.toHaveBeenCalled();
   });
 
-  it("restores rich Markdown if the save picker clears the protected source before rejecting it", async () => {
+  it("does not revive a superseded browser open after getFile resolves", async () => {
     mocks.desktopRuntime = false;
-    const originalSource =
-      "# 研究\n\n| 项目 | 结论 |\n| --- | --- |\n| A | B |\n";
-    let sourceContent = originalSource;
-    const importedFile = {
-      name: "研究.md",
-      text: vi.fn(async () => sourceContent),
-    } as unknown as File;
-    const sourceWrite = vi.fn(async (data: string | ArrayBuffer) => {
-      sourceContent = typeof data === "string"
-        ? data
-        : new TextDecoder().decode(data);
-    });
-    const sourceClose = vi.fn(async () => undefined);
-    const sourceHandle = {
-      createWritable: vi.fn(),
-      getFile: vi.fn(async () => ({
-        arrayBuffer: async () =>
-          new TextEncoder().encode(sourceContent).buffer,
-      } as File)),
-    };
-    const createWritable = vi.fn(async () => ({
-      write: sourceWrite,
-      close: sourceClose,
-    }));
-    const targetHandle = {
-      createWritable,
-      isSameEntry: vi.fn(async (other: unknown) => other === sourceHandle),
-    };
-    const showSaveFilePicker = vi.fn(async () => {
-      sourceContent = "";
-      return targetHandle;
-    });
-    Object.defineProperty(window, "showSaveFilePicker", {
+    const pickedFile = deferred<File>();
+    Object.defineProperty(window, "showOpenFilePicker", {
       configurable: true,
-      value: showSaveFilePicker,
+      value: vi.fn(async () => [{ getFile: () => pickedFile.promise }]),
     });
-    const newDocument = vi.fn(async (
-      document = createSeedDocument(),
-    ) => ({
-      document,
-      documentPath: "browser://laniakea/imported-rich",
-      sourceHash: "laniakea-browser:imported-rich:1",
-    }));
-    const notify = vi.fn();
-
+    const openDocument = vi.fn();
+    const newDocument = vi.fn(async () => preparedNewDocument());
     function Harness() {
-      const [active, setActive] = useState({
-        document: createSeedDocument(),
-        path: "browser://laniakea/current",
-        protectedSourceName: null as string | null,
-      });
       const workflow = useDocumentWorkflow({
-        document: active.document,
-        documentPath: active.path,
-        currentDocumentPath: active.path,
-        protectedBrowserSourceName: active.protectedSourceName,
-        recentDocuments: [],
-        saveState: "saved",
-        saveError: null,
-        isDocumentSessionCurrent: () => false,
-        notify,
-        newDocument,
-        openDocument: (
-          document,
-          path,
-          _sourcePath,
-          _recovered,
-          _protectedCopy,
-          _sourceHash,
-          protectedSourceName,
-        ) => setActive({
-          document,
-          path: path!,
-          protectedSourceName: protectedSourceName ?? null,
-        }),
-        replaceDocument: vi.fn(),
-        saveDocumentAs: vi.fn(async () => true),
-        retrySave: vi.fn(async () => true),
-        saveBeforeSwitch: vi.fn(async () => true),
-        beginBlankDocument: vi.fn(),
-        finishDocumentSwitch: vi.fn(),
-        moveRecentDocument: vi.fn(async () => true),
-        removeRecentDocument: vi.fn(),
+        document: createSeedDocument(), documentPath: "/tmp/current.md", currentDocumentPath: "/tmp/current.md",
+        recentDocuments: [], saveState: "saved", saveError: null, notify: vi.fn(),
+        newDocument, openDocument, replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true), retrySave: vi.fn(async () => true),
+        saveBeforeSwitch: vi.fn(async () => true), beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(), moveRecentDocument: vi.fn(async () => true), removeRecentDocument: vi.fn(),
       });
-      return (
-        <>
-          <button
-            data-testid="import-rich"
-            onClick={() =>
-              void workflow.importFile(importedFile, sourceHandle)
-            }
-          >
-            导入
-          </button>
-          <button
-            data-testid="save-rich"
-            onClick={() => void workflow.saveAsMarkdownDocument()}
-          >
-            另存为
-          </button>
-        </>
-      );
+      return <>
+        <button data-testid="open" onClick={workflow.openImport}>打开</button>
+        <button data-testid="new" onClick={workflow.createNewDocument}>新建</button>
+      </>;
     }
-
     await act(async () => root.render(<Harness />));
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>(
-        "[data-testid='import-rich']",
-      )!.click();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      container.querySelector<HTMLButtonElement>(
-        "[data-testid='save-rich']",
-      )!.click();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-testid='open']")!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>("[data-testid='new']")!.click());
+    expect(openDocument).toHaveBeenCalledOnce();
+    await act(async () => pickedFile.resolve({ name: "旧请求.md", text: async () => "# 旧请求\n\n- 不该打开" } as File));
+    expect(openDocument).toHaveBeenCalledOnce();
+    expect(newDocument).toHaveBeenCalledOnce();
+  });
 
-    expect(newDocument).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "研究" }),
-      { name: "研究.md" },
-    );
-    expect(showSaveFilePicker).toHaveBeenCalledWith(
-      expect.objectContaining({ suggestedName: "研究 - Laniakea.md" }),
-    );
-    expect(targetHandle.isSameEntry).toHaveBeenCalledWith(sourceHandle);
-    expect(createWritable).toHaveBeenCalledTimes(1);
-    expect(sourceHandle.createWritable).not.toHaveBeenCalled();
-    expect(sourceWrite).toHaveBeenCalledTimes(1);
-    expect(typeof sourceWrite.mock.calls[0]![0]).not.toBe("string");
-    expect(
-      (sourceWrite.mock.calls[0]![0] as ArrayBuffer).byteLength,
-    ).toBeGreaterThan(0);
-    expect(sourceClose).toHaveBeenCalledTimes(1);
-    expect(sourceContent).toBe(originalSource);
-    expect(notify).toHaveBeenCalledWith({
-      message: "protected source",
-      tone: "error",
+  it.each(["save", "save-as"])("downloads a protected browser source safely through %s, including after reload", async (action) => {
+    mocks.desktopRuntime = false;
+    const original = "# 研究\n\n| 项目 | 结论 |\n| --- | --- |\n| A | B |\n";
+    let sourceBytes = original;
+    const showSaveFilePicker = vi.fn(async () => {
+      sourceBytes = "";
+      return { createWritable: vi.fn() };
     });
+    Object.defineProperty(window, "showSaveFilePicker", { configurable: true, value: showSaveFilePicker });
+    const createObjectURL = vi.fn(() => "blob:protected-copy");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const downloads: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { downloads.push(this.download); });
+    const retrySave = vi.fn(async () => true);
+    const notify = vi.fn();
+    function Harness() {
+      const workflow = useDocumentWorkflow({
+        document: { ...createSeedDocument(), title: "研究" },
+        documentPath: "browser://laniakea/restored-rich", currentDocumentPath: "browser://laniakea/restored-rich",
+        // This protection is persisted in IndexedDB; no live source handle is needed.
+        protectedBrowserSourceName: "研究.md",
+        recentDocuments: [], saveState: "saved", saveError: null, notify,
+        newDocument: async () => preparedNewDocument(), openDocument: vi.fn(), replaceDocument: vi.fn(),
+        saveDocumentAs: vi.fn(async () => true), retrySave,
+        saveBeforeSwitch: vi.fn(async () => true), beginBlankDocument: vi.fn(),
+        finishDocumentSwitch: vi.fn(), moveRecentDocument: vi.fn(async () => true), removeRecentDocument: vi.fn(),
+      });
+      return <button onClick={() => void (action === "save" ? workflow.saveCurrentDocument() : workflow.saveAsMarkdownDocument())}>保存副本</button>;
+    }
+    await act(async () => root.render(<Harness />));
+    await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+    expect(showSaveFilePicker).not.toHaveBeenCalled();
+    expect(retrySave).not.toHaveBeenCalled();
+    expect(sourceBytes).toBe(original);
+    expect(downloads).toEqual(["研究 - Laniakea.md"]);
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledWith({ message: "Markdown 已下载" });
   });
 
   it("does not save a newer document through an older Save As dialog", async () => {

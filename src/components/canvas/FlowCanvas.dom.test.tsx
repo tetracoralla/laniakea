@@ -264,6 +264,37 @@ describe("FlowCanvas", () => {
       );
     });
     expect(container.querySelector("[role='menu']")).not.toBeNull();
+
+    const afterMenu = document.createElement("button");
+    afterMenu.textContent = "画布后的控件";
+    document.body.append(afterMenu);
+    await act(async () => afterMenu.focus());
+    expect(container.querySelector("[role='menu']")).toBeNull();
+    expect(document.activeElement).toBe(afterMenu);
+
+    const returnFocus = container.querySelector<HTMLButtonElement>(
+      ".flow-node__content",
+    )!;
+    const requestAnimationFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    await act(async () => {
+      container.querySelector<HTMLElement>(".flow-node")!.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 200, clientY: 160 }),
+      );
+    });
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }),
+      );
+    });
+    expect(container.querySelector("[role='menu']")).toBeNull();
+    expect(document.activeElement).toBe(returnFocus);
+    requestAnimationFrame.mockRestore();
+    afterMenu.remove();
   });
 
   it("preserves native composition text and commits once on Enter", async () => {
@@ -1105,6 +1136,72 @@ describe("FlowCanvas", () => {
       "from",
       sourceId,
       "left",
+    );
+  });
+
+  it("selects a connector and reopens either endpoint from the keyboard", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
+    const onReconnectEdge = vi.fn();
+    await act(async () => {
+      root.render(
+        <FlowCanvas
+          draft=""
+          editingId={null}
+          onAddBranch={() => undefined}
+          onAddNext={() => undefined}
+          onBeginEdit={() => undefined}
+          onCancelEdit={() => undefined}
+          onChangeKind={() => undefined}
+          onChangeEdgeLabel={() => undefined}
+          onCommitEdit={() => undefined}
+          onConnect={() => undefined}
+          onDelete={() => undefined}
+          onDraftChange={() => undefined}
+          onReconnectEdge={onReconnectEdge}
+          onSelect={() => undefined}
+          onViewportChange={() => undefined}
+          selectedId={null}
+          space={added.space}
+        />,
+      );
+    });
+
+    const hit = container.querySelector<SVGPathElement>(".flow-connector__hit")!;
+    expect(hit.getAttribute("role")).toBe("button");
+    expect(hit.getAttribute("aria-label")).toContain("到");
+    hit.focus();
+    await act(async () => {
+      hit.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+      }));
+    });
+    expect(document.activeElement).toBe(hit);
+    expect(container.querySelector(".flow-edge-toolbar__delete")).not.toBeNull();
+
+    const endpoint = container.querySelector<SVGCircleElement>(
+      ".flow-edge-handle--from",
+    )!;
+    endpoint.focus();
+    await act(async () => {
+      endpoint.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: " ",
+      }));
+    });
+    expect(container.textContent).toContain("重连起点");
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[role='option']")!.click();
+    });
+    expect(onReconnectEdge).toHaveBeenCalledWith(
+      added.space.edges[0].id,
+      "from",
+      created.selectedFlowNodeId,
+      expect.any(String),
     );
   });
 

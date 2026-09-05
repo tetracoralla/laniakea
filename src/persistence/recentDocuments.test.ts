@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  configureInternalDocumentRoot,
   describeCurrentDocument,
   documentParentDirectory,
   forgetRecentDocument,
@@ -17,7 +18,28 @@ import {
 } from "./recentDocuments";
 
 describe("recent document index", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    configureInternalDocumentRoot(
+      "/Volumes/Workspace/Library/Application Support/com.openadam.origin",
+    );
+  });
+
+  it.each([
+    ["/Users/test/Library/Application Support/com.openadam.origin.verify", "/Users/test/Library/Application Support/com.openadam.origin.verify/drafts/想法.md"],
+    ["/custom-xdg/laniakea", "/custom-xdg/laniakea/drafts/想法.md"],
+    ["C:\\Users\\Test\\AppData\\Roaming\\com.openadam.origin", "c:/users/test/appdata/roaming/com.openadam.origin/drafts/想法.md"],
+  ])("uses the current host data directory: %s", (root, draft) => {
+    configureInternalDocumentRoot(root);
+    expect(isInternalDocumentPath(draft)).toBe(true);
+    expect(isInternalDocumentPath(`${root}-other/drafts/想法.md`)).toBe(false);
+    expect(isInternalDocumentPath(`/backup${root}/drafts/想法.md`)).toBe(false);
+  });
+
+  it("preserves files as external when the host directory is unavailable", () => {
+    configureInternalDocumentRoot(null);
+    expect(isInternalDocumentPath("/Users/test/Library/Application Support/com.openadam.origin/drafts/想法.md")).toBe(false);
+  });
 
   it("keeps newest documents first and excludes the current document", () => {
     let documents: RecentDocument[] = [];

@@ -205,7 +205,7 @@ export const FlowNodeView = memo(function FlowNodeView({
         </button>
       )}
       {!editing && (
-        <div aria-label="从节点方向创建或连接" className="flow-node__ports">
+        <div className="flow-node__ports">
           {(["up", "right", "down", "left"] as const).map((port) => (
             <button
               aria-label={`从${port === "up" ? "上方" : port === "right" ? "右侧" : port === "down" ? "下方" : "左侧"}创建或拖线`}

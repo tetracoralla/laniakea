@@ -42,6 +42,12 @@ describe("Laniakea Agent mind-map tools", () => {
     );
   });
 
+  it("rejects misspelled fields in nested creation input", () => {
+    expect(() => createAgentMindMap("Draft", {
+      text: "Root", children: [{ text: "Child", chidlren: [{ text: "Would be lost" }] }],
+    } as unknown as AgentTreeInput)).toThrow("unknown fields");
+  });
+
   it("uses structural refs to distinguish repeated node labels", () => {
     const parsed = parseAgentMindMap(
       "# Risks\n\n- Root\n  - Risk\n  - Risk\n",

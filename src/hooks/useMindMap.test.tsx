@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { configureInternalDocumentRoot } from "../persistence/recentDocuments";
+
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
@@ -97,6 +99,10 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+configureInternalDocumentRoot(
+  "/Volumes/Workspace/Library/Application Support/com.openadam.origin",
+);
 
 describe("mind map save presentation", () => {
   let container: HTMLDivElement;
@@ -1246,6 +1252,133 @@ describe("mind map save presentation", () => {
     expect(
       container.querySelector("[data-testid='recent']")?.textContent,
     ).not.toContain(internalPath);
+  });
+
+  it("flushes edits entered while a pre-switch save is in flight", async () => {
+    const firstWrite = deferred<{ sourceHash: string }>();
+    let api!: ReturnType<typeof useMindMap>;
+    function Harness() { api = useMindMap(); return <output>{api.documentPath}</output>; }
+    await act(async () => root.render(<Harness />));
+    persistence.saveLocalDocument.mockClear();
+    persistence.saveLocalDocument.mockReturnValueOnce(firstWrite.promise);
+    let done = false;
+    let pending!: Promise<boolean>;
+    await act(async () => { pending = api.saveBeforeSwitch().then((saved) => { done = true; return saved; }); });
+    await act(async () => api.applyMutation((current) => setNodeText(current.document, current.document.rootId, "等待保存时继续输入")));
+    await act(async () => { firstWrite.resolve({ sourceHash: "first-save" }); await pending; });
+    expect(done).toBe(true);
+    expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(2);
+    const last = persistence.saveLocalDocument.mock.calls.at(-1)!;
+    expect(last[0].nodes[last[0].rootId].text).toBe("等待保存时继续输入");
+    expect(last[2]).toBe("first-save");
+  });
+
+  it("keeps edits made during a draft move and saves them only to the new binding", async () => {
+    const internalPath = "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/想法.md";
+    const targetPath = "/tmp/已整理.md";
+    const moving = deferred<{ sourceHash: string }>();
+    persistence.desktopRuntime = true;
+    persistence.moveInternalDraft.mockReturnValue(moving.promise);
+    const doc = createSeedDocument();
+    persistence.loadLocalDocument.mockResolvedValue({ document: doc, documentPath: internalPath, sourcePath: internalPath,
+      recoveredFromBackup: false, notice: null, saveError: null, sourceFormat: "markdown", importedAsCopy: false,
+      viewStateRestored: true, sourceHash: "original-hash" });
+    let api!: ReturnType<typeof useMindMap>;
+    function Harness() { api = useMindMap(); return <output>{api.documentPath}</output>; }
+    await act(async () => root.render(<Harness />));
+    persistence.saveLocalDocument.mockClear();
+    let saving!: Promise<boolean>;
+    await act(async () => { saving = api.saveDocumentAs(targetPath); });
+    expect(persistence.moveInternalDraft).toHaveBeenCalledOnce();
+    persistence.saveLocalDocument.mockClear();
+    await act(async () => api.applyMutation((current) => setNodeText(current.document, current.document.rootId, "移动期间的新内容")));
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    // A source rename and a queued autosave must not race on the old draft.
+    expect(persistence.saveLocalDocument).not.toHaveBeenCalled();
+    await act(async () => { moving.resolve({ sourceHash: "moved-hash" }); await saving; });
+    expect(api.documentPath).toBe(targetPath);
+    expect(persistence.saveLocalDocument).toHaveBeenLastCalledWith(
+      expect.objectContaining({ nodes: expect.objectContaining({ [doc.rootId]: expect.objectContaining({ text: "移动期间的新内容" }) }) }),
+      targetPath, "moved-hash", null, expect.any(Object),
+    );
+  });
+
+  it("retains the committed source revision when moving its draft fails", async () => {
+    const internalPath = "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/保留.md";
+    persistence.desktopRuntime = true;
+    persistence.moveInternalDraft.mockRejectedValueOnce(new Error("目标不可写"));
+    persistence.loadLocalDocument.mockResolvedValue({ document: createSeedDocument(), documentPath: internalPath, sourcePath: internalPath,
+      recoveredFromBackup: false, notice: null, saveError: null, sourceFormat: "markdown", importedAsCopy: false,
+      viewStateRestored: true, sourceHash: "original-hash" });
+    let api!: ReturnType<typeof useMindMap>;
+    function Harness() { api = useMindMap(); return <output>{api.documentPath}</output>; }
+    await act(async () => root.render(<Harness />));
+    await act(async () => { expect(await api.saveDocumentAs("/tmp/新位置.md")).toBe(false); });
+    expect(api.documentPath).toBe(internalPath);
+    expect(api.saveState).toBe("error");
+    await act(async () => { expect(await api.retrySave()).toBe(true); });
+    expect(persistence.saveLocalDocument.mock.calls.at(-1)![2]).toBe("hash-v1");
+  });
+
+  it("does not bind a newly opened document to a previous draft's late move", async () => {
+    const internalPath = "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/旧稿.md";
+    const moving = deferred<{ sourceHash: string }>();
+    persistence.desktopRuntime = true;
+    persistence.moveInternalDraft.mockReturnValue(moving.promise);
+    persistence.loadLocalDocument.mockResolvedValue({ document: createSeedDocument(), documentPath: internalPath, sourcePath: internalPath,
+      recoveredFromBackup: false, notice: null, saveError: null, sourceFormat: "markdown", importedAsCopy: false,
+      viewStateRestored: true, sourceHash: "original-hash" });
+    let api!: ReturnType<typeof useMindMap>;
+    function Harness() { api = useMindMap(); return <output>{api.documentPath}</output>; }
+    await act(async () => root.render(<Harness />));
+    let saving!: Promise<boolean>;
+    await act(async () => { saving = api.saveDocumentAs("/tmp/旧稿另存.md"); });
+    await act(async () => api.openDocument(createSeedDocument(), "/tmp/B.md", "/tmp/B.md", false, false, "b-hash"));
+    await act(async () => { moving.resolve({ sourceHash: "moved-hash" }); await saving; });
+    expect(api.documentPath).toBe("/tmp/B.md");
+  });
+
+  it("keeps conflict detection when Save As selects the current file", async () => {
+    persistence.desktopRuntime = true;
+    persistence.saveLocalDocument.mockImplementation(async (_doc, _path, hash) => {
+      if (hash) throw new Error("文件已在外部修改");
+      return { sourceHash: "overwritten" };
+    });
+    let api!: ReturnType<typeof useMindMap>;
+    function Harness() {
+      api = useMindMap();
+      return <output>{api.documentPath}</output>;
+    }
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      expect(await api.saveDocumentAs("/tmp/方案.md")).toBe(false);
+    });
+    expect(persistence.saveLocalDocument.mock.calls.at(-1)![2]).toBe("hash-v1");
+    expect(api.saveState).toBe("error");
+    expect(api.documentPath).toBe("/tmp/方案.md");
+  });
+
+  it("settles recovered content after saving it to a different file", async () => {
+    persistence.desktopRuntime = true;
+    persistence.loadLocalDocument.mockResolvedValue({
+      document: createSeedDocument(), documentPath: "/tmp/方案.md", sourcePath: "/tmp/方案.md",
+      recoveredFromBackup: false, notice: "已恢复上次中断前的内容", saveError: null,
+      sourceFormat: "markdown", importedAsCopy: false, viewStateRestored: true,
+      sourceHash: "hash-v1", recoveredFromPending: true, recoveryGeneration: 500,
+      recoveryEditorDraftGeneration: null, recoveryKind: "restored",
+    });
+    let api!: ReturnType<typeof useMindMap>;
+    function Harness() {
+      api = useMindMap();
+      return <output>{api.documentPath}</output>;
+    }
+    await act(async () => root.render(<Harness />));
+    expect(api.recoveredWorkPending).toBe(true);
+    await act(async () => {
+      expect(await api.saveDocumentAs("/tmp/已保留的恢复.md")).toBe(true);
+    });
+    expect(api.recoveredWorkPending).toBe(false);
+    expect(api.documentPath).toBe("/tmp/已保留的恢复.md");
   });
 
   it("keeps Save As as a copy-and-rebind operation for an external file", async () => {

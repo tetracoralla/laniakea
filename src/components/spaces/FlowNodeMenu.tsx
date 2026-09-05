@@ -1,6 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { FlowNode, FlowNodeKind } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
+import {
+  moveMenuFocus,
+  useMenuDismissal,
+  useMenuFocusOnOpen,
+} from "../menu/menuKeyboard";
 
 interface FlowNodeMenuProps {
   canConnect: boolean;
@@ -9,7 +14,7 @@ interface FlowNodeMenuProps {
   onAddNext: () => void;
   onBeginEdit: () => void;
   onChangeKind: (kind: FlowNodeKind) => void;
-  onClose: () => void;
+  onClose: (restoreFocus: boolean) => void;
   onConnect: () => void;
   onDelete: () => void;
   targetRect: { left: number; right: number; top: number; bottom: number };
@@ -50,16 +55,13 @@ export function FlowNodeMenu({
     };
   }, [targetRect]);
 
-  useEffect(() => {
-    menuRef.current
-      ?.querySelector<HTMLButtonElement>("[role='menuitem']")
-      ?.focus({ preventScroll: true });
-    const closeOutside = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onClose();
-    };
-    window.addEventListener("pointerdown", closeOutside);
-    return () => window.removeEventListener("pointerdown", closeOutside);
-  }, [onClose]);
+  useMenuFocusOnOpen(menuRef);
+  useMenuDismissal({
+    containerRef: menuRef,
+    onEscape: () => onClose(true),
+    onOutsidePointer: () => onClose(false),
+    onOutsideFocus: () => onClose(false),
+  });
 
   return (
     <div
@@ -67,20 +69,9 @@ export function FlowNodeMenu({
       className="node-space-menu flow-node-menu"
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (moveMenuFocus(event.currentTarget, event.key)) {
           event.preventDefault();
-          onClose();
-          return;
         }
-        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-        event.preventDefault();
-        const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-          "[role='menuitem']:not(:disabled), [role='menuitemradio']:not(:disabled)",
-        )].filter((item) => item.offsetParent !== null || getComputedStyle(item).display !== "none");
-        const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-        const direction = event.key === "ArrowDown" ? 1 : -1;
-        const nextIndex = (currentIndex + direction + items.length) % items.length;
-        items[nextIndex]?.focus();
       }}
       ref={menuRef}
       role="menu"

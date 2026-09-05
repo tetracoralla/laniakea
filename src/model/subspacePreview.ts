@@ -9,7 +9,6 @@ export interface SubspacePreview {
   accessibleLabel: string;
   lines: string[];
   text: string;
-  truncated: boolean;
   typeLabel: "思维图" | "流程";
 }
 
@@ -22,15 +21,13 @@ function mapPreview(space: MapSpace): SubspacePreview {
   const lines = childIds.slice(0, 3).map((id) =>
     `-${visibleLabel(space.nodes[id]?.text ?? "", "未命名节点")}`,
   );
-  const truncated = childIds.length > 3;
-  if (truncated) lines.push("...");
+  if (childIds.length > 3) lines.push("...");
   if (lines.length === 0) lines.push("暂无下级节点");
   const text = lines.join("\n");
   return {
     accessibleLabel: `打开思维图：${lines.join("，")}`,
     lines,
     text,
-    truncated,
     typeLabel: "思维图",
   };
 }
@@ -97,7 +94,6 @@ function flowPreview(space: FlowSpace): SubspacePreview {
     accessibleLabel: `打开流程：${text}`,
     lines: [text],
     text,
-    truncated,
     typeLabel: "流程",
   };
 }

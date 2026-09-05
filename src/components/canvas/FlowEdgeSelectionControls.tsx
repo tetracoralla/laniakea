@@ -29,6 +29,12 @@ interface FlowEdgeSelectionControlsProps {
     fixedPort: FlowPlacementDirection,
     event: ReactPointerEvent<SVGCircleElement>,
   ) => void;
+  onEndpointKeyboardActivate: (
+    edge: FlowEdge,
+    endpoint: "from" | "to",
+    movingPort: FlowPlacementDirection,
+    returnFocus: SVGCircleElement,
+  ) => void;
   route: FlowConnectorRoute;
   routeDrag: FlowEdgeRouteDragController;
   routeOverride?: FlowEdgeRouteOverride;
@@ -44,6 +50,7 @@ export function FlowEdgeSelectionControls({
   onClearSelection,
   onDelete,
   onEndpointPointerDown,
+  onEndpointKeyboardActivate,
   route,
   routeDrag,
   routeOverride,
@@ -76,7 +83,7 @@ export function FlowEdgeSelectionControls({
       >
         <g className="flow-edge-handles">
           <circle
-            aria-label="拖动连线起点"
+            aria-label="重连连线起点"
             className="flow-edge-handle flow-edge-handle--from"
             cx={route.start.x}
             cy={route.start.y}
@@ -89,6 +96,17 @@ export function FlowEdgeSelectionControls({
               route.toPort,
               event,
             )}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              event.stopPropagation();
+              onEndpointKeyboardActivate(
+                edge,
+                "from",
+                route.fromPort,
+                event.currentTarget,
+              );
+            }}
             r={endpointHitRadius}
             role="button"
             tabIndex={0}
@@ -101,7 +119,7 @@ export function FlowEdgeSelectionControls({
             r={endpointCoreRadius}
           />
           <circle
-            aria-label="拖动连线终点"
+            aria-label="重连连线终点"
             className="flow-edge-handle flow-edge-handle--to"
             cx={route.end.x}
             cy={route.end.y}
@@ -114,6 +132,17 @@ export function FlowEdgeSelectionControls({
               route.fromPort,
               event,
             )}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              event.stopPropagation();
+              onEndpointKeyboardActivate(
+                edge,
+                "to",
+                route.toPort,
+                event.currentTarget,
+              );
+            }}
             r={endpointHitRadius}
             role="button"
             tabIndex={0}

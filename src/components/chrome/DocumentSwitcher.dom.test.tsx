@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 
+import { configureInternalDocumentRoot } from "../../persistence/recentDocuments";
+
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentSwitcher } from "./DocumentSwitcher";
+
+configureInternalDocumentRoot(
+  "/Volumes/Workspace/Library/Application Support/com.openadam.origin",
+);
 
 describe("recent document file actions", () => {
   let container: HTMLDivElement;
@@ -88,10 +94,28 @@ describe("recent document file actions", () => {
     expect(recentItems).toHaveLength(1);
     expect(recentItems[0]?.getAttribute("title")).toBe(downloadsPath);
 
+    const popover = container.querySelector<HTMLElement>(
+      ".document-switcher__popover",
+    )!;
+    const openFile = Array.from(
+      popover.querySelectorAll<HTMLButtonElement>("[role='menuitem']"),
+    ).find((button) => button.textContent?.includes("打开文件"))!;
+    const currentActionsTrigger = container.querySelector<HTMLButtonElement>(
+      "button[aria-label='当前文件操作：agent办公培训']",
+    )!;
+    openFile.focus();
     await act(async () => {
-      container.querySelector<HTMLButtonElement>(
-        "button[aria-label='当前文件操作：agent办公培训']",
-      )!.click();
+      popover.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          key: "ArrowDown",
+        }),
+      );
+    });
+    expect(document.activeElement).toBe(currentActionsTrigger);
+
+    await act(async () => {
+      currentActionsTrigger.click();
     });
     const currentActions = container.querySelector<HTMLElement>(
       ".document-switcher__actions-menu",

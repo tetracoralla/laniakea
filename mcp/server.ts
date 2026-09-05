@@ -30,7 +30,7 @@ const filePathSchema = z
   .describe("Explicit absolute path to one .md or .markdown file.");
 
 const treeInputSchema = z
-  .object({
+  .strictObject({
     text: z.string().max(20_000),
     children: z.array(z.unknown()).max(10_000).optional(),
   })
@@ -39,16 +39,16 @@ const treeInputSchema = z
   );
 
 const operationSchema = z.discriminatedUnion("type", [
-  z.object({
+  z.strictObject({
     type: z.literal("set_title"),
     title: z.string().max(1_000),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("set_text"),
     ref: z.string().min(2),
     text: z.string().max(20_000),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("add_child"),
     parentRef: z.string().min(2),
     node: treeInputSchema,
@@ -59,13 +59,13 @@ const operationSchema = z.discriminatedUnion("type", [
       .optional()
       .describe("Zero-based position in the destination child list."),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("add_sibling"),
     siblingRef: z.string().min(2),
     node: treeInputSchema,
     placement: z.enum(["before", "after"]).optional(),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("move_subtree"),
     ref: z.string().min(2),
     newParentRef: z
@@ -82,7 +82,7 @@ const operationSchema = z.discriminatedUnion("type", [
         "Zero-based position in the destination list after the moved subtree has been removed; omit to append.",
       ),
   }),
-  z.object({
+  z.strictObject({
     type: z.literal("delete_subtree"),
     ref: z.string().min(2),
   }),
@@ -217,7 +217,7 @@ export function createLaniakeaServer() {
       title: "Read a Laniakea mind map",
       description:
         `Use this when the user wants to inspect or continue working with one explicit Markdown mind map. Returns revision-bound node references for safe follow-up edits; it never scans folders. Complete request limit: ${MAX_MCP_REQUEST_BYTES} UTF-8 JSON bytes.`,
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         filePath: filePathSchema,
         rootRef: z
           .string()
@@ -255,7 +255,7 @@ export function createLaniakeaServer() {
       title: "Search a Laniakea mind map",
       description:
         `Use this to locate nodes by text in one explicit Markdown mind map before editing a large structure. Returns revision-bound references and breadcrumbs. Complete request limit: ${MAX_MCP_REQUEST_BYTES} UTF-8 JSON bytes.`,
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         filePath: filePathSchema,
         query: z.string().min(1).max(2_000),
         maxResults: z.number().int().min(1).max(500).optional(),
@@ -289,7 +289,7 @@ export function createLaniakeaServer() {
       title: "Create a Laniakea mind map",
       description:
         `Use this when the user wants a new durable Markdown mind map at an explicit path. Creates only a new file and refuses to overwrite an existing file. Complete request limit: ${MAX_MCP_REQUEST_BYTES} UTF-8 JSON bytes.`,
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         filePath: filePathSchema,
         title: z.string().max(1_000),
         root: treeInputSchema,
@@ -324,7 +324,7 @@ export function createLaniakeaServer() {
       title: "Update a Laniakea mind map",
       description:
         `Use this to atomically apply one reviewed batch of semantic node changes to an explicit Laniakea outline. Requires the exact revision from read_mind_map or search_mind_map, rejects concurrent changes, and refuses to rewrite rich Markdown. Complete request limit: ${MAX_MCP_REQUEST_BYTES} UTF-8 JSON bytes.`,
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         filePath: filePathSchema,
         expectedRevision: z.string().startsWith("sha256:"),
         dryRun: z

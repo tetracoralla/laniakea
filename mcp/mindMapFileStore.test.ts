@@ -18,6 +18,7 @@ import {
   createMindMapFile,
   readMindMapFile,
   markdownRevision,
+  normalizeUpdateLockKey,
   removeStaleLockIfUnchanged,
   updateLockPath,
   updateMindMapFile,
@@ -38,6 +39,24 @@ describe("Laniakea Agent Markdown file store", () => {
     expect(updateLockPath("/tmp/方案.md")).toBe(
       "/tmp/.laniakea-lock-1dd1bad2ed9e0344d0c85c386dd1e6ff",
     );
+  });
+
+  it("normalizes Windows extended paths to the desktop lock key", () => {
+    expect(
+      normalizeUpdateLockKey(String.raw`\\?\C:\Users\Ada\方案.md`, "win32"),
+    ).toBe(String.raw`C:\Users\Ada\方案.md`);
+    expect(
+      normalizeUpdateLockKey(
+        String.raw`\\?\UNC\server\share\方案.md`,
+        "win32",
+      ),
+    ).toBe(String.raw`\\server\share\方案.md`);
+    expect(
+      updateLockPath(String.raw`\\?\C:\Users\Ada\方案.md`, "win32"),
+    ).toBe(updateLockPath(String.raw`C:\Users\Ada\方案.md`, "win32"));
+    expect(
+      updateLockPath(String.raw`C:\Users\Ada\方案.md`, "win32"),
+    ).toContain(".laniakea-lock-863ef6696318b82b930aeb9cb8aa0120");
   });
 
   it("creates a new file but never overwrites an existing destination", async () => {

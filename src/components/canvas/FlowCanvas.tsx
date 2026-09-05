@@ -28,6 +28,7 @@ import {
   positionFlowNode,
 } from "../../model/spaces";
 import type {
+  FlowEdge,
   FlowEdgeRouteOverride,
   FlowEdgeStyle,
   FlowNodeKind,
@@ -116,6 +117,13 @@ interface NodeMenuState {
   targetRect: { left: number; right: number; top: number; bottom: number };
 }
 
+interface EdgeReconnectPickerState {
+  edgeId: string;
+  endpoint: "from" | "to";
+  movingPort: FlowPlacementDirection;
+  returnFocus: SVGCircleElement;
+}
+
 export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
   function FlowCanvas(
     {
@@ -155,6 +163,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
     const [connectingFromId, setConnectingFromId] = useState<string | null>(null);
     const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+    const [edgeReconnectPicker, setEdgeReconnectPicker] =
+      useState<EdgeReconnectPickerState | null>(null);
     const [quickCreateIntent, setQuickCreateIntent] = useState<{
       id: string;
       port: FlowPlacementDirection;
@@ -184,6 +194,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     const clearCanvasSelection = useCallback(() => {
       onSelect(null);
       setSelectedEdgeId(null);
+      setEdgeReconnectPicker(null);
       setNodeMenu(null);
       setQuickCreateIntent(null);
     }, [onSelect]);
@@ -245,15 +256,21 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       onSelect,
       space,
     });
-    const selectEdge = useCallback((edgeId: string) => {
+    const selectEdge = useCallback((
+      edgeId: string,
+      restoreCanvasFocus = true,
+    ) => {
       onSelect(null);
       setNodeMenu(null);
       setConnectingFromId(null);
+      setEdgeReconnectPicker(null);
       setSelectedEdgeId(edgeId);
       setQuickCreateIntent(null);
-      window.requestAnimationFrame(() => {
-        containerRef.current?.focus({ preventScroll: true });
-      });
+      if (restoreCanvasFocus) {
+        window.requestAnimationFrame(() => {
+          containerRef.current?.focus({ preventScroll: true });
+        });
+      }
     }, [containerRef, onSelect]);
     const edgeReconnect = useFlowEdgeReconnect({
       containerRef,
@@ -264,10 +281,12 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     useEffect(() => {
       if (selectedEdgeId && !space.edges.some(({ id }) => id === selectedEdgeId)) {
         setSelectedEdgeId(null);
+        setEdgeReconnectPicker(null);
       }
     }, [selectedEdgeId, space.edges]);
     useEffect(() => {
       setSelectedEdgeId(null);
+      setEdgeReconnectPicker(null);
       setQuickCreateIntent(null);
       setConnectingFromId(null);
       setNodeMenu(null);
@@ -281,6 +300,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       setNodeMenu(null);
       setConnectingFromId(null);
       setSelectedEdgeId(null);
+      setEdgeReconnectPicker(null);
       setQuickCreateIntent(null);
       connection.begin(fromId, fromPort, event);
     }, [connection.begin, panModifierHeld]);
@@ -301,6 +321,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     }, [onPositionsChange, space]);
     const selectNode = useCallback((nodeId: string | null) => {
       setSelectedEdgeId(null);
+      setEdgeReconnectPicker(null);
       onSelect(nodeId);
     }, [onSelect]);
     const nodeDrag = useFlowNodeDrag({
@@ -331,17 +352,21 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       if (target) selectNode(target);
     }, [selectNode, selectedId, space]);
     useFlowKeyboardCommands({
-      enabled: keyboardEnabled,
+      enabled: keyboardEnabled && edgeReconnectPicker === null,
       selectedEdgeId,
       selectedId,
       onAddNext,
       onAddBranch,
       onBeginEdit,
-      onClearEdgeSelection: () => setSelectedEdgeId(null),
+      onClearEdgeSelection: () => {
+        setSelectedEdgeId(null);
+        setEdgeReconnectPicker(null);
+      },
       onDelete,
       onDeleteEdge: (edgeId) => {
         onDeleteEdge(edgeId);
         setSelectedEdgeId(null);
+        setEdgeReconnectPicker(null);
       },
       onNavigate: navigateSelection,
       onBack,
@@ -428,6 +453,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     ) => {
       onSelect(nodeId);
       setSelectedEdgeId(null);
+      setEdgeReconnectPicker(null);
       setNodeMenu({ nodeId, returnFocus, targetRect });
     }, [onSelect]);
 
@@ -444,6 +470,34 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         : [],
       [connectableIds, connectingFromId, nodes],
     );
+    const edgeReconnectChoice = useMemo(() => {
+      if (!edgeReconnectPicker) return null;
+      const edge = space.edges.find(({ id }) => id === edgeReconnectPicker.edgeId);
+      if (!edge) return null;
+      const withoutCurrent = {
+        ...space,
+        edges: space.edges.filter(({ id }) => id !== edge.id),
+      };
+      const candidateIds = edgeReconnectPicker.endpoint === "from"
+        ? new Set(
+            Object.keys(space.nodes).filter((nodeId) =>
+              connectableFlowNodeIds(withoutCurrent, nodeId).has(edge.to),
+            ),
+          )
+        : connectableFlowNodeIds(withoutCurrent, edge.from);
+      return {
+        edge,
+        candidates: nodes.filter(({ id }) => candidateIds.has(id)),
+      };
+    }, [edgeReconnectPicker, nodes, space]);
+    const closeEdgeReconnectPicker = useCallback(() => {
+      const returnFocus = edgeReconnectPicker?.returnFocus;
+      setEdgeReconnectPicker(null);
+      window.requestAnimationFrame(() => {
+        if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+        else containerRef.current?.focus({ preventScroll: true });
+      });
+    }, [containerRef, edgeReconnectPicker]);
     const selectedCanConnect = useMemo(
       () => selectedId
         ? connectableFlowNodeIds(space, selectedId).size > 0
@@ -535,6 +589,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             onChangeStyle={onChangeEdgeStyle}
             onClearSelection={() => {
               setSelectedEdgeId(null);
+              setEdgeReconnectPicker(null);
               window.requestAnimationFrame(() => {
                 containerRef.current?.focus({ preventScroll: true });
               });
@@ -544,8 +599,23 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             onDeleteEdge={(edgeId) => {
               onDeleteEdge(edgeId);
               setSelectedEdgeId(null);
+              setEdgeReconnectPicker(null);
               window.requestAnimationFrame(() => {
                 containerRef.current?.focus({ preventScroll: true });
+              });
+            }}
+            onEndpointKeyboardActivate={(
+              edge: FlowEdge,
+              endpoint,
+              movingPort,
+              returnFocus,
+            ) => {
+              setConnectingFromId(null);
+              setEdgeReconnectPicker({
+                edgeId: edge.id,
+                endpoint,
+                movingPort,
+                returnFocus,
               });
             }}
             onEndpointPointerDown={edgeReconnect.begin}
@@ -702,12 +772,14 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
               setNodeMenu(null);
               onChangeKind(nodeId, kind);
             }}
-            onClose={() => {
+            onClose={(restoreFocus) => {
               const returnFocus = nodeMenu.returnFocus;
               setNodeMenu(null);
-              window.requestAnimationFrame(() =>
-                returnFocus.focus({ preventScroll: true }),
-              );
+              if (restoreFocus) {
+                window.requestAnimationFrame(() =>
+                  returnFocus.focus({ preventScroll: true }),
+                );
+              }
             }}
             onConnect={() => {
               const nodeId = nodeMenu.nodeId;
@@ -740,6 +812,38 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
               );
             }}
             sourceLabel={space.nodes[connectingFromId].text}
+          />
+        )}
+
+        {edgeReconnectPicker && edgeReconnectChoice && (
+          <FlowTargetPicker
+            candidates={edgeReconnectChoice.candidates}
+            description={
+              edgeReconnectPicker.endpoint === "from"
+                ? "选择新的连线起点；保留当前出口方向"
+                : "选择新的连线终点；保留当前入口方向"
+            }
+            eyebrow="连线端点"
+            listLabel="可连接的步骤"
+            onChoose={(nodeId) => {
+              onReconnectEdge(
+                edgeReconnectPicker.edgeId,
+                edgeReconnectPicker.endpoint,
+                nodeId,
+                edgeReconnectPicker.movingPort,
+              );
+              closeEdgeReconnectPicker();
+            }}
+            onClose={closeEdgeReconnectPicker}
+            sourceLabel={
+              edgeReconnectChoice.edge.label ||
+              `${space.nodes[edgeReconnectChoice.edge.from]?.text || "未命名步骤"} → ${space.nodes[edgeReconnectChoice.edge.to]?.text || "未命名步骤"}`
+            }
+            title={
+              edgeReconnectPicker.endpoint === "from"
+                ? "重连起点"
+                : "重连终点"
+            }
           />
         )}
       </div>
