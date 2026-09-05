@@ -20,7 +20,7 @@ describe("desktop global shortcut recording", () => {
     ).toBe("CommandOrControl+Shift+J");
   });
 
-  it("rejects an unmodified key and formats the saved shortcut", () => {
+  it("rejects an unmodified key", () => {
     expect(
       shortcutFromKeyboardEvent({
         altKey: false,
@@ -31,9 +31,18 @@ describe("desktop global shortcut recording", () => {
         shiftKey: false,
       }, true),
     ).toBeNull();
-    expect(
-      displayGlobalShortcut("CommandOrControl+Alt+Space"),
-    ).toBe("⌘⌥空格");
+  });
+
+  it.each([
+    ["MacIntel", "macOS", "⌘⌥空格"],
+    ["Win32", "Windows", "Ctrl+Alt+空格"],
+    ["Linux x86_64", "Linux", "Ctrl+Alt+空格"],
+  ])("formats the saved shortcut for %s", (platform, operatingSystem, expected) => {
+    vi.stubGlobal("navigator", {
+      platform,
+      userAgentData: { platform: operatingSystem },
+    });
+    expect(displayGlobalShortcut("CommandOrControl+Alt+Space")).toBe(expected);
   });
 
   it("preserves an explicitly pressed Control modifier alongside Command", () => {
