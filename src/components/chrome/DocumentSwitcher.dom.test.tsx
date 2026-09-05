@@ -41,8 +41,8 @@ describe("recent document file actions", () => {
   });
 
   it("separates the current save target from a same-named recent file", async () => {
-    const desktopPath = "/Users/openadam/Desktop/agent办公培训.md";
-    const downloadsPath = "/Users/openadam/Downloads/agent办公培训.md";
+    const desktopPath = "/Users/test/Desktop/项目计划.md";
+    const downloadsPath = "/Users/test/Downloads/项目计划.md";
     const onRevealCurrent = vi.fn();
     const onRevealRecent = vi.fn();
     const onCopyDocumentPath = vi.fn();
@@ -52,7 +52,7 @@ describe("recent document file actions", () => {
         <DocumentSwitcher
           currentPath={desktopPath}
           currentSourcePath={desktopPath}
-          currentTitle="agent办公培训"
+          currentTitle="项目计划"
           onCopyDocumentPath={onCopyDocumentPath}
           onForgetRecent={vi.fn()}
           onMoveRecent={vi.fn()}
@@ -65,12 +65,12 @@ describe("recent document file actions", () => {
           recentDocuments={[
             {
               path: desktopPath,
-              title: "agent办公培训",
+              title: "项目计划",
               lastOpenedAt: "2026-09-04T07:38:00.461Z",
             },
             {
               path: downloadsPath,
-              title: "agent办公培训",
+              title: "项目计划",
               lastOpenedAt: "2026-09-02T14:14:02.919Z",
             },
           ]}
@@ -85,7 +85,7 @@ describe("recent document file actions", () => {
     expect(trigger.title).toBe(`正在保存到：${desktopPath}`);
     expect(
       container.querySelector(".document-switcher__current-row")?.textContent,
-    ).toContain("agent办公培训保存到 · 桌面");
+    ).toContain("项目计划保存到 · 桌面");
     expect(container.textContent).toContain("其他最近文档");
 
     const recentItems = container.querySelectorAll(
@@ -101,7 +101,7 @@ describe("recent document file actions", () => {
       popover.querySelectorAll<HTMLButtonElement>("[role='menuitem']"),
     ).find((button) => button.textContent?.includes("打开文件"))!;
     const currentActionsTrigger = container.querySelector<HTMLButtonElement>(
-      "button[aria-label='当前文件操作：agent办公培训']",
+      "button[aria-label='当前文件操作：项目计划']",
     )!;
     openFile.focus();
     await act(async () => {
@@ -132,7 +132,7 @@ describe("recent document file actions", () => {
 
     await act(async () => {
       container.querySelector<HTMLButtonElement>(
-        "button[aria-label='当前文件操作：agent办公培训']",
+        "button[aria-label='当前文件操作：项目计划']",
       )!.click();
     });
     await act(async () => {
@@ -151,7 +151,7 @@ describe("recent document file actions", () => {
         <DocumentSwitcher
           currentPath={null}
           currentSourcePath={downloadsPath}
-          currentTitle="agent办公培训"
+          currentTitle="项目计划"
           onCopyDocumentPath={vi.fn()}
           onForgetRecent={vi.fn()}
           onMoveRecent={vi.fn()}
@@ -164,7 +164,7 @@ describe("recent document file actions", () => {
           recentDocuments={[
             {
               path: downloadsPath,
-              title: "agent办公培训",
+              title: "项目计划",
               lastOpenedAt: "2026-09-02T14:14:02.919Z",
             },
           ]}

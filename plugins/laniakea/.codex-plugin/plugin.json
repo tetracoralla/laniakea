@@ -1,6 +1,6 @@
 {
   "name": "laniakea",
-  "version": "0.3.0+codex.20260830150910",
+  "version": "0.3.1",
   "description": "Create, inspect, and safely revise hierarchical Markdown mind maps.",
   "author": {
     "name": "openAdam",
