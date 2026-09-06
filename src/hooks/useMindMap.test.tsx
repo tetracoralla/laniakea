@@ -7,6 +7,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
+import { createFlowSpace, flowSpaceForNode, updateFlowSpace } from "../model/spaces";
+import { isMindMapDocument } from "../model/document";
+import { FlowWorkspace } from "../components/spaces/FlowWorkspace";
 import { setNodeText } from "../model/tree";
 import { useMindMap } from "./useMindMap";
 
@@ -1780,4 +1783,84 @@ describe("mind map save presentation", () => {
       ),
     ).toEqual(["hash-v1", "hash-b1"]);
   });
+  it("drags a flow node, undoes and redoes its position, then undoes creation without dangling positions", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    persistence.loadLocalDocument.mockResolvedValue({
+      document: created.document, documentPath: "/tmp/flow.md", sourcePath: "/tmp/flow.md",
+      sourceHash: "v1", importedAsCopy: false, viewStateRestored: true,
+    });
+    let current: ReturnType<typeof useMindMap>;
+    function Harness() {
+      current = useMindMap();
+      const space = flowSpaceForNode(current.snapshot.document, "path");
+      return space ? <FlowWorkspace
+        entryRequest={1} fitOnMount={false} initialEditing={false}
+        initialSelectedId={created.selectedFlowNodeId} keyboardEnabled
+        notify={() => undefined} onBack={() => undefined}
+        onUndo={current.undo} onRedo={current.redo}
+        onUpdateSpace={(next) => current.applyMutation((snapshot) =>
+          updateFlowSpace(snapshot.document, next, snapshot.selection))}
+        onPositionsChange={(positions) => current.setFlowPositions(space.id, positions)}
+        onViewportChange={(viewport) => current.setFlowViewport(space.id, viewport)}
+        space={space}
+      /> : null;
+    }
+    await act(async () => root.render(<Harness />));
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    const body = container.querySelector<HTMLElement>(".flow-node__content")!;
+    const pointer = (target: HTMLElement, type: string, x: number, y: number) => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y });
+      Object.defineProperty(event, "pointerId", { value: 1 });
+      target.dispatchEvent(event);
+    };
+    await act(async () => {
+      pointer(body, "pointerdown", 160, 160);
+      pointer(canvas, "pointermove", 240, 200);
+      pointer(canvas, "pointerup", 240, 200);
+    });
+    const moved = { ...flowSpaceForNode(current!.snapshot.document, "path")!.positions };
+    expect(moved[created.selectedFlowNodeId]).toEqual({ x: 220, y: 180 });
+    const key = (key: string, metaKey = false, shiftKey = false) => document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { bubbles: true, key, metaKey, shiftKey }));
+    await act(async () => { key("z", true); });
+    expect(flowSpaceForNode(current!.snapshot.document, "path")!.positions).toBeUndefined();
+    expect(container.querySelector<HTMLElement>(".flow-node")!.style.left).toBe("140px");
+    await act(async () => { key("z", true, true); });
+    expect(flowSpaceForNode(current!.snapshot.document, "path")!.positions).toEqual(moved);
+    await act(async () => { key("Enter"); });
+    expect(container.querySelectorAll(".flow-node")).toHaveLength(2);
+    const editor = container.querySelector<HTMLTextAreaElement>(".flow-node__editor")!;
+    await act(async () => editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })));
+    await act(async () => { key("z", true); });
+    expect(container.querySelectorAll(".flow-node")).toHaveLength(1);
+    expect(isMindMapDocument(current!.snapshot.document)).toBe(true);
+    expect(flowSpaceForNode(current!.snapshot.document, "path")!.positions).toEqual(moved);
+  });
+
+  it("automatically binds an imported desktop copy to one draft, then saves later edits there", async () => {
+    persistence.desktopRuntime = true;
+    const document = createSeedDocument();
+    persistence.loadLocalDocument.mockResolvedValue({
+      document, documentPath: null, sourcePath: "/tmp/含格式的来源.md",
+      sourceHash: null, importedAsCopy: true, sourceFormat: "markdown", viewStateRestored: false,
+    });
+    persistence.createMarkdownDraft.mockResolvedValue({ documentPath: "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/安全副本.md", sourceHash: "draft-v1" });
+    let current: ReturnType<typeof useMindMap>;
+    function Harness() {
+      current = useMindMap();
+      return <button onClick={() => current.applyMutation((snapshot) => setNodeText(snapshot.document, snapshot.document.rootId, "已修改"))}>编辑</button>;
+    }
+    await act(async () => { root.render(<Harness />); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(persistence.createMarkdownDraft).toHaveBeenCalledTimes(1);
+    expect(current!.documentPath).toBe("/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/安全副本.md");
+    expect(persistence.saveLocalDocument).toHaveBeenLastCalledWith(expect.any(Object), "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/安全副本.md", "draft-v1", null, expect.any(Object));
+    await act(async () => { container.querySelector('button')!.click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(persistence.createMarkdownDraft).toHaveBeenCalledTimes(1);
+    expect(persistence.saveLocalDocument).toHaveBeenLastCalledWith(expect.objectContaining({ nodes: expect.objectContaining({ [document.rootId]: expect.objectContaining({ text: "已修改" }) }) }), "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/安全副本.md", "hash-v1", null, expect.any(Object));
+    await act(async () => { await current!.saveDocumentAs("/tmp/含格式的来源.md"); });
+    expect(persistence.moveInternalDraft).toHaveBeenLastCalledWith("/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/安全副本.md", "/tmp/含格式的来源.md", "/tmp/含格式的来源.md");
+  });
+
 });

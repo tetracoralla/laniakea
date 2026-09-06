@@ -292,13 +292,7 @@ export function preserveDocumentViewports(
         return twin && twin.type === space.type
           ? [
               spaceId,
-              space.type === "flow" && twin.type === "flow"
-                ? {
-                    ...space,
-                    viewport: twin.viewport,
-                    positions: twin.positions,
-                  }
-                : { ...space, viewport: twin.viewport },
+              { ...space, viewport: twin.viewport },
             ]
           : [spaceId, space];
       }),
@@ -574,7 +568,29 @@ export function deleteFlowEdge(space: FlowSpace, edgeId: string): FlowSpace {
   return withFlowTimestamp(space, {
     edges: space.edges.filter((edge) => edge.id !== edgeId),
     edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, [edgeId]),
+    edgeLabelOffsets: flowLabelOffsetsWithout(space, [edgeId]),
   });
+}
+
+function flowLabelOffsetsWithout(space: FlowSpace, removedIds: string[]) {
+  if (!space.edgeLabelOffsets) return undefined;
+  return Object.fromEntries(Object.entries(space.edgeLabelOffsets)
+    .filter(([id]) => !removedIds.includes(id)));
+}
+
+export function setFlowEdgeLabelOffset(
+  space: FlowSpace,
+  edgeId: string,
+  offset: FlowNodePosition,
+): FlowSpace {
+  if (!space.edges.some((edge) => edge.id === edgeId) ||
+      !Number.isFinite(offset.x) || !Number.isFinite(offset.y)) return space;
+  const previous = space.edgeLabelOffsets?.[edgeId];
+  if (previous?.x === offset.x && previous.y === offset.y) return space;
+  return {
+    ...space,
+    edgeLabelOffsets: { ...space.edgeLabelOffsets, [edgeId]: offset },
+  };
 }
 
 export function connectableFlowNodeIds(
@@ -584,14 +600,9 @@ export function connectableFlowNodeIds(
   const from = space.nodes[fromId];
   if (!from) return new Set();
 
-  const existingTargets = new Set<string>();
-  space.edges.forEach((edge) => {
-    if (edge.from === fromId) existingTargets.add(edge.to);
-  });
-
   const connectable = new Set<string>();
   Object.values(space.nodes).forEach((candidate) => {
-    if (candidate.id !== fromId && !existingTargets.has(candidate.id)) {
+    if (candidate.id !== fromId) {
       connectable.add(candidate.id);
     }
   });
@@ -972,6 +983,7 @@ export function deleteFlowNode(
       edges: remaining,
       positions,
       edgeRoutes: flowEdgeRoutesWithout(space.edgeRoutes, removedEdgeIds),
+      edgeLabelOffsets: flowLabelOffsetsWithout(space, removedEdgeIds),
     }),
   };
 }

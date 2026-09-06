@@ -6,6 +6,8 @@ import type {
 } from "../types/mindmap";
 import {
   pointOnRoute as projectionPointOnRoute,
+  applyOrthogonalRouteConstraint,
+  routeOrthogonalBetweenPorts,
   roundedOrthogonalPath as projectionRoundedOrthogonalPath,
   routeCrossings as projectionRouteCrossings,
   routeOrthogonal as projectionRouteOrthogonal,
@@ -57,10 +59,20 @@ const columnGap = 72;
 const rowGap = 92;
 
 const flowEdgeLabelFontStyle: NodeTextStyle = {
-  fontSize: 10,
+  fontSize: 13,
   fontWeight: 570,
   letterSpacing: 0,
 };
+
+export function flowEdgeLabelSize(text: string, measureTextWidth?: TextWidthMeasurer) {
+  const widths = text.split("\n").map((line) => measureTextWidth
+    ? measureTextWidth(line, flowEdgeLabelFontStyle)
+    : estimateTextWidth(line, flowEdgeLabelFontStyle));
+  return {
+    width: Math.ceil(Math.min(280, Math.max(32, ...widths.map((width) => width + 16)))),
+    height: 6 + 20 * widths.reduce((lines, width) => lines + Math.max(1, Math.ceil(width / 264)), 0),
+  };
+}
 
 export function computeFlowLayout(
   space: FlowSpace,
@@ -334,11 +346,88 @@ export function compileFlowConnectors(
       }]),
     ),
   });
-  return plan.edges.map((edge) => ({
+  const compiled = plan.edges.map((edge) => ({
     edgeId: edge.id,
     fromId: edge.source,
-    route: fromProjectionRoute(edge.route),
+    route: fromProjectionRoute(space.edgeRoutes?.[edge.id] ? edge.route :
+      avoidFlowEndpointBodies(edge.route, layout.nodes[edge.source], layout.nodes[edge.target], Object.values(layout.nodes))),
     toId: edge.target,
+  }));
+  const groups = new Map<string, number>();
+  const separated = compiled.map((connector) => {
+    const route = connector.route;
+    const key = JSON.stringify([connector.fromId, connector.toId, route.fromPort, route.toPort]);
+    const lane = groups.get(key) ?? 0;
+    groups.set(key, lane + 1);
+    if (!lane || space.edgeRoutes?.[connector.edgeId]) return connector;
+    const handle = flowRouteAdjustmentHandle(route);
+    if (!handle) return connector;
+    const direction = handle.axis === "y"
+      ? route.fromPort === "up" || route.toPort === "up" ? -1 : 1
+      : route.fromPort === "left" || route.toPort === "left" ? -1 : 1;
+    const boxes = Object.values(layout.nodes);
+    const starts = boxes.map((box) => handle.axis === "x" ? box.x : box.y);
+    const ends = boxes.map((box) => handle.axis === "x" ? box.x + box.width : box.y + box.height);
+    // A parallel lane must satisfy the same obstacle rule as the first line.
+    // Try both sides, then the outer corridors; an inward offset can otherwise
+    // put a reverse approach back through either endpoint's body.
+    const coordinates = [
+      handle.coordinate + lane * 32 * direction,
+      handle.coordinate - lane * 32 * direction,
+      Math.min(...starts) - lane * 32,
+      Math.max(...ends) + lane * 32,
+    ];
+    for (const coordinate of coordinates) {
+      const candidate = flowRouteWithCorridor(route, { axis: handle.axis, coordinate });
+      if (!boxes.some((box) => flowRouteIntersectsNode(candidate.points, box))) {
+        return { ...connector, route: candidate };
+      }
+    }
+    return connector;
+  });
+  const crossings = flowConnectorCrossings(separated);
+  return separated.map((edge) => ({ ...edge, route: { ...edge.route, jumps: crossings[edge.edgeId] ?? [] } }));
+}
+
+/** A route may touch a box boundary but must never travel through its interior. */
+export function flowRouteIntersectsNode(points: readonly FlowPoint[], box: FlowLayoutNode): boolean {
+  const inset = 0.01;
+  return points.slice(1).some((end, index) => {
+    const start = points[index];
+    if (Math.abs(start.y - end.y) < inset) {
+      return start.y > box.y + inset && start.y < box.y + box.height - inset &&
+        Math.max(start.x, end.x) > box.x + inset && Math.min(start.x, end.x) < box.x + box.width - inset;
+    }
+    return start.x > box.x + inset && start.x < box.x + box.width - inset &&
+      Math.max(start.y, end.y) > box.y + inset && Math.min(start.y, end.y) < box.y + box.height - inset;
+  });
+}
+
+function avoidFlowEndpointBodies(
+  route: OrthogonalRoute, from: FlowLayoutNode, to: FlowLayoutNode, obstacles: FlowLayoutNode[],
+): OrthogonalRoute {
+  if (!flowRouteIntersectsNode(route.points, from) && !flowRouteIntersectsNode(route.points, to)) return route;
+  const sourceNormal = portVector(fromProjectionPort(route.sourcePort));
+  const targetNormal = portVector(fromProjectionPort(route.targetPort));
+  // The geometry kernel excludes endpoint identities from obstacles. Body-only
+  // obstacle identities make their interiors explicit while preserving the
+  // allocated boundary ports. This fixes reverse approaches without changing
+  // graph semantics or implementing a second path finder.
+  return routeOrthogonalBetweenPorts(from, to,
+    { ...route.source, side: route.sourcePort, normalX: sourceNormal.x, normalY: sourceNormal.y },
+    { ...route.target, side: route.targetPort, normalX: targetNormal.x, normalY: targetNormal.y },
+    { obstacles: [
+      ...obstacles,
+      { ...from, id: `${from.id}\u0000body` },
+      { ...to, id: `${to.id}\u0000body` },
+    ] },
+  );
+}
+
+/** Gesture preview uses the same geometry kernel, without a whole graph compile. */
+export function flowRouteWithCorridor(route: FlowConnectorRoute, override: FlowEdgeRouteOverride): FlowConnectorRoute {
+  return fromProjectionRoute(applyOrthogonalRouteConstraint(toProjectionRoute(route), {
+    type: "orthogonal-corridor", ...override,
   }));
 }
 
@@ -350,7 +439,7 @@ function portVector(direction: FlowPlacementDirection): FlowPoint {
 }
 
 export function includeFlowConnectorBounds(
-  space: Pick<FlowSpace, "nodes" | "edges" | "edgeRoutes">,
+  space: Pick<FlowSpace, "nodes" | "edges" | "edgeRoutes" | "edgeLabelOffsets">,
   layout: FlowLayoutResult,
   measureTextWidth?: TextWidthMeasurer,
   compiled = compileFlowConnectors(space, layout, measureTextWidth),
@@ -369,6 +458,17 @@ export function includeFlowConnectorBounds(
       connector.route.end,
     ];
   });
+  for (const connector of compiled) {
+    const edge = edgeById.get(connector.edgeId);
+    if (!edge?.label) continue;
+    const point = flowConnectorPointOnRoute(connector.route, 0.5, edge.style?.kind ?? "rounded");
+    const offset = space.edgeLabelOffsets?.[edge.id] ?? { x: 0, y: 0 };
+    const size = flowEdgeLabelSize(edge.label, measureTextWidth);
+    points.push(
+      { x: point.x + offset.x - size.width / 2, y: point.y + offset.y - size.height / 2 },
+      { x: point.x + offset.x + size.width / 2, y: point.y + offset.y + size.height / 2 },
+    );
+  }
   if (points.length === 0) return layout;
   const minX = Math.min(layout.minX, ...points.map((point) => point.x - canvasPadding));
   const minY = Math.min(layout.minY, ...points.map((point) => point.y - canvasPadding));

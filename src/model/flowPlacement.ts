@@ -66,7 +66,8 @@ export function flowNodeSize(
   measureTextWidth?: TextWidthMeasurer,
 ): { width: number; height: number } {
   if (kind === "start" || kind === "end") {
-    return { width: terminalNodeWidth, height: terminalNodeHeight };
+    const block = wrappedTextBlock(text, terminalNodeWidth - 36, measureTextWidth);
+    return { width: terminalNodeWidth, height: Math.max(terminalNodeHeight, block.height + flowVerticalPadding) };
   }
   if (kind !== "decision") {
     const block = wrappedTextBlock(text, stepContentWidth, measureTextWidth);

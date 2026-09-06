@@ -45,7 +45,7 @@ describe("persisted document validation", () => {
     expect(isMindMapDocument(invalid)).toBe(false);
   });
 
-  it("rejects self-loops and duplicate endpoint pairs but accepts directed loops", () => {
+  it("rejects self-loops and duplicate edge identities but accepts parallel edges and directed loops", () => {
     const base = createFlowSpace(createSeedDocument(), "path");
     const firstSpace = flowSpaceForNode(base.document, "path")!;
     const secondNode = addFlowStepAfter(firstSpace, base.selectedFlowNodeId);
@@ -72,6 +72,8 @@ describe("persisted document validation", () => {
     const duplicateFlow = duplicate.spaces![flow.id];
     if (duplicateFlow.type !== "flow") throw new Error("expected flow");
     duplicateFlow.edges.push({ ...first, id: "duplicate-edge" });
+    expect(isMindMapDocument(duplicate)).toBe(true);
+    duplicateFlow.edges.push({ ...first });
     expect(isMindMapDocument(duplicate)).toBe(false);
 
     const cycle = structuredClone(created);

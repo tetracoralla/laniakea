@@ -11,6 +11,7 @@ import {
   flowConnectorRoute,
   flowConnectorPathFromRoute,
   flowRouteAdjustmentHandle,
+  flowRouteIntersectsNode,
   flowNavigationTarget,
   includeFlowConnectorBounds,
 } from "./flowLayout";
@@ -378,4 +379,74 @@ describe("computeFlowLayout node sizing", () => {
 
     expect(layout.nodes["node-79"].level).toBe(79);
   });
+});
+
+describe("reverse approaches to fixed ports", () => {
+  it.each([0, 1, 2, 3])("routes around both endpoint bodies after rotation %s", async (turns) => {
+    const { flowRouteIntersectsNode } = await import("./flowLayout");
+    const sourceId = "source";
+    const targetId = "target";
+    const space = spaceWith([node(sourceId, "step", "提交"), node(targetId, "step", "审核")], [[sourceId, targetId]]);
+    const ports = ["right", "down", "left", "up"] as const;
+    const rotate = (x: number, y: number) => {
+      for (let i = 0; i < turns; i++) [x, y] = [-y, x];
+      return { x, y };
+    };
+    space.positions = {
+      [sourceId]: rotate(100, 300),
+      [targetId]: rotate(270, 120),
+    };
+    space.edges = space.edges.map((edge) => ({
+      ...edge, fromPort: ports[turns], toPort: ports[(turns + 2) % 4],
+    }));
+    const layout = computeFlowLayout(space);
+    const route = compileFlowConnectors(space, layout)[0].route;
+    for (const node of Object.values(layout.nodes)) {
+      expect(flowRouteIntersectsNode(route.points, node)).toBe(false);
+    }
+    expect(route.fromPort).toBe(ports[turns]);
+    expect(route.toPort).toBe(ports[(turns + 2) % 4]);
+  });
+});
+
+
+describe("parallel flow paths", () => {
+  it.each([[150, -140], [150, 140], [-250, 0], [400, 0], [0, -140]])(
+    "keeps three parallel approaches clear of both bodies at %s,%s", (x, y) => {
+      const flow = spaceWith([node("a", "step", "提交"), node("b", "step", "审核")],
+        [["a", "b"], ["a", "b"], ["a", "b"]]);
+      flow.positions = { a: { x: 0, y: 0 }, b: { x, y } };
+      flow.edges = flow.edges.map((edge) => ({ ...edge, fromPort: "right", toPort: "left" }));
+      const layout = computeFlowLayout(flow);
+      const routes = compileFlowConnectors(flow, layout);
+      expect(new Set(routes.map(({ route }) => JSON.stringify(route.points))).size).toBe(3);
+      for (const { route } of routes) {
+        expect(route.fromPort).toBe("right");
+        expect(route.toPort).toBe("left");
+        for (const box of Object.values(layout.nodes)) {
+          expect(flowRouteIntersectsNode(route.points, box)).toBe(false);
+        }
+      }
+    },
+  );
+  it("gives repeated endpoint pairs separate corridors while retaining separate identities", () => {
+    const space = spaceWith([node("a", "step", "提交"), node("b", "step", "审核")], [["a", "b"], ["a", "b"], ["a", "b"]]);
+    space.edges = space.edges.map((edge) => ({ ...edge, fromPort: "down", toPort: "down" }));
+    space.positions = { a: { x: 100, y: 200 }, b: { x: 400, y: 100 } };
+    const routes = compileFlowConnectors(space, computeFlowLayout(space));
+    expect(new Set(routes.map(({ route }) => Math.max(...route.points.map(({ y }) => y)))).size).toBe(3);
+    expect(routes.map(({ edgeId }) => edgeId)).toEqual(space.edges.map(({ id }) => id));
+  });
+});
+
+it("keeps a dragged multi-line annotation inside fit-to-content bounds", () => {
+  const space = spaceWith([node("a", "step", "Submit"), node("b", "step", "Review")], [["a", "b"]]);
+  space.edges[0].label = "Supplement materials\nThen resubmit";
+  space.edgeLabelOffsets = { "edge-0": { x: 1600, y: 1200 } };
+  const layout = computeFlowLayout(space);
+  const routes = compileFlowConnectors(space, layout);
+  const point = flowConnectorPointOnRoute(routes[0].route, 0.5);
+  const bounds = includeFlowConnectorBounds(space, layout, undefined, routes);
+  expect(bounds.minX + bounds.width).toBeGreaterThan(point.x + 1600 + 100);
+  expect(bounds.minY + bounds.height).toBeGreaterThan(point.y + 1200 + 23);
 });

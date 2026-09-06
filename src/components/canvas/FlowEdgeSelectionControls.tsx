@@ -178,6 +178,7 @@ export function FlowEdgeSelectionControls({
                     coordinate: adjustment.coordinate + direction,
                   });
                 }}
+                onDoubleClick={(event) => { event.stopPropagation(); routeDrag.cancel(); onBeginEdit(); }}
                 onLostPointerCapture={routeDrag.lostPointerCapture}
                 onPointerCancel={routeDrag.pointerCancel}
                 onPointerDown={(event) => routeDrag.begin(

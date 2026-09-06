@@ -14,11 +14,12 @@ import { useDragInterruption } from "./useDragInterruption";
 
 interface ActiveRouteDrag {
   edgeId: string;
-  element: SVGCircleElement;
+  element: SVGElement;
   original: FlowEdgeRouteOverride;
   pointerId: number;
   startClientX: number;
   startClientY: number;
+  moved: boolean;
 }
 
 interface FlowEdgeRouteDragOptions {
@@ -39,6 +40,7 @@ export function useFlowEdgeRouteDrag({
   } | null>(null);
   const [preview, setPreview] = useState(previewRef.current);
   const scopeKeyRef = useRef(scopeKey);
+  const frameRef = useRef(0);
 
   const release = useCallback((active: ActiveRouteDrag) => {
     if (active.element.hasPointerCapture?.(active.pointerId)) {
@@ -49,6 +51,8 @@ export function useFlowEdgeRouteDrag({
   const clear = useCallback(() => {
     const active = activeRef.current;
     activeRef.current = null;
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    frameRef.current = 0;
     previewRef.current = null;
     setPreview(null);
     if (active) release(active);
@@ -57,7 +61,7 @@ export function useFlowEdgeRouteDrag({
   const begin = useCallback((
     edgeId: string,
     route: FlowConnectorRoute,
-    event: ReactPointerEvent<SVGCircleElement>,
+    event: ReactPointerEvent<SVGElement>,
     preferred?: FlowEdgeRouteOverride,
   ) => {
     if (event.button !== 0) return;
@@ -73,15 +77,16 @@ export function useFlowEdgeRouteDrag({
       pointerId: event.pointerId,
       startClientX: event.clientX,
       startClientY: event.clientY,
+      moved: false,
     };
-    previewRef.current = { edgeId, route: original };
-    setPreview(previewRef.current);
     event.currentTarget.setPointerCapture?.(event.pointerId);
   }, []);
 
-  const update = useCallback((event: ReactPointerEvent<SVGCircleElement>) => {
+  const update = useCallback((event: ReactPointerEvent<SVGElement>) => {
     const active = activeRef.current;
     if (!active || active.pointerId !== event.pointerId) return null;
+    if (!active.moved && Math.hypot(event.clientX - active.startClientX, event.clientY - active.startClientY) < 4) return null;
+    active.moved = true;
     event.preventDefault();
     event.stopPropagation();
     const delta = active.original.axis === "x"
@@ -93,21 +98,25 @@ export function useFlowEdgeRouteDrag({
       route: { axis: active.original.axis, coordinate },
     };
     previewRef.current = next;
-    setPreview(next);
+    if (!frameRef.current) frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = 0;
+      setPreview(previewRef.current);
+    });
     return next;
   }, [zoom]);
 
-  const pointerUp = useCallback((event: ReactPointerEvent<SVGCircleElement>) => {
+  const pointerUp = useCallback((event: ReactPointerEvent<SVGElement>) => {
     const next = update(event);
     const active = activeRef.current;
-    if (!next || !active) return;
+    if (!active) return;
     clear();
+    if (!next) return;
     if (next.route.coordinate !== active.original.coordinate) {
       onChange(next.edgeId, next.route);
     }
   }, [clear, onChange, update]);
 
-  const pointerCancel = useCallback((event: ReactPointerEvent<SVGCircleElement>) => {
+  const pointerCancel = useCallback((event: ReactPointerEvent<SVGElement>) => {
     if (activeRef.current?.pointerId !== event.pointerId) return;
     event.preventDefault();
     event.stopPropagation();
@@ -119,6 +128,10 @@ export function useFlowEdgeRouteDrag({
     onCancel: clear,
   });
 
+  useEffect(() => () => {
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+  }, []);
+
   useEffect(() => {
     if (scopeKeyRef.current === scopeKey) return;
     scopeKeyRef.current = scopeKey;
@@ -128,7 +141,7 @@ export function useFlowEdgeRouteDrag({
   return {
     begin,
     cancel: clear,
-    lostPointerCapture: (event: ReactPointerEvent<SVGCircleElement>) => {
+    lostPointerCapture: (event: ReactPointerEvent<SVGElement>) => {
       if (activeRef.current?.pointerId === event.pointerId) clear();
     },
     pointerCancel,

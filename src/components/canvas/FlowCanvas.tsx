@@ -82,6 +82,7 @@ export interface FlowCanvasProps {
   ) => void;
   onChangeKind: (id: string, kind: FlowNodeKind) => void;
   onChangeEdgeLabel: (edgeId: string, label: string) => void;
+  onChangeEdgeLabelOffset?: (edgeId: string, offset: FlowNodePosition) => void;
   onChangeEdgeRoute?: (
     edgeId: string,
     route: FlowEdgeRouteOverride | null,
@@ -145,6 +146,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       onAddShape = () => undefined,
       onChangeKind,
       onChangeEdgeLabel,
+      onChangeEdgeLabelOffset = () => undefined,
       onChangeEdgeRoute = () => undefined,
       onChangeEdgeStyle = () => undefined,
       onConnect,
@@ -169,26 +171,38 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       id: string;
       port: FlowPlacementDirection;
     } | null>(null);
+    const [nodeDragPreview, setNodeDragPreview] = useState<{
+      nodeId: string; position: FlowNodePosition;
+    } | null>(null);
     const measureTextWidth = useMemo(
       () => createCanvasTextWidthMeasurer(),
       [],
     );
-    const baseLayout = useMemo(
-      () => computeFlowLayout(space, measureTextWidth),
-      [measureTextWidth, space.nodes, space.edges, space.positions],
-    );
+    const baseLayout = useMemo(() => {
+      const current = computeFlowLayout(editingId && space.nodes[editingId] ? {
+        ...space,
+        nodes: { ...space.nodes, [editingId]: { ...space.nodes[editingId], text: draft } },
+      } : space, measureTextWidth);
+      return current;
+    }, [draft, editingId, measureTextWidth, space.nodes, space.edges, space.positions]);
+    const displayedLayout = useMemo(() => nodeDragPreview ? {
+      ...baseLayout,
+      nodes: { ...baseLayout.nodes, [nodeDragPreview.nodeId]: {
+        ...baseLayout.nodes[nodeDragPreview.nodeId], ...nodeDragPreview.position,
+      } },
+    } : baseLayout, [baseLayout, nodeDragPreview]);
     const connectors = useMemo(
-      () => compileFlowConnectors(space, baseLayout, measureTextWidth),
-      [baseLayout, measureTextWidth, space.edgeRoutes, space.edges, space.nodes],
+      () => compileFlowConnectors(space, displayedLayout, measureTextWidth),
+      [displayedLayout, measureTextWidth, space.edgeRoutes, space.edges, space.nodes],
     );
     const layout = useMemo(
       () => includeFlowConnectorBounds(
         space,
-        baseLayout,
+        displayedLayout,
         measureTextWidth,
         connectors,
       ),
-      [baseLayout, connectors, measureTextWidth],
+      [displayedLayout, connectors, measureTextWidth, space.edgeLabelOffsets],
     );
     const nodes = useMemo(() => Object.values(space.nodes), [space.nodes]);
     const clearCanvasSelection = useCallback(() => {
@@ -267,9 +281,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       setSelectedEdgeId(edgeId);
       setQuickCreateIntent(null);
       if (restoreCanvasFocus) {
-        window.requestAnimationFrame(() => {
-          containerRef.current?.focus({ preventScroll: true });
-        });
+        containerRef.current?.focus({ preventScroll: true });
       }
     }, [containerRef, onSelect]);
     const edgeReconnect = useFlowEdgeReconnect({
@@ -328,6 +340,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       containerRef,
       layout,
       onMove: moveNode,
+      onPreview: setNodeDragPreview,
       onSelect: selectNode,
       space,
     });
@@ -498,12 +511,6 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         else containerRef.current?.focus({ preventScroll: true });
       });
     }, [containerRef, edgeReconnectPicker]);
-    const selectedCanConnect = useMemo(
-      () => selectedId
-        ? connectableFlowNodeIds(space, selectedId).size > 0
-        : false,
-      [selectedId, space],
-    );
     return (
       <div
         aria-label="流程画布"
@@ -581,6 +588,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             connectors={connectors}
             edges={space.edges}
             edgeRoutes={space.edgeRoutes}
+            edgeLabelOffsets={space.edgeLabelOffsets}
+            onChangeLabelOffset={onChangeEdgeLabelOffset}
             layout={layout}
             measureTextWidth={measureTextWidth}
             nodes={space.nodes}
@@ -645,9 +654,6 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             const editing = node.id === editingId;
             return (
               <FlowNodeView
-                canStartConnection={
-                  node.id === selectedId && selectedCanConnect
-                }
                 connectableTarget={
                   connection.connectableIds.has(node.id) ||
                   edgeReconnect.connectableIds.has(node.id)
@@ -668,9 +674,6 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
                 editing={editing}
                 key={node.id}
                 node={node}
-                onAddNode={(nodeId, kind, direction) =>
-                  createDirectionalNode(nodeId, kind, direction)
-                }
                 onBeginEdit={onBeginEdit}
                 onCancelEdit={onCancelEdit}
                 onConnectPointerDown={beginConnectionDrag}

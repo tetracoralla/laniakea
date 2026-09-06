@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::{
     borrow::Cow,
-    collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet},
     fs::{self, File, OpenOptions},
     hash::{Hash, Hasher},
     io::{ErrorKind, Write},
@@ -368,7 +368,7 @@ fn validate_document(document_json: &str) -> Result<(), String> {
         }
         match space {
             StoredSpace::Flow(flow) => {
-                if flow.space_type != "flow" || flow.nodes.is_empty() {
+                if flow.space_type != "flow" {
                     return Err("流程空间版本、节点或视口无效".to_string());
                 }
                 for (node_id, node) in &flow.nodes {
@@ -386,20 +386,8 @@ fn validate_document(document_json: &str) -> Result<(), String> {
                     return Err("流程空间包含无效节点位置".to_string());
                 }
                 let mut edge_ids = HashSet::new();
-                let mut endpoint_pairs = HashSet::new();
-                let mut outgoing: HashMap<&str, Vec<&str>> = flow
-                    .nodes
-                    .keys()
-                    .map(|node_id| (node_id.as_str(), Vec::new()))
-                    .collect();
-                let mut indegree: HashMap<&str, usize> = flow
-                    .nodes
-                    .keys()
-                    .map(|node_id| (node_id.as_str(), 0))
-                    .collect();
                 for edge in &flow.edges {
                     if !edge_ids.insert(edge.id.as_str())
-                        || !endpoint_pairs.insert((edge.from.as_str(), edge.to.as_str()))
                         || edge.from == edge.to
                         || !flow.nodes.contains_key(&edge.from)
                         || !flow.nodes.contains_key(&edge.to)
@@ -414,29 +402,6 @@ fn validate_document(document_json: &str) -> Result<(), String> {
                     {
                         return Err("流程空间包含无效连接".to_string());
                     }
-                    outgoing
-                        .get_mut(edge.from.as_str())
-                        .unwrap()
-                        .push(edge.to.as_str());
-                    *indegree.get_mut(edge.to.as_str()).unwrap() += 1;
-                }
-                let mut pending: VecDeque<&str> = indegree
-                    .iter()
-                    .filter_map(|(node_id, count)| (*count == 0).then_some(*node_id))
-                    .collect();
-                let mut visited = 0;
-                while let Some(node_id) = pending.pop_front() {
-                    visited += 1;
-                    for target_id in outgoing.get(node_id).into_iter().flatten() {
-                        let remaining = indegree.get_mut(target_id).unwrap();
-                        *remaining -= 1;
-                        if *remaining == 0 {
-                            pending.push_back(target_id);
-                        }
-                    }
-                }
-                if visited != flow.nodes.len() {
-                    return Err("流程空间包含循环连接".to_string());
                 }
             }
             StoredSpace::Map(map) => {
@@ -1377,6 +1342,7 @@ fn move_internal_draft_in(
     app_data: &Path,
     source: &Path,
     target: &Path,
+    protected_source: Option<&Path>,
 ) -> Result<SaveDocumentResult, String> {
     ensure_markdown_path(source)?;
     ensure_markdown_path(target)?;
@@ -1408,7 +1374,7 @@ fn move_internal_draft_in(
         .and_then(|path| fs::canonicalize(path).ok())
         .is_some_and(|active| active == canonical_source);
 
-    let saved = save_markdown_document(app_data, target, &content, &document_json, None)?;
+    let saved = save_markdown_document_with_protected_source(app_data, target, &content, &document_json, None, protected_source)?;
     if let Some(warning) = saved.auxiliary_warning {
         return Err(format!(
             "目标文件已写入但配套状态不完整，原草稿仍保留: {warning}"
@@ -2254,6 +2220,7 @@ pub(crate) async fn move_internal_draft(
     app: AppHandle,
     source_path: String,
     target_path: String,
+    protected_source_path: Option<String>,
 ) -> Result<SaveDocumentResult, String> {
     let app_data = app
         .path()
@@ -2262,7 +2229,7 @@ pub(crate) async fn move_internal_draft(
     let source = PathBuf::from(source_path);
     let target = PathBuf::from(target_path);
     tauri::async_runtime::spawn_blocking(move || {
-        move_internal_draft_in(&app_data, &source, &target)
+        move_internal_draft_in(&app_data, &source, &target, protected_source_path.as_deref().map(Path::new))
     })
     .await
     .map_err(|error| storage_error("移动草稿任务异常结束", error))?
@@ -2641,9 +2608,10 @@ mod tests {
                 "to": "step",
                 "label": "重复"
             }));
-        assert!(validate_document(&duplicate.to_string())
-            .unwrap_err()
-            .contains("无效连接"));
+        assert!(validate_document(&duplicate.to_string()).is_ok());
+        duplicate["spaces"]["flow-1"]["edges"].as_array_mut().unwrap().push(
+            serde_json::json!({"id": "edge-1", "from": "start", "to": "end", "label": "duplicate id"}));
+        assert!(validate_document(&duplicate.to_string()).is_err());
 
         let mut cycle: serde_json::Value = serde_json::from_str(&flow_document(0)).unwrap();
         cycle["spaces"]["flow-1"]["edges"]
@@ -2655,9 +2623,17 @@ mod tests {
                 "to": "start",
                 "label": ""
             }));
-        assert!(validate_document(&cycle.to_string())
-            .unwrap_err()
-            .contains("循环连接"));
+        assert!(validate_document(&cycle.to_string()).is_ok());
+        let directory = test_directory("editable-flow-graph");
+        let target = directory.join("graph.mindmap.json");
+        save_to_target(&directory, &target, &cycle.to_string()).unwrap();
+        let mut empty = cycle.clone();
+        empty["spaces"]["flow-1"]["nodes"] = serde_json::json!({});
+        empty["spaces"]["flow-1"]["edges"] = serde_json::json!([]);
+        empty["spaces"]["flow-1"].as_object_mut().unwrap().remove("positions");
+        save_to_target(&directory, &target, &empty.to_string()).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), empty.to_string());
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -2787,7 +2763,7 @@ mod tests {
         let target = documents.join("要移动的想法.md");
         assert!(old_backups.exists());
 
-        let moved = move_internal_draft_in(&app_data, &source, &target).unwrap();
+        let moved = move_internal_draft_in(&app_data, &source, &target, None).unwrap();
 
         assert_eq!(moved.source_hash, Some(content_hash_string(markdown)),);
         assert_eq!(fs::read_to_string(&target).unwrap(), markdown);
@@ -2803,6 +2779,22 @@ mod tests {
     }
 
     #[test]
+    fn draft_migration_preserves_the_imported_rich_source() {
+        let directory = test_directory("protected-draft-migration");
+        let app_data = directory.join("app-data");
+        let target = directory.join("rich.md");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(&target, "# Rich\n\n**Keep formatting**\n").unwrap();
+        let created = create_markdown_draft_in(&app_data, &document("Copy"), "# Copy\n").unwrap();
+        let source = PathBuf::from(&created.document_path);
+        let error = move_internal_draft_in(&app_data, &source, &target, Some(&target)).unwrap_err();
+        assert!(error.contains(PROTECTED_SOURCE_OVERWRITE));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "# Rich\n\n**Keep formatting**\n");
+        assert!(source.exists());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn keeps_the_internal_draft_when_its_state_is_incomplete() {
         let directory = test_directory("incomplete-internal-draft");
         let app_data = directory.join("app-data");
@@ -2814,7 +2806,7 @@ mod tests {
         let target = documents.join("内部草稿.md");
         fs::remove_file(markdown_state_path(&app_data, &source)).unwrap();
 
-        let error = move_internal_draft_in(&app_data, &source, &target).unwrap_err();
+        let error = move_internal_draft_in(&app_data, &source, &target, None).unwrap_err();
 
         assert!(error.contains("状态不完整"));
         assert!(source.exists());
@@ -2835,7 +2827,7 @@ mod tests {
         let inactive_source = PathBuf::from(&inactive.document_path);
         let target = documents.join("稍后整理.md");
 
-        move_internal_draft_in(&app_data, &inactive_source, &target).unwrap();
+        move_internal_draft_in(&app_data, &inactive_source, &target, None).unwrap();
 
         assert_eq!(
             active_document_path(&app_data).unwrap(),
@@ -2857,7 +2849,7 @@ mod tests {
         fs::write(&external, "# 外部文件\n").unwrap();
         let target = documents.join("另一个位置.md");
 
-        let error = move_internal_draft_in(&app_data, &external, &target).unwrap_err();
+        let error = move_internal_draft_in(&app_data, &external, &target, None).unwrap_err();
 
         assert!(error.contains("只能移动 Laniakea 管理的本地草稿"));
         assert!(external.exists());

@@ -187,11 +187,11 @@ export function useMindMap({
       pathOverride === undefined
         ? documentPathRef.current
         : pathOverride;
-    const protectedSourceForSave = newBinding
+    const protectedSourceForSave = newBinding || moveTo
       ? protectedUnboundSourcePath.current
       : null;
     if (
-      shouldDeferUnboundCopyAutosave(
+      !isDesktopRuntime() && shouldDeferUnboundCopyAutosave(
         target,
         targetPath,
         protectedUnboundSourceContent.current,
@@ -225,19 +225,23 @@ export function useMindMap({
         }
         // Ordinary saves follow the binding at execution time. A preceding
         // queued Save As may have moved the draft since this save was requested.
-        const writePath = pathOverride === undefined
+        let writePath = pathOverride === undefined
           ? documentPathRef.current
           : targetPath;
         const previousBinding = documentPathRef.current;
+        const automaticDraft = isDesktopRuntime() && writePath === null
+          ? await createMarkdownDraft(target, false)
+          : null;
+        if (automaticDraft) writePath = automaticDraft.documentPath;
         const savingCurrentBinding =
           targetSession === documentSessionRef.current &&
           writePath !== null &&
           writePath === documentPathRef.current;
         // Resolve the lease only when this queued write starts. A preceding
         // save from the same document may have advanced it legitimately.
-        const expectedSourceHash = savingCurrentBinding
+        const expectedSourceHash = automaticDraft?.sourceHash ?? (savingCurrentBinding
           ? sourceHashRef.current
-          : null;
+          : null);
         // While a restored recovery is still undecided, silent viewport
         // saves must stay auxiliary-only: the recovered document is the
         // content baseline, not a version the source has committed.
@@ -314,7 +318,9 @@ export function useMindMap({
         if (moveTo && writePath) {
           // Rename and source writes use the same queue. Do not let a newer
           // autosave recreate the old draft while native storage is moving it.
-          result = await moveInternalDraft(writePath, moveTo);
+          result = protectedSourceForSave
+            ? await moveInternalDraft(writePath, moveTo, protectedSourceForSave)
+            : await moveInternalDraft(writePath, moveTo);
         }
         if (targetSession !== documentSessionRef.current) {
           if (isDesktopRuntime()) {
@@ -324,11 +330,11 @@ export function useMindMap({
           }
           return { result, stale: true } as const;
         }
-        const nextBinding = moveTo ?? (newBinding ? writePath : null);
+        const nextBinding = moveTo ?? (newBinding || automaticDraft ? writePath : null);
         if (nextBinding) {
           protectedUnboundSourceContent.current = null;
           protectedUnboundSourceDocument.current = null;
-          protectedUnboundSourcePath.current = null;
+          if (!automaticDraft) protectedUnboundSourcePath.current = null;
           protectedBrowserSourceNameRef.current = null;
           setProtectedBrowserSourceName(null);
           documentPathRef.current = nextBinding;
@@ -469,6 +475,7 @@ export function useMindMap({
           setRecoveredWorkPending(loaded.recoveryKind === "restored");
           if (
             !loaded.recoveredFromBackup &&
+            loaded.documentPath !== null &&
             protectedUnboundSourceContent.current === null &&
             loaded.recoveryKind !== "restored"
           ) {
@@ -504,7 +511,7 @@ export function useMindMap({
         } else {
           let freshPath: string | null = null;
           let freshSourceHash: string | null = null;
-          if (!isDesktopRuntime() && !loaded.saveError) {
+          if (!loaded.saveError) {
             const created = await createMarkdownDraft(
               latestDocument.current,
             );
@@ -615,7 +622,7 @@ export function useMindMap({
     const silent =
       silentAutosaveDocuments.current.delete(snapshot.document);
     if (
-      shouldDeferUnboundCopyAutosave(
+      !isDesktopRuntime() && shouldDeferUnboundCopyAutosave(
         snapshot.document,
         documentPath,
         protectedUnboundSourceContent.current,
@@ -1134,10 +1141,7 @@ export function useMindMap({
       );
       if (document === current.present.document) return current;
       silentAutosaveDocuments.current.add(document);
-      return {
-        ...current,
-        present: { ...current.present, document },
-      };
+      return commitEditorHistory(current, { ...current.present, document });
     });
   }, []);
 

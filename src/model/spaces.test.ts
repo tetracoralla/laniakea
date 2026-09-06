@@ -201,9 +201,9 @@ describe("typed Laniakea spaces", () => {
     expect(renamed.edges.find(({ id }) => id === branchEdge.id)?.label).toBe("已通过");
     expect(merged.edges.some((edge) => edge.from === branchEdge.to && edge.to === target.nodeId))
       .toBe(true);
-    expect(canConnectFlowNodes(merged, branchEdge.to, target.nodeId)).toBe(false);
+    expect(canConnectFlowNodes(merged, branchEdge.to, target.nodeId)).toBe(true);
     expect(canConnectFlowNodes(merged, target.nodeId, decisionId)).toBe(true);
-    expect(connectableFlowNodeIds(merged, branchEdge.to)).not.toContain(target.nodeId);
+    expect(connectableFlowNodeIds(merged, branchEdge.to)).toContain(target.nodeId);
     const looped = connectFlowNodes(merged, target.nodeId, decisionId, {
       fromPort: "left",
       toPort: "left",

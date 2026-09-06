@@ -18,11 +18,13 @@ interface FlowNodeDragOptions {
     currentPositions: Record<string, FlowNodePosition>,
   ) => void;
   onSelect: (id: string | null) => void;
+  onPreview?: (preview: { nodeId: string; position: FlowNodePosition } | null) => void;
   space: FlowSpace;
 }
 
 interface ActiveFlowNodeDrag {
   base: FlowNodePosition;
+  zoom: number;
   currentPositions: Record<string, FlowNodePosition>;
   element: HTMLElement;
   moved: boolean;
@@ -41,10 +43,26 @@ export function useFlowNodeDrag({
   layout,
   onMove,
   onSelect,
+  onPreview = () => undefined,
   space,
 }: FlowNodeDragOptions) {
   const activeRef = useRef<ActiveFlowNodeDrag | null>(null);
   const spaceIdRef = useRef(space.id);
+  const frameRef = useRef(0);
+  const onPreviewRef = useRef(onPreview);
+  onPreviewRef.current = onPreview;
+  const renderPreview = useCallback(() => {
+    if (frameRef.current) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = 0;
+      const active = activeRef.current;
+      if (!active) return;
+      onPreviewRef.current({ nodeId: active.nodeId, position: {
+        x: active.base.x + (active.lastClientX - active.startClientX - active.panX) / active.zoom,
+        y: active.base.y + (active.lastClientY - active.startClientY - active.panY) / active.zoom,
+      } });
+    });
+  }, []);
 
   const releaseCapture = useCallback((pointerId: number) => {
     const canvas = containerRef.current;
@@ -57,6 +75,9 @@ export function useFlowNodeDrag({
     const active = activeRef.current;
     if (!active) return;
     activeRef.current = null;
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    frameRef.current = 0;
+    onPreviewRef.current(null);
     active.element.style.removeProperty("transform");
     active.element.classList.remove("is-dragging");
     releaseCapture(active.pointerId);
@@ -85,6 +106,7 @@ export function useFlowNodeDrag({
     );
     activeRef.current = {
       base: { x: node.x, y: node.y },
+      zoom: space.viewport.zoom,
       currentPositions,
       element,
       moved: false,
@@ -97,37 +119,38 @@ export function useFlowNodeDrag({
       startClientX: event.clientX,
       startClientY: event.clientY,
     };
-    canvas.setPointerCapture?.(event.pointerId);
-  }, [containerRef, layout.nodes, onSelect]);
+
+  }, [containerRef, layout.nodes, onSelect, space.viewport.zoom]);
 
   const update = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const active = activeRef.current;
     if (!active || active.pointerId !== event.pointerId) return false;
     active.lastClientX = event.clientX;
     active.lastClientY = event.clientY;
-    const deltaX = (event.clientX - active.startClientX - active.panX) / space.viewport.zoom;
-    const deltaY = (event.clientY - active.startClientY - active.panY) / space.viewport.zoom;
+    const deltaX = (event.clientX - active.startClientX - active.panX) / active.zoom;
+    const deltaY = (event.clientY - active.startClientY - active.panY) / active.zoom;
     const distance = Math.hypot(deltaX, deltaY);
     if (distance >= 4) {
+      if (!active.moved) containerRef.current?.setPointerCapture?.(event.pointerId);
       active.moved = true;
       active.element.classList.add("is-dragging");
-      active.element.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
+      renderPreview();
     }
     return true;
-  }, [space.viewport.zoom]);
+  }, [containerRef, renderPreview, space.viewport.zoom]);
 
   const pointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     const active = activeRef.current;
     if (!active || active.pointerId !== event.pointerId) return false;
-    const deltaX = (event.clientX - active.startClientX - active.panX) / space.viewport.zoom;
-    const deltaY = (event.clientY - active.startClientY - active.panY) / space.viewport.zoom;
+    const deltaX = (event.clientX - active.startClientX - active.panX) / active.zoom;
+    const deltaY = (event.clientY - active.startClientY - active.panY) / active.zoom;
     const shouldCommit = active.moved || Math.hypot(deltaX, deltaY) >= 4;
     const position = {
       x: active.base.x + deltaX,
       y: active.base.y + deltaY,
     };
     const { currentPositions, nodeId } = active;
-    clear();
+    clear(shouldCommit);
     if (shouldCommit) onMove(nodeId, position, currentPositions);
     return true;
   }, [clear, onMove, space.viewport.zoom]);
@@ -147,6 +170,10 @@ export function useFlowNodeDrag({
     onCancel: () => clear(),
   });
 
+  useEffect(() => () => {
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+  }, []);
+
   useEffect(() => {
     if (spaceIdRef.current === space.id) return;
     spaceIdRef.current = space.id;
@@ -165,13 +192,9 @@ export function useFlowNodeDrag({
       if (!active) return;
       active.panX += x;
       active.panY += y;
-      const deltaX = (active.lastClientX - active.startClientX - active.panX) /
-        space.viewport.zoom;
-      const deltaY = (active.lastClientY - active.startClientY - active.panY) /
-        space.viewport.zoom;
       active.moved = true;
       active.element.classList.add("is-dragging");
-      active.element.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
+      renderPreview();
     },
   };
 }

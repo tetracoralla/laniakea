@@ -7,7 +7,6 @@ import {
 import type { FlowLayoutNode } from "../../model/flowLayout";
 import type {
   FlowNode,
-  FlowNodeKind,
   FlowPlacementDirection,
 } from "../../types/mindmap";
 import {
@@ -15,22 +14,15 @@ import {
   markInputMethodComposition,
 } from "../../model/inputMethod";
 import { useTextEditorHistory } from "../../hooks/useTextEditorHistory";
-import { Icon } from "../icons/Icon";
 
 interface FlowNodeViewProps {
   draft: string;
   editing: boolean;
   node: FlowNode;
-  canStartConnection: boolean;
   connectableTarget: boolean;
   connectionTarget: boolean;
   connectionTargetPort: FlowPlacementDirection | null;
   connectingSource: boolean;
-  onAddNode: (
-    id: string,
-    kind: Extract<FlowNodeKind, "step" | "decision">,
-    direction: FlowPlacementDirection,
-  ) => void;
   onBeginEdit: (id: string) => void;
   onCancelEdit: () => void;
   onCommitEdit: (id: string, value: string) => void;
@@ -62,12 +54,10 @@ export const FlowNodeView = memo(function FlowNodeView({
   draft,
   editing,
   node,
-  canStartConnection,
   connectableTarget,
   connectionTarget,
   connectionTargetPort,
   connectingSource,
-  onAddNode,
   onBeginEdit,
   onCancelEdit,
   onCommitEdit,
@@ -141,12 +131,16 @@ export const FlowNodeView = memo(function FlowNodeView({
         </svg>
       )}
       {editing ? (
+        <div className="flow-node__content flow-node__editing">
+          <div className="flow-node__text-surface">
+            <div aria-hidden="true" className="flow-node__text-mirror">{draft || "输入步骤"}{"\u200b"}</div>
         <textarea
           aria-label="编辑流程步骤"
           className="flow-node__editor"
           defaultValue={draft}
           ref={editorRef}
           rows={1}
+          placeholder={node.kind === "start" || node.kind === "end" ? "输入文字" : "输入步骤"}
           onBlur={(event) => {
             if (composingRef.current) {
               commitAfterCompositionRef.current = true;
@@ -192,6 +186,8 @@ export const FlowNodeView = memo(function FlowNodeView({
             }
           }}
         />
+          </div>
+        </div>
       ) : (
         <button
           aria-pressed={selected}
@@ -234,59 +230,6 @@ export const FlowNodeView = memo(function FlowNodeView({
             </button>
           ))}
         </div>
-      )}
-      {selected && !editing && (
-        <>
-          <div
-            aria-label="快速添加流程节点"
-            className="flow-node__quick-actions"
-            onPointerDown={(event) => event.stopPropagation()}
-            role="group"
-          >
-            <button
-              aria-label="添加步骤"
-              onClick={() => onAddNode(node.id, "step", "right")}
-              title="添加步骤"
-              type="button"
-            >
-              <span aria-hidden="true" className="flow-node__quick-shape flow-node__quick-shape--step" />
-            </button>
-            <button
-              aria-label="添加判断"
-              onClick={() => onAddNode(node.id, "decision", "right")}
-              title="添加判断"
-              type="button"
-            >
-              <span aria-hidden="true" className="flow-node__quick-shape flow-node__quick-shape--decision" />
-            </button>
-            {canStartConnection && (
-              <button
-                aria-label="拖动连线"
-                className="flow-node__quick-connect"
-                onPointerDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onConnectPointerDown(node.id, "right", event);
-                }}
-                title="拖动到已有节点以连接"
-                type="button"
-              >
-                <span aria-hidden="true" />
-              </button>
-            )}
-            <button
-              aria-label="更多流程操作"
-              onClick={(event) => {
-                const bounds = event.currentTarget.getBoundingClientRect();
-                onOpenMenu(node.id, bounds, event.currentTarget);
-              }}
-              title="更多"
-              type="button"
-            >
-              <Icon name="more" size={15} />
-            </button>
-          </div>
-        </>
       )}
     </div>
   );

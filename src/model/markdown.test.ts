@@ -450,3 +450,30 @@ describe("Markdown import and export", () => {
     );
   });
 });
+
+// Ordinary user text must remain writable after our own serialization. These
+// cases come from the reported draft reopening as a protected source.
+describe("durable local drafts containing literal URLs", () => {
+  it.each([
+    "参考 https://example.com/path/ 后继续",
+    "联系 person@example.com 或访问 www.example.com",
+  ])("round trips %s without creating extra nodes", (text) => {
+    const original = createBlankDocument();
+    original.title = "网址草稿";
+    original.nodes[original.rootId].text = text;
+    const withFlow = createFlowSpace(original, original.rootId).document;
+    const serialized = documentToMarkdown(withFlow);
+    const reopened = parseMarkdownDocument(serialized);
+    expect(reopened.canOverwriteSource).toBe(true);
+    expect(reopened.document.nodes[reopened.document.rootId].text).toBe(text);
+    expect(Object.keys(reopened.document.nodes)).toHaveLength(1);
+    expect(Object.values(reopened.document.spaces ?? {})).toHaveLength(1);
+    expect(documentToMarkdown(reopened.document)).toBe(serialized);
+  });
+
+  it("still protects explicit links and formatting", () => {
+    for (const text of ["[site](https://example.com)", "<https://example.com>", "**bold**"]) {
+      expect(parseMarkdownDocument(`# 来源\n\n- ${text}\n`).canOverwriteSource).toBe(false);
+    }
+  });
+});

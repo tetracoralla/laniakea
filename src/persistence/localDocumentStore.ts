@@ -379,6 +379,9 @@ function friendlySaveError(error: unknown): PersistenceError {
       cause: error,
     });
   }
+  if (isDesktopRuntime() && /^(流程|思维图|思维导图|下层空间)/.test(rawMessage)) {
+    return new PersistenceError(`无法保存：${rawMessage}。当前内容仍保留，请另存副本。`, { cause: error });
+  }
   return new PersistenceError(
     isDesktopRuntime()
       ? "无法写入本地文件，请检查磁盘空间或文件权限。"
@@ -690,6 +693,7 @@ export async function createMarkdownDraft(
 export async function moveInternalDraft(
   sourcePath: string,
   targetPath: string,
+  protectedSourcePath: string | null = null,
 ): Promise<DocumentSaveResult> {
   if (!isDesktopRuntime()) {
     throw new PersistenceError("浏览器预览不支持移动本地草稿");
@@ -698,6 +702,7 @@ export async function moveInternalDraft(
     return await invoke<BackendSaveResult>("move_internal_draft", {
       sourcePath,
       targetPath,
+      protectedSourcePath,
     });
   } catch (error) {
     throw friendlySaveError(error);

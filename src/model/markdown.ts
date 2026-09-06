@@ -398,7 +398,12 @@ export function documentToMarkdown(document: MindMapDocument): string {
 function isPlainParagraph(node: RootContent | undefined): node is Paragraph {
   return (
     node?.type === "paragraph" &&
-    node.children.every((child) => child.type === "text")
+    node.children.every((child) => child.type === "text" || (
+      child.type === "link" && child.position === undefined &&
+      child.children.every((part) => part.type === "text") &&
+      (child.url === toString(child) || child.url === `mailto:${toString(child)}` ||
+        child.url === `http://${toString(child)}`)
+    ))
   );
 }
 

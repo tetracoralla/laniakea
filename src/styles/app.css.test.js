@@ -126,22 +126,13 @@ describe("node editor styles", () => {
     // 禁令针对判断节点的文字表面：轮廓必须由 SVG polygon 绘制。
     // 拖拽幽灵是独立元素，允许用 clip-path 复刻菱形。
     const contentRuleStart = appStyles.indexOf(
-      ".flow-node--decision .flow-node__content,",
+      ".flow-node--decision .flow-node__content {",
     );
     const contentRuleEnd = appStyles.indexOf("\n}", contentRuleStart);
     const contentRule = appStyles.slice(contentRuleStart, contentRuleEnd);
     expect(contentRule).not.toContain("clip-path");
   });
 
-  it("keeps in-place flow labels transparent and free of input chrome", () => {
-    const editorRuleStart = appStyles.indexOf(".flow-edge-label__editor,");
-    const editorRuleEnd = appStyles.indexOf("\n}", editorRuleStart);
-    const editorRule = appStyles.slice(editorRuleStart, editorRuleEnd);
-
-    expect(editorRule).toContain("background: transparent;");
-    expect(editorRule).toContain("border: 0;");
-    expect(editorRule).toContain("box-shadow: none;");
-  });
 
   it("gives third-level nodes a tighter visual role than second-level nodes", () => {
     expect(appStyles).toContain(
@@ -161,7 +152,7 @@ describe("node editor styles", () => {
   });
 
   it("keeps flow creation and connection controls contextual to selection", () => {
-    expect(appStyles).toContain(".flow-node__quick-actions {");
+    expect(appStyles).not.toContain(".flow-node__quick-actions {");
     expect(appStyles).toContain(".flow-node__port {");
     expect(appStyles).toContain(
       ".flow-node.is-connection-target:not(.flow-node--decision) .flow-node__content {",
