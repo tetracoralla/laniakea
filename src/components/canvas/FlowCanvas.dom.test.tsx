@@ -175,7 +175,7 @@ describe("FlowCanvas", () => {
     chromeButton.remove();
   });
 
-  it("shows selected-only direct creation controls and keeps the right-click fallback", async () => {
+  it("uses four ports for creation and retains the right-click object menu", async () => {
     const created = createFlowSpace(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     const onAddNode = vi.fn();
@@ -204,23 +204,8 @@ describe("FlowCanvas", () => {
       );
     });
 
-    const directActions = container.querySelector(".flow-node__quick-actions");
-    expect(directActions).not.toBeNull();
+    expect(container.querySelector(".flow-node__quick-actions")).toBeNull();
     expect(container.querySelectorAll(".flow-node__port")).toHaveLength(4);
-    await act(async () => {
-      directActions
-        ?.querySelector<HTMLButtonElement>("[aria-label='添加判断']")
-        ?.click();
-    });
-    expect(onAddNode).toHaveBeenCalledWith(
-      created.selectedFlowNodeId,
-      "decision",
-      "right",
-      expect.objectContaining({
-        [created.selectedFlowNodeId]: { x: 140, y: 140 },
-      }),
-      expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
-    );
 
     const rightPort = container.querySelector<HTMLButtonElement>(
       ".flow-node__port--right",
@@ -543,8 +528,8 @@ describe("FlowCanvas", () => {
     const label = Array.from(
       container.querySelectorAll<HTMLButtonElement>(".flow-edge-label"),
     ).find((button) => button.textContent === "否")!;
-    await act(async () => label.click());
-    const editor = container.querySelector<HTMLInputElement>(
+    await act(async () => label.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    const editor = container.querySelector<HTMLTextAreaElement>(
       ".flow-edge-label__editor",
     )!;
     await act(async () => {
@@ -589,8 +574,8 @@ describe("FlowCanvas", () => {
     const label = Array.from(
       container.querySelectorAll<HTMLButtonElement>(".flow-edge-label"),
     ).find((button) => button.textContent === "否")!;
-    await act(async () => label.click());
-    const editor = container.querySelector<HTMLInputElement>(
+    await act(async () => label.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    const editor = container.querySelector<HTMLTextAreaElement>(
       ".flow-edge-label__editor",
     )!;
     await act(async () => {

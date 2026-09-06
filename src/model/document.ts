@@ -145,6 +145,9 @@ function isFlowSpace(value: unknown, id: string): value is FlowSpace {
     !value.edges.every(isFlowEdge) ||
     !isFlowPositions(value.positions, value.nodes) ||
     !isFlowEdgeRoutes(value.edgeRoutes, value.edges as FlowEdge[]) ||
+    !isFlowPositions(value.edgeLabelOffsets, Object.fromEntries(
+      (value.edges as FlowEdge[]).map((edge) => [edge.id, edge]),
+    )) ||
     !isViewport(value.viewport) ||
     typeof value.updatedAt !== "string"
   ) {
@@ -155,12 +158,9 @@ function isFlowSpace(value: unknown, id: string): value is FlowSpace {
     return false;
   }
   const edgeIds = new Set<string>();
-  const endpointPairs = new Set<string>();
   for (const edge of value.edges) {
-    const endpointPair = `${edge.from}\u0000${edge.to}`;
     if (
       edgeIds.has(edge.id) ||
-      endpointPairs.has(endpointPair) ||
       edge.from === edge.to ||
       !nodes[edge.from] ||
       !nodes[edge.to]
@@ -168,7 +168,6 @@ function isFlowSpace(value: unknown, id: string): value is FlowSpace {
       return false;
     }
     edgeIds.add(edge.id);
-    endpointPairs.add(endpointPair);
   }
   return true;
 }

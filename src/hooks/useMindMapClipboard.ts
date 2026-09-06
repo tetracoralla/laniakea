@@ -6,9 +6,8 @@ import {
 } from "../model/clipboard";
 import {
   isBlankMindMapDocument,
-  topLevelRootIds,
 } from "../model/document";
-import { subtreeToMarkdown } from "../model/markdown";
+import { documentToMarkdown, subtreeToMarkdown } from "../model/markdown";
 import { normalizeSelectedRoots } from "../model/selection";
 import {
   deleteSelectedSubtrees,
@@ -115,13 +114,14 @@ export function useMindMapClipboard({
   );
 
   const copyDocumentMarkdown = useCallback(async () => {
-    if (!(await copyRoots(
-      topLevelRootIds(documentMindMap),
-      undefined,
-      documentMindMap,
-    ))) return;
+    const markdown = documentToMarkdown(documentMindMap);
+    if (!(await writeTextClipboard(markdown))) {
+      notify({ message: "无法写入系统剪贴板", tone: "error" });
+      return;
+    }
+    clipboardRef.current = { markdown };
     notify({ message: "已复制整张图为 Markdown" });
-  }, [copyRoots, documentMindMap, notify]);
+  }, [documentMindMap, notify]);
 
   const cutSelection = useCallback(async () => {
     const operationSessionId = documentSessionId;

@@ -87,6 +87,8 @@ export interface FlowSpace {
    * canvas arrangement and are omitted from the portable Markdown bundle.
    */
   edgeRoutes?: Record<string, FlowEdgeRouteOverride>;
+  /** Label displacement from the route midpoint, in canvas coordinates. */
+  edgeLabelOffsets?: Record<string, FlowNodePosition>;
   viewport: Viewport;
   updatedAt: string;
 }

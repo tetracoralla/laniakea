@@ -66,6 +66,7 @@ describe("desktop Markdown document persistence", () => {
     expect(invoke).toHaveBeenCalledWith("move_internal_draft", {
       sourcePath: "/app-data/drafts/方案.md",
       targetPath: "/Volumes/Workspace/Documents/方案.md",
+      protectedSourcePath: null,
     });
   });
 

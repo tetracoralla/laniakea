@@ -4,6 +4,8 @@ import { act, useCallback, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
+import { createFlowSpace, addFlowStepAfter, flowSpaceForNode } from "../model/spaces";
+import { parseMarkdownDocument } from "../model/markdown";
 import { singleSelection } from "../model/selection";
 import type { MindMapDocument } from "../types/mindmap";
 import { useMindMapClipboard } from "./useMindMapClipboard";
@@ -237,4 +239,30 @@ describe("clipboard document-session isolation", () => {
       expect.objectContaining({ message: "已粘贴节点" }),
     );
   });
+  it("copies the complete document including lower flow spaces and independent parallel labels", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const space = addFlowStepAfter(initial, created.selectedFlowNodeId).space;
+    space.edges = [
+      { ...space.edges[0], label: "通过" },
+      { ...space.edges[0], id: "retry", label: "补充资料\n重新审核" },
+    ];
+    const document = { ...created.document, spaces: { ...created.document.spaces, [space.id]: space } };
+    const writeText = vi.fn(async (_text: string) => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    function Harness() {
+      const clipboard = useMindMapClipboard({ mindMap: document, selection: singleSelection(document.rootId),
+        applyMutation: vi.fn(), documentSessionId: 1, isDocumentSessionCurrent: () => true,
+        notify: vi.fn(), undo: vi.fn() });
+      return <button onClick={() => void clipboard.copyDocumentMarkdown()}>复制整张图</button>;
+    }
+    await act(async () => root.render(<Harness />));
+    await act(async () => container.querySelector('button')!.click());
+    const parsed = parseMarkdownDocument(writeText.mock.calls[0][0]);
+    expect(parsed.canOverwriteSource).toBe(true);
+    expect(parsed.document.title).toBe(document.title);
+    const copied = Object.values(parsed.document.spaces!).find((candidate) => candidate.type === "flow")!;
+    expect(copied.type === "flow" && copied.edges).toEqual(space.edges);
+  });
+
 });

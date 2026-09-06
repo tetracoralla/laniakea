@@ -17,6 +17,7 @@ import {
   reconnectFlowEdge,
   setFlowEdgeRoute,
   setFlowEdgeLabel,
+  setFlowEdgeLabelOffset,
   setFlowEdgeStyle,
   setFlowNodeKind,
   setFlowNodeText,
@@ -352,6 +353,9 @@ export const FlowWorkspace = forwardRef<
       }}
       onCancelEdit={cancelEdit}
       onChangeEdgeLabel={changeEdgeLabel}
+      onChangeEdgeLabelOffset={(id, offset) =>
+        applySpace(setFlowEdgeLabelOffset(appliedSpaceRef.current, id, offset))
+      }
       onChangeEdgeRoute={changeEdgeRoute}
       onChangeEdgeStyle={changeEdgeStyle}
       onChangeKind={changeKind}
