@@ -688,9 +688,11 @@ export function flowConnectorPointOnRoute(
 
 // The delete control remains a Laniakea interaction concern. Geometry of the
 // route itself is shared with Graph View Compiler.
+export type FlowObstacleBounds = Pick<FlowLayoutNode, "x" | "y" | "width" | "height">;
+
 export function flowConnectorDeleteAnchor(
   route: FlowConnectorRoute,
-  obstacles: readonly FlowLayoutNode[],
+  obstacles: readonly FlowObstacleBounds[],
   offset = 24,
   kind: FlowConnectorKind = "rounded",
 ): FlowPoint {
@@ -745,6 +747,30 @@ export function flowConnectorDeleteAnchor(
     { x: point.x - normal.x * offset, y: point.y - normal.y * offset },
   ];
   return candidates.find((candidate) => !occupied(candidate.x, candidate.y)) ?? point;
+}
+
+/** The toolbar is a rectangle above its anchor, not a point on the line. */
+export function flowConnectorToolbarAnchor(
+  route: FlowConnectorRoute,
+  obstacles: readonly FlowObstacleBounds[],
+  zoom: number,
+  kind: FlowConnectorKind = "rounded",
+): FlowPoint {
+  const anchor = flowConnectorDeleteAnchor(route, obstacles, 24, kind);
+  const halfWidth = 52 / zoom;
+  const height = 36 / zoom;
+  const offset = 18 / zoom;
+  const gap = 8 / zoom;
+  for (let attempt = 0; attempt <= obstacles.length; attempt++) {
+    const bottom = anchor.y - offset;
+    const overlap = obstacles.filter((box) =>
+      anchor.x + halfWidth + gap > box.x && anchor.x - halfWidth - gap < box.x + box.width &&
+      bottom + gap > box.y && bottom - height - gap < box.y + box.height,
+    );
+    if (!overlap.length) return anchor;
+    anchor.y = Math.min(...overlap.map((box) => box.y)) - gap + offset;
+  }
+  return anchor;
 }
 
 export function flowPreviewConnectorPath(

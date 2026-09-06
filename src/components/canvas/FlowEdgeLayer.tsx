@@ -198,6 +198,14 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   const selectedRoute = selectedEdge
     ? routeByEdgeId.get(selectedEdge.id)
     : undefined;
+  const labelBounds = useMemo(() => routes.flatMap(({ edge, route }) => {
+    if (!edge.label) return [];
+    const anchor = flowConnectorPointOnRoute(route, 0.5, edge.style?.kind ?? "rounded");
+    const offset = edgeLabelOffsets?.[edge.id] ?? { x: 0, y: 0 };
+    const size = flowEdgeLabelSize(edge.label, measureTextWidth);
+    return [{ x: anchor.x + offset.x - size.width / 2,
+      y: anchor.y + offset.y - size.height / 2, ...size }];
+  }), [routes, edgeLabelOffsets, measureTextWidth]);
 
   useEffect(() => {
     if (!editingEdgeId) return;
@@ -351,6 +359,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
         <FlowEdgeSelectionControls
           edge={selectedEdge}
           layout={layout}
+          labelBounds={labelBounds}
           onBeginEdit={() => beginEdit(selectedEdge)}
           onChangeRoute={(route) => onChangeRoute(selectedEdge.id, route)}
           onChangeStyle={(patch) => onChangeStyle(selectedEdge.id, patch)}
