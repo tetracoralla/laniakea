@@ -1,10 +1,11 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { FlowEdgeRouteDragController } from "../../hooks/useFlowEdgeRouteDrag";
 import {
-  flowConnectorDeleteAnchor,
+  flowConnectorToolbarAnchor,
   flowRouteAdjustmentHandle,
   type FlowConnectorRoute,
   type FlowLayoutResult,
+  type FlowObstacleBounds,
 } from "../../model/flowLayout";
 import type {
   FlowEdge,
@@ -17,6 +18,7 @@ import { FlowEdgeToolbar } from "./FlowEdgeToolbar";
 interface FlowEdgeSelectionControlsProps {
   edge: FlowEdge;
   layout: FlowLayoutResult;
+  labelBounds?: readonly FlowObstacleBounds[];
   onBeginEdit: () => void;
   onChangeRoute: (route: FlowEdgeRouteOverride | null) => void;
   onChangeStyle: (patch: Partial<FlowEdgeStyle>) => void;
@@ -44,6 +46,7 @@ interface FlowEdgeSelectionControlsProps {
 export function FlowEdgeSelectionControls({
   edge,
   layout,
+  labelBounds = [],
   onBeginEdit,
   onChangeRoute,
   onChangeStyle,
@@ -64,10 +67,10 @@ export function FlowEdgeSelectionControls({
       (edge.style?.kind ?? "rounded") !== "curved"
     ? flowRouteAdjustmentHandle(route, routeOverride)
     : null;
-  const toolbarAnchor = flowConnectorDeleteAnchor(
+  const toolbarAnchor = flowConnectorToolbarAnchor(
     route,
-    Object.values(layout.nodes),
-    24,
+    [...Object.values(layout.nodes), ...labelBounds],
+    zoom,
     edge.style?.kind ?? "rounded",
   );
 

@@ -5,6 +5,7 @@ import {
   computeFlowLayout,
   flowConnectorCrossings,
   flowConnectorDeleteAnchor,
+  flowConnectorToolbarAnchor,
   flowConnectorPath,
   flowConnectorPoint,
   flowConnectorPointOnRoute,
@@ -449,4 +450,20 @@ it("keeps a dragged multi-line annotation inside fit-to-content bounds", () => {
   const bounds = includeFlowConnectorBounds(space, layout, undefined, routes);
   expect(bounds.minX + bounds.width).toBeGreaterThan(point.x + 1600 + 100);
   expect(bounds.minY + bounds.height).toBeGreaterThan(point.y + 1200 + 23);
+});
+
+it.each([0.5, 1, 2])("keeps the whole selected toolbar clear of node and label rectangles at zoom %s", (zoom) => {
+  const flow = spaceWith([node("a", "step", "Submit"), node("b", "step", "Review")], [["a", "b"]]);
+  const layout = computeFlowLayout(flow);
+  const route = compileFlowConnectors(flow, layout)[0].route;
+  const oldAnchor = flowConnectorDeleteAnchor(route, Object.values(layout.nodes));
+  const label = { x: oldAnchor.x - 35, y: oldAnchor.y - 40 / zoom, width: 70, height: 46 };
+  const obstacles = [...Object.values(layout.nodes), label];
+  const anchor = flowConnectorToolbarAnchor(route, obstacles, zoom);
+  const toolbar = { left: anchor.x - 52 / zoom, right: anchor.x + 52 / zoom,
+    top: anchor.y - 54 / zoom, bottom: anchor.y - 18 / zoom };
+  for (const box of obstacles) {
+    expect(toolbar.right <= box.x || toolbar.left >= box.x + box.width ||
+      toolbar.bottom <= box.y || toolbar.top >= box.y + box.height).toBe(true);
+  }
 });
