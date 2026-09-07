@@ -37,9 +37,12 @@ function FlowKeyboardHarness({ children }: { children: ReactNode }) {
   return children;
 }
 
-function FlowViewportHarness({ includePalette = false }: { includePalette?: boolean }) {
+function FlowViewportHarness({ includePalette = false, layoutOverride = layout }: {
+  includePalette?: boolean;
+  layoutOverride?: FlowLayoutResult;
+}) {
   const controller = useFlowViewport({
-    layout,
+    layout: layoutOverride,
     onCanvasPointerDown: () => undefined,
     onViewportChange: handlers.onViewportChange,
     selectedId: "step-1",
@@ -47,6 +50,7 @@ function FlowViewportHarness({ includePalette = false }: { includePalette?: bool
   });
   return (
     <>
+      <button onClick={controller.fit}>Fit content</button>
       <div
         className="flow-canvas"
         onLostPointerCapture={controller.bindings.onLostPointerCapture}
@@ -148,6 +152,19 @@ describe("flow viewport interruption", () => {
     delete (HTMLElement.prototype as Partial<HTMLElement>).setPointerCapture;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps a five-step flow readable when Fit is clicked instead of fitting render padding", async () => {
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 1280, bottom: 720,
+      width: 1280, height: 720, toJSON: () => ({}),
+    });
+    // The observed five-node graph occupies 464 by 514 pixels and its render
+    // surface adds 140 pixels around each side. Only actual content must fit.
+    const fiveStepLayout = { ...layout, width: 744, height: 794 };
+    await act(async () => root.render(<FlowViewportHarness layoutOverride={fiveStepLayout} />));
+    await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+    expect(handlers.onViewportChange).toHaveBeenLastCalledWith({ zoom: 1, x: 268, y: -37 });
   });
 
   it("cancels a Flow canvas pan before Escape can return to the parent", async () => {

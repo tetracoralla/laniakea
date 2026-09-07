@@ -14,4 +14,14 @@ Major direct runtime dependencies include:
 | serde / serde_json | Rust serialization | MIT OR Apache-2.0 |
 | sha2 | Content hashing | MIT OR Apache-2.0 |
 
-Development-only dependencies are not shipped as standalone components of the application but remain governed by their respective licenses. Before distributing a release artifact, regenerate or review the complete dependency inventory from the two lockfiles and preserve any package-specific notice files required by the selected license option.
+The Web build emits `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.txt` from the
+exact modules included in the frontend. The standalone Codex Plugin carries
+its own generated notices inside `plugins/laniakea`.
+
+The desktop build also runs `npm run build:desktop-notices`. It collects the
+locked macOS Cargo dependency graphs, including build dependencies, and
+preserves their license texts, package authors and unchanged source archive
+links. Versioned upstream supplements for crates that omit license files are
+documented in `licenses/rust/README.md`. Missing or changed supplements fail
+the build. The `.app` contains the project license and both frontend and
+native notices under `Contents/Resources/licenses`.

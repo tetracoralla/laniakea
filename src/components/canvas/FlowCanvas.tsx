@@ -37,6 +37,7 @@ import type {
   FlowSpace,
   Viewport,
 } from "../../types/mindmap";
+import type { TextWidthMeasurer } from "../../model/layout";
 import { Icon } from "../icons/Icon";
 import { FlowNodeMenu } from "../spaces/FlowNodeMenu";
 import { FlowTargetPicker } from "../spaces/FlowTargetPicker";
@@ -49,6 +50,10 @@ import { createCanvasTextWidthMeasurer } from "./textMeasure";
 
 export interface FlowCanvasHandle {
   fit: () => void;
+  focusSelected: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetZoom: () => void;
   focusCanvas: () => void;
   flushViewport: () => void;
 }
@@ -80,7 +85,7 @@ export interface FlowCanvasProps {
     position: FlowNodePosition,
     currentPositions: Record<string, FlowNodePosition>,
   ) => void;
-  onChangeKind: (id: string, kind: FlowNodeKind) => void;
+  onChangeKind: (id: string, kind: FlowNodeKind, positions: Record<string, FlowNodePosition>, measureTextWidth?: TextWidthMeasurer) => void;
   onChangeEdgeLabel: (edgeId: string, label: string) => void;
   onChangeEdgeLabelOffset?: (edgeId: string, offset: FlowNodePosition) => void;
   onChangeEdgeRoute?: (
@@ -217,6 +222,10 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       containerRef,
       contentRef,
       fit,
+      focusSelected,
+      zoomIn,
+      zoomOut,
+      resetZoom,
       flushViewport,
       panBy,
       panModifierHeld,
@@ -455,9 +464,13 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     ]);
     useImperativeHandle(ref, () => ({
       fit,
+      focusSelected,
+      zoomIn,
+      zoomOut,
+      resetZoom,
       flushViewport,
       focusCanvas: () => containerRef.current?.focus({ preventScroll: true }),
-    }), [containerRef, fit, flushViewport]);
+    }), [containerRef, fit, focusSelected, zoomIn, zoomOut, resetZoom, flushViewport]);
 
     const openNodeMenu = useCallback((
       nodeId: string,
@@ -773,7 +786,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             onChangeKind={(kind) => {
               const nodeId = nodeMenu.nodeId;
               setNodeMenu(null);
-              onChangeKind(nodeId, kind);
+              onChangeKind(nodeId, kind, currentPositions, measureTextWidth);
             }}
             onClose={(restoreFocus) => {
               const returnFocus = nodeMenu.returnFocus;

@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Laniakea",
-  "version": "0.3.2",
+  "version": "0.3.5",
   "identifier": "com.openadam.origin",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run build:web && npm run build:desktop-notices && npm run dev",
     "devUrl": "http://127.0.0.1:4173",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && npm run build:desktop-notices",
     "frontendDist": "../dist"
   },
   "app": {
@@ -31,8 +31,18 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "category": "Productivity",
+    "resources": {
+      "../LICENSE": "licenses/LICENSE",
+      "../NOTICE": "licenses/NOTICE",
+      "../dist/THIRD_PARTY_NOTICES.txt": "licenses/THIRD_PARTY_NOTICES.web.txt",
+      "notices/THIRD_PARTY_NOTICES.txt": "licenses/THIRD_PARTY_NOTICES.native.txt",
+      "notices/inventory.json": "licenses/native-inventory.json"
+    },
     "shortDescription": "快速、轻量的思维导图",
     "longDescription": "打开即输入，用键盘快速展开想法，并保存为可带走的 Markdown。",
     "icon": [

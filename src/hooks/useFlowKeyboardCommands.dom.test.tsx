@@ -172,6 +172,21 @@ describe("flow keyboard commands", () => {
     expect(handlers.onDelete).not.toHaveBeenCalled();
   });
 
+  it("returns from app chrome without applying flow edits to its controls", async () => {
+    await act(async () => root.render(<><Harness /><button id="chrome">搜索</button></>));
+    const chrome = container.querySelector("#chrome")!;
+    await act(async () => {
+      pressKey(chrome, "Enter");
+      pressKey(chrome, "Delete");
+      pressKey(chrome, "Tab");
+      pressKey(chrome, "Escape");
+    });
+    expect(handlers.onAddNext).not.toHaveBeenCalled();
+    expect(handlers.onAddBranch).not.toHaveBeenCalled();
+    expect(handlers.onDelete).not.toHaveBeenCalled();
+    expect(handlers.onBack).toHaveBeenCalledOnce();
+  });
+
   it("keeps native activation keys on the fit button", async () => {
     await act(async () => root.render(<Harness />));
     const fitButton = container.querySelector(".flow-fit-button")!;

@@ -43,14 +43,15 @@ function useAnimatedPresence<T>(value: T | null) {
 
   useEffect(() => {
     let animationFrame: number | null = null;
+    let entranceFallback: number | null = null;
     let exitTimer: number | null = null;
 
     if (value !== null) {
       setDisplayedValue(value);
       setVisible(false);
-      animationFrame = window.requestAnimationFrame(() => {
-        setVisible(true);
-      });
+      const reveal = () => setVisible(true);
+      animationFrame = window.requestAnimationFrame(reveal);
+      entranceFallback = window.setTimeout(reveal, shellExitDuration);
     } else if (displayedValueRef.current !== null) {
       setVisible(false);
       exitTimer = window.setTimeout(() => {
@@ -61,6 +62,9 @@ function useAnimatedPresence<T>(value: T | null) {
     return () => {
       if (animationFrame !== null) {
         window.cancelAnimationFrame(animationFrame);
+      }
+      if (entranceFallback !== null) {
+        window.clearTimeout(entranceFallback);
       }
       if (exitTimer !== null) {
         window.clearTimeout(exitTimer);
@@ -146,13 +150,16 @@ export function StatusBar({
 
   useEffect(() => {
     let animationFrame: number | null = null;
+    let expandFallback: number | null = null;
     let exitTimer: number | null = null;
 
     if (contentPresent) {
       setShellMounted(true);
-      animationFrame = window.requestAnimationFrame(() => {
-        setShellExpanded(true);
-      });
+      const expand = () => setShellExpanded(true);
+      animationFrame = window.requestAnimationFrame(expand);
+      // Background tabs freeze rAF; without this fallback the shell stays
+      // collapsed at its clipped width and the actions can never be hit.
+      expandFallback = window.setTimeout(expand, shellExitDuration);
     } else {
       setShellExpanded(false);
       if (shellMounted) {
@@ -165,6 +172,9 @@ export function StatusBar({
     return () => {
       if (animationFrame !== null) {
         window.cancelAnimationFrame(animationFrame);
+      }
+      if (expandFallback !== null) {
+        window.clearTimeout(expandFallback);
       }
       if (exitTimer !== null) {
         window.clearTimeout(exitTimer);

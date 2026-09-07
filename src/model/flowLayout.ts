@@ -53,6 +53,17 @@ export interface FlowLayoutResult {
   height: number;
 }
 
+/** Render bounds include space for connector strokes; fitting adds its own
+ * screen-space margin and must not count that render padding a second time. */
+export function flowContentBounds(layout: FlowLayoutResult) {
+  return {
+    minX: layout.minX + canvasPadding,
+    minY: layout.minY + canvasPadding,
+    width: Math.max(0, layout.width - canvasPadding * 2),
+    height: Math.max(0, layout.height - canvasPadding * 2),
+  };
+}
+
 export type FlowNavigationDirection = "up" | "down" | "left" | "right";
 
 const columnGap = 72;
@@ -214,14 +225,12 @@ export function computeFlowLayout(
       )
     : nodes;
   const positionedNodes = Object.values(positioned);
-  const minX = Math.min(0, ...positionedNodes.map((node) => node.x - canvasPadding));
-  const minY = Math.min(0, ...positionedNodes.map((node) => node.y - canvasPadding));
+  const minX = Math.min(...positionedNodes.map((node) => node.x - canvasPadding));
+  const minY = Math.min(...positionedNodes.map((node) => node.y - canvasPadding));
   const maxX = Math.max(
-    maximumRowWidth + canvasPadding * 2,
     ...positionedNodes.map((node) => node.x + node.width + canvasPadding),
   );
   const maxY = Math.max(
-    y - rowGap + canvasPadding,
     ...positionedNodes.map((node) => node.y + node.height + canvasPadding),
   );
   return {

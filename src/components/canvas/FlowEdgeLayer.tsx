@@ -462,7 +462,6 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
               }
             }}
             style={{ left: point.x, top: point.y }}
-            title="双击编辑文字，拖动调整位置"
             type="button"
           >
             {edge.label}

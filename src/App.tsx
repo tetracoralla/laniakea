@@ -35,7 +35,7 @@ import {
 import { displayGlobalShortcut } from "./desktop/shortcut";
 import { prepareEditableFieldsForLifecycleSave } from "./desktop/prepareForLifecycleSave";
 import { writeTextClipboard } from "./desktop/clipboard";
-import type { CommandId } from "./commands/registry";
+import { commandRegistry, commandSupportsTarget, type CommandId } from "./commands/registry";
 import { useAppNotice } from "./hooks/useAppNotice";
 import { useBrowserStorageNotice } from "./hooks/useBrowserStorageNotice";
 import { useDocumentWorkflow } from "./hooks/useDocumentWorkflow";
@@ -270,6 +270,7 @@ export function App() {
   const canvasRef = useRef<CanvasHandle>(null);
   const flowWorkspaceRef = useRef<FlowWorkspaceHandle>(null);
   const flowEntryRequestRef = useRef(0);
+  const flowSelectionsRef = useRef(new Map<string, string | null>());
   const canvasControlsRef = useRef<CanvasControlsHandle>(null);
   const showZoomPreview = useCallback((zoom: number) => {
     canvasControlsRef.current?.showZoom(zoom);
@@ -443,8 +444,13 @@ export function App() {
   const activeFlow = activeFlowCandidate?.type === "flow"
     ? activeFlowCandidate
     : null;
+  const activeFlowId = activeFlow?.id;
+  const rememberFlowSelection = useCallback((id: string | null) => {
+    if (activeFlowId) flowSelectionsRef.current.set(activeFlowId, id);
+  }, [activeFlowId]);
 
   useEffect(() => {
+    flowSelectionsRef.current.clear();
     setSurface(rootMapSurface);
     setSurfaceStack([]);
     setDrillDownNodeId(null);
@@ -576,14 +582,17 @@ export function App() {
     preloadFlowWorkspace();
     const existing = flowSpaceForNode(activeMap, nodeId);
     const creating = !existing;
+    const rememberedId = existing ? flowSelectionsRef.current.get(existing.id) : undefined;
     const created = existing
       ? {
           document: activeMap,
           spaceId: existing.id,
           selectedFlowNodeId:
-            Object.values(existing.nodes).find(({ kind }) => kind === "step")?.id ??
-            Object.keys(existing.nodes)[0] ??
-            "",
+            rememberedId === null || (rememberedId && existing.nodes[rememberedId])
+              ? rememberedId
+              : Object.values(existing.nodes).find(({ kind }) => kind === "step")?.id ??
+                Object.keys(existing.nodes)[0] ??
+                null,
         }
       : createFlowSpace(activeMap, nodeId);
     if (!created.spaceId) return;
@@ -873,7 +882,7 @@ export function App() {
   }, [applyMutation]);
 
   const spacePath = useMemo(() => {
-    const items: Array<{ id: string; label: string; typeLabel: string }> = [];
+    const items: Array<{ id: string; label: string }> = [];
     const appendSurface = (candidate: EditorSurface) => {
       if (candidate.kind === "map" && !candidate.spaceId) return;
       const space = documentSpaces(mindMap)[candidate.spaceId!];
@@ -882,7 +891,6 @@ export function App() {
       items.push({
         id: space.id,
         label: anchor?.text || "未命名节点",
-        typeLabel: space.type === "map" ? "思维图" : "流程",
       });
     };
     surfaceStack.forEach(({ surface: candidate }) => appendSurface(candidate));
@@ -1067,6 +1075,19 @@ export function App() {
     });
 
   const executeAppCommand = useCallback((command: CommandId) => {
+    if (surface.kind === "flow") {
+      const definition = commandRegistry.find(({ id }) => id === command);
+      if (!definition || !commandSupportsTarget(definition, "flow")) return;
+      const canvas = flowWorkspaceRef.current;
+      switch (command) {
+        case "viewport.fit": canvas?.fit(); return;
+        case "viewport.focus": canvas?.focusSelected(); return;
+        case "viewport.zoom-in": canvas?.zoomIn(); return;
+        case "viewport.zoom-out": canvas?.zoomOut(); return;
+        case "viewport.reset": canvas?.resetZoom(); return;
+        case "map.copy-markdown": void copyDocumentMarkdown(); return;
+      }
+    }
     if (command === "map.new" || command === "map.open") {
       setCanvasBlankMenu(null);
     }
@@ -1116,6 +1137,8 @@ export function App() {
     activeMap,
     canvasInteractionTarget,
     copySubspacePortal,
+    copyDocumentMarkdown,
+    surface.kind,
     enterSubspaceForNode,
     executeCommand,
     requestDeleteSubspace,
@@ -1159,9 +1182,11 @@ export function App() {
       drillDownNodeId === null &&
       deleteSubspaceRequest === null &&
       nodeSpaceMenu === null &&
-      !shortcutSettingsOpen &&
-      surface.kind === "map",
-    selectionEnabled: editingId === null,
+      !shortcutSettingsOpen,
+    // Global commands (palette, search, save, zoom) stay live on Flow
+    // surfaces too; selection-only commands remain map-scoped so they
+    // cannot fight the Flow canvas's own keyboard handling.
+    selectionEnabled: editingId === null && surface.kind === "map",
     commandTarget: canvasInteractionTarget.kind,
     onCommand: (command) => {
       if (
@@ -1177,6 +1202,7 @@ export function App() {
     onPasteText: pasteText,
     onBeginTyping: (character) => {
       if (
+        surface.kind === "map" &&
         canvasInteractionTarget.kind === "mind-node" &&
         hasSingleSelection &&
         selectedId
@@ -1345,6 +1371,7 @@ export function App() {
           notify={notify}
           onBack={navigateBack}
           onRedo={redo}
+          onSelectionChange={rememberFlowSelection}
           onUndo={undo}
           onEditorDraftChange={(target, value) =>
             protectEditorDraft({
@@ -1379,7 +1406,7 @@ export function App() {
 
       {overlay && (
         <LazyCommandOverlay
-          commandTarget={canvasInteractionTarget.kind}
+          commandTarget={surface.kind === "flow" ? "flow" : canvasInteractionTarget.kind}
           document={mindMap}
           key={overlay}
           mode={overlay}

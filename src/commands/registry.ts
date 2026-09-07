@@ -1,5 +1,5 @@
 export type CommandContext = "selection" | "editing" | "global";
-export type CommandTarget = "mind-node" | "subspace-portal";
+export type CommandTarget = "mind-node" | "subspace-portal" | "flow";
 
 export type CommandId =
   | "node.create-sibling"
@@ -445,6 +445,7 @@ export function commandSupportsTarget(
   command: CommandDefinition,
   target: CommandTarget,
 ): boolean {
+  if (target === "flow") return command.contexts.includes("global");
   return !command.targets || command.targets.includes(target);
 }
 

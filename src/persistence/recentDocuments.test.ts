@@ -211,7 +211,6 @@ describe("recent document index", () => {
       }),
     ).toEqual({
       associatedPath: "/Users/openadam/Desktop/方案.md",
-      compactLocation: "桌面",
       exactDescription: "正在保存到：/Users/openadam/Desktop/方案.md",
       metadata: "保存到 · 桌面",
       pathRole: "binding",
@@ -224,7 +223,6 @@ describe("recent document index", () => {
       }),
     ).toEqual({
       associatedPath: "/Users/openadam/Downloads/复杂方案.md",
-      compactLocation: "待另存",
       exactDescription:
         "当前修改尚未写回来源文件，来源：/Users/openadam/Downloads/复杂方案.md",
       metadata: "尚未另存 · 来源：下载",
