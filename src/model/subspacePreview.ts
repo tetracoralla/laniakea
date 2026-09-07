@@ -81,14 +81,18 @@ function orderedContentNodes(space: FlowSpace): FlowNode[] {
 }
 
 function flowPreview(space: FlowSpace): SubspacePreview {
-  const steps = orderedContentNodes(space).map(({ text }) =>
-    visibleLabel(text, "未命名步骤"),
-  );
+  const nodes = orderedContentNodes(space);
+  const steps = nodes.map(({ text }) => visibleLabel(text, "未命名步骤"));
+  const separator = (index: number) => space.edges.some(({ from, to }) =>
+    from === nodes[index - 1]?.id && to === nodes[index]?.id,
+  ) ? "→" : " · ";
+  const joinSteps = (count: number) => steps.slice(0, count)
+    .map((text, index) => `${index ? separator(index) : ""}${text}`).join("");
   const truncated = steps.length > 4;
   const text = truncated
-    ? `${steps.slice(0, 3).join("→")}...→${steps[steps.length - 1]}`
+    ? `${joinSteps(3)}...${separator(steps.length - 1)}${steps[steps.length - 1]}`
     : steps.length > 0
-      ? steps.join("→")
+      ? joinSteps(steps.length)
       : "暂无步骤";
   return {
     accessibleLabel: `打开流程：${text}`,

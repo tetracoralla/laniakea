@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
+import { createFlowWithStep } from "../test/flowFixture";
 
 import { act, useCallback, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
-import { createFlowSpace, addFlowStepAfter, flowSpaceForNode } from "../model/spaces";
+import { addFlowStepAfter, flowSpaceForNode } from "../model/spaces";
 import { parseMarkdownDocument } from "../model/markdown";
 import { singleSelection } from "../model/selection";
 import type { MindMapDocument } from "../types/mindmap";
@@ -240,7 +241,7 @@ describe("clipboard document-session isolation", () => {
     );
   });
   it("copies the complete document including lower flow spaces and independent parallel labels", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const space = addFlowStepAfter(initial, created.selectedFlowNodeId).space;
     space.edges = [

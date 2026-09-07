@@ -137,7 +137,7 @@ export const FlowWorkspace = forwardRef<
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
         if (fitOnMount) canvasRef.current?.fit();
-        else canvasRef.current?.focusCanvas();
+        if (!editingIdRef.current) canvasRef.current?.focusCanvas();
       });
     });
     return () => {
@@ -165,7 +165,9 @@ export const FlowWorkspace = forwardRef<
     setEditingId(null);
     setDraft("");
     onEditorDraftFinish(true);
-    window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
+    window.requestAnimationFrame(() => {
+      if (!editingIdRef.current) canvasRef.current?.focusCanvas();
+    });
   }, [onEditorDraftFinish]);
 
   const commitEdit = useCallback((nodeId: string, value: string) => {
@@ -177,7 +179,9 @@ export const FlowWorkspace = forwardRef<
     setEditingId(null);
     setDraft("");
     onEditorDraftFinish(false);
-    window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
+    window.requestAnimationFrame(() => {
+      if (!editingIdRef.current) canvasRef.current?.focusCanvas();
+    });
   }, [applySpace, onEditorDraftFinish]);
 
   const changeDraft = useCallback((value: string) => {
@@ -243,6 +247,8 @@ export const FlowWorkspace = forwardRef<
     position: FlowNodePosition,
     currentPositions: Record<string, FlowNodePosition>,
   ) => {
+    const pendingId = editingIdRef.current;
+    if (pendingId) commitEdit(pendingId, draftRef.current);
     const created = addFlowNodeAtPosition(
       appliedSpaceRef.current,
       kind,
@@ -255,7 +261,7 @@ export const FlowWorkspace = forwardRef<
     editingIdRef.current = created.nodeId;
     setEditingId(created.nodeId);
     setDraft("");
-  }, [applySpace]);
+  }, [applySpace, commitEdit]);
 
   const addBranch = useCallback((nodeId: string) => {
     const created = addFlowBranch(appliedSpaceRef.current, nodeId);

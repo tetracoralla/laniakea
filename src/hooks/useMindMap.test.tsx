@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createFlowWithStep } from "../test/flowFixture";
 
 import { configureInternalDocumentRoot } from "../persistence/recentDocuments";
 
@@ -7,7 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
-import { createFlowSpace, flowSpaceForNode, setFlowEdgeLabelOffset, updateFlowSpace } from "../model/spaces";
+import { flowSpaceForNode, setFlowEdgeLabelOffset, updateFlowSpace } from "../model/spaces";
 import { isMindMapDocument } from "../model/document";
 import { FlowWorkspace } from "../components/spaces/FlowWorkspace";
 import { setNodeText } from "../model/tree";
@@ -1784,7 +1785,7 @@ describe("mind map save presentation", () => {
     ).toEqual(["hash-v1", "hash-b1"]);
   });
   it("drags a flow node, undoes and redoes its position, then undoes creation without dangling positions", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     persistence.loadLocalDocument.mockResolvedValue({
       document: created.document, documentPath: "/tmp/flow.md", sourcePath: "/tmp/flow.md",
       sourceHash: "v1", importedAsCopy: false, viewStateRestored: true,
@@ -1864,7 +1865,7 @@ describe("mind map save presentation", () => {
   });
 
   it("keeps a dragged edge label when its autosave is superseded by a pan", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const flowSpace = flowSpaceForNode(created.document, "path");
     if (!flowSpace) throw new Error("expected flow space");
     const stamp = flowSpace.updatedAt;

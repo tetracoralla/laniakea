@@ -1,3 +1,4 @@
+import { createFlowWithStep } from "../test/flowFixture";
 import { describe, expect, it } from "vitest";
 import { createSeedDocument } from "../data/seed";
 import {
@@ -41,6 +42,10 @@ describe("typed Laniakea spaces", () => {
     const flow = flowSpaceForNode(created.document, "path");
 
     expect(flow?.id).toBe(created.spaceId);
+    expect(flow?.nodes).toEqual({});
+    expect(flow?.edges).toEqual([]);
+    expect(created.selectedFlowNodeId).toBe("");
+    expect(created.document.nodes.path.text).toBe(source.nodes.path.text);
     expect(source.spaces).toBeUndefined();
     expect(created.document.nodes.root.children).toEqual(originalChildren);
     expect(isMindMapDocument(created.document)).toBe(true);
@@ -58,11 +63,9 @@ describe("typed Laniakea spaces", () => {
 
     const created = createFlowSpace(blankAnchor, "path");
     const flow = flowSpaceForNode(created.document, "path");
-    const step = Object.values(flow?.nodes ?? {}).find(
-      (node) => node.kind === "step",
-    );
-
-    expect(step?.text).toBe("");
+    expect(flow?.nodes).toEqual({});
+    expect(flow?.edges).toEqual([]);
+    expect(created.selectedFlowNodeId).toBe("");
     expect(JSON.stringify(created.document)).not.toContain("输入步骤");
   });
 
@@ -117,7 +120,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("keeps keyboard next and branch operations semantic before manual placement", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const stepId = created.selectedFlowNodeId;
     const added = addFlowStepAfter(initial, stepId);
@@ -133,7 +136,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("creates a decision directly and preserves the existing continuation", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const stepId = created.selectedFlowNodeId;
     const continuation = addFlowStepAfter(initial, stepId);
@@ -150,7 +153,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("removes a deleted step and every attached edge without inventing a bridge", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowStepAfter(initial, created.selectedFlowNodeId);
     const renamed = setFlowNodeText(added.space, added.nodeId, "确认订单");
@@ -162,7 +165,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("keeps only explicit connections when deleting an intermediate step", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const startId = created.selectedFlowNodeId;
     const middle = addFlowStepAfter(initial, startId);
@@ -190,7 +193,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("edits branch language, merges branches, and permits an explicit loop", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const decisionId = created.selectedFlowNodeId;
     const branched = addFlowBranch(initial, decisionId).space;
@@ -217,7 +220,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("creates in a chosen direction and keeps connector ports as portable semantics", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const originId = created.selectedFlowNodeId;
     const placed = addFlowNodeInDirection(
@@ -256,7 +259,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("keeps an occupied quick-create direction and chooses the nearest open lane", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const originId = created.selectedFlowNodeId;
     const first = addFlowNodeInDirection(
@@ -284,7 +287,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("edits one edge authority for styles and manual routing and cleans it up", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
     const edgeId = added.space.edges[0].id;
@@ -315,7 +318,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("drops a manual route whenever an insertion changes that edge's endpoint", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const continuation = addFlowStepAfter(initial, created.selectedFlowNodeId);
     const edgeId = continuation.space.edges[0].id;
@@ -331,7 +334,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("reuses directional placement when keyboard insertion meets an occupied lane", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const sourceId = created.selectedFlowNodeId;
     const first = addFlowNodeInDirection(
@@ -351,7 +354,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("does not create a mutation for unchanged node text or an invalid route", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const node = initial.nodes[created.selectedFlowNodeId];
     const added = addFlowStepAfter(initial, node.id);
@@ -363,7 +366,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("adds a free-standing palette shape and lets a terminal participate like any node", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const terminal = addFlowNodeAtPosition(
       initial,
@@ -406,7 +409,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("reconnects either end of an existing edge to a chosen node side", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const middle = addFlowStepAfter(initial, created.selectedFlowNodeId);
     const target = addFlowNodeAtPosition(
@@ -440,7 +443,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("deletes an edge directly and leaves both endpoint nodes intact", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowStepAfter(initial, created.selectedFlowNodeId);
     const edgeId = added.space.edges[0].id;
@@ -452,7 +455,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("keeps existing coordinates stable and allows a truly empty free canvas", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const originId = created.selectedFlowNodeId;
     const positioned = positionFlowNode(
@@ -482,7 +485,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("carries editor viewports across an undo restore", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const historical = created.document;
     const pannedCurrent = setFlowViewport(
       { ...historical, viewport: { x: 30, y: 50, zoom: 1.4 } },
@@ -505,7 +508,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("keeps a restored space's own viewport when it no longer exists currently", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const historical = created.document;
     const currentWithoutSpace = deleteSubspaceForNode(
       { ...historical, viewport: { x: 5, y: 6, zoom: 1 } },
@@ -522,7 +525,7 @@ describe("typed Laniakea spaces", () => {
   });
 
   it("keeps a node's center fixed when switching between step and decision", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const flow = flowSpaceForNode(created.document, "path");
     if (!flow) throw new Error("expected flow space");
     const nodeId = created.selectedFlowNodeId;
@@ -552,7 +555,7 @@ describe("typed Laniakea spaces", () => {
     expect(asStepAgain.positions?.[nodeId]).toEqual(position);
   });
   it("keeps measured and automatically laid out nodes centered when their kind changes", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const flow = flowSpaceForNode(created.document, "path")!;
     const id = created.selectedFlowNodeId;
     const measureText = () => 315;

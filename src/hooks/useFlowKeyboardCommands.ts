@@ -16,6 +16,8 @@ interface FlowKeyboardCommandOptions {
   onDelete: (id: string) => void;
   onDeleteEdge?: (id: string) => void;
   onClearEdgeSelection?: () => void;
+  /** Empty canvas only: Enter starts the first step; absent otherwise. */
+  onCreateFirstStep?: () => void;
   onNavigate: (direction: FlowNavigationDirection) => void;
   onBack: () => void;
   onUndo: () => void;
@@ -46,6 +48,7 @@ export function useFlowKeyboardCommands({
   onDelete,
   onDeleteEdge = () => undefined,
   onClearEdgeSelection = () => undefined,
+  onCreateFirstStep,
   onNavigate,
   onBack,
   onUndo,
@@ -58,6 +61,7 @@ export function useFlowKeyboardCommands({
     onDelete,
     onDeleteEdge,
     onClearEdgeSelection,
+    onCreateFirstStep,
     onNavigate,
     onBack,
     onUndo,
@@ -72,6 +76,7 @@ export function useFlowKeyboardCommands({
     onDelete,
     onDeleteEdge,
     onClearEdgeSelection,
+    onCreateFirstStep,
     onNavigate,
     onBack,
     onUndo,
@@ -136,7 +141,15 @@ export function useFlowKeyboardCommands({
       if (target?.closest?.("button, input, textarea, select, .flow-fit-button")) return;
 
       const { selectedId: currentId } = handlers;
-      if (!currentId) return;
+      if (!currentId) {
+        // 空白流程没有“下一步”的锚点；Enter 仍要给出与双击空白一致的起步。
+        if (event.key === "Enter" && handlers.onCreateFirstStep) {
+          event.preventDefault();
+          event.stopPropagation();
+          handlers.onCreateFirstStep();
+        }
+        return;
+      }
       if (event.key === "Enter") {
         event.preventDefault();
         event.stopPropagation();

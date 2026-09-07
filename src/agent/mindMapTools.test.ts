@@ -1,3 +1,4 @@
+import { createFlowWithStep } from "../test/flowFixture";
 import { describe, expect, it } from "vitest";
 import {
   applyMindMapOperations,
@@ -11,8 +12,8 @@ import {
 import { documentToMarkdown } from "../model/markdown";
 import { createSeedDocument } from "../data/seed";
 import {
-  createFlowSpace,
   createMapSpace,
+  createFlowSpace,
   flowSpaceForNode,
   mapSpaceDocument,
   mergeMapSpaceDocument,
@@ -62,7 +63,7 @@ describe("Laniakea Agent mind-map tools", () => {
   });
 
   it("projects an anchored flow so an Agent can understand human flow semantics", () => {
-    const created = createFlowSpace(createSeedDocument(), "path").document;
+    const created = createFlowWithStep(createSeedDocument(), "path").document;
     const parsed = parseAgentMindMap(documentToMarkdown(created), "ignored");
     const view = mindMapToAgentView(parsed);
     const anchor = view.nodes.find((node) => node.text === "实现路径");
@@ -78,6 +79,15 @@ describe("Laniakea Agent mind-map tools", () => {
     expect(anchor?.subspace?.nodes).toEqual([
       expect.objectContaining({ kind: "step", text: "实现路径" }),
     ]);
+  });
+
+  it("reports a newly created flow as empty without inventing a step from its anchor", () => {
+    const created = createFlowSpace(createSeedDocument(), "path").document;
+    const parsed = parseAgentMindMap(documentToMarkdown(created), "ignored");
+    const anchor = mindMapToAgentView(parsed).nodes.find(({ text }) => text === "实现路径");
+    expect(anchor?.subspace).toMatchObject({
+      type: "flow", nodeCount: 0, edgeCount: 0, nodes: [], truncated: false,
+    });
   });
 
   it("projects an anchored map space so an Agent can understand deeper human thinking", () => {
@@ -291,7 +301,7 @@ describe("Laniakea Agent mind-map tools", () => {
   });
 
   it("caps each flow node's outgoing preview and flags the truncation", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     const hubId = Object.values(space.nodes).find(
       ({ kind }) => kind === "step",

@@ -1,3 +1,4 @@
+import { createFlowWithStep } from "../test/flowFixture";
 import { describe, expect, it } from "vitest";
 import { createSeedDocument } from "../data/seed";
 import {
@@ -6,7 +7,7 @@ import {
   parseMindMapDocument,
 } from "./document";
 import { createBlankDocument } from "../data/seed";
-import { addFlowStepAfter, createFlowSpace, flowSpaceForNode } from "./spaces";
+import { addFlowStepAfter, flowSpaceForNode } from "./spaces";
 
 describe("persisted document validation", () => {
   it("accepts a complete reachable mind map", () => {
@@ -14,7 +15,7 @@ describe("persisted document validation", () => {
   });
 
   it("accepts an anchored flow space and rejects a dangling portal", () => {
-    const created = createFlowSpace(createSeedDocument(), "path").document;
+    const created = createFlowWithStep(createSeedDocument(), "path").document;
     expect(isMindMapDocument(created)).toBe(true);
 
     const dangling = structuredClone(created);
@@ -23,7 +24,7 @@ describe("persisted document validation", () => {
   });
 
   it("validates persisted connector styles and local route overrides", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowStepAfter(initial, created.selectedFlowNodeId);
     const edgeId = added.space.edges[0].id;
@@ -46,7 +47,7 @@ describe("persisted document validation", () => {
   });
 
   it("rejects self-loops and duplicate edge identities but accepts parallel edges and directed loops", () => {
-    const base = createFlowSpace(createSeedDocument(), "path");
+    const base = createFlowWithStep(createSeedDocument(), "path");
     const firstSpace = flowSpaceForNode(base.document, "path")!;
     const secondNode = addFlowStepAfter(firstSpace, base.selectedFlowNodeId);
     const thirdNode = addFlowStepAfter(secondNode.space, secondNode.nodeId);

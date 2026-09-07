@@ -1,3 +1,4 @@
+import { createFlowWithStep } from "../test/flowFixture";
 import { describe, expect, it } from "vitest";
 import {
   createBlankDocument,
@@ -12,7 +13,6 @@ import {
 import { createChild, deleteSubtree, setNodeText } from "./tree";
 import {
   addFlowStepAfter,
-  createFlowSpace,
   createMapSpace,
   flowSpaceForNode,
   mapSpaceDocument,
@@ -89,7 +89,7 @@ describe("Markdown import and export", () => {
 
   it("round-trips a portable flow space through its anchor path", () => {
     const source = createSeedDocument();
-    const created = createFlowSpace(source, "path");
+    const created = createFlowWithStep(source, "path");
     const markdown = documentToMarkdown(created.document);
     const reopened = parseMarkdownDocument(markdown, "ignored filename");
     const reopenedAnchor = Object.values(reopened.document.nodes).find(
@@ -107,7 +107,7 @@ describe("Markdown import and export", () => {
   });
 
   it("round-trips connector appearance while omitting local manual routing", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const flow = flowSpaceForNode(created.document, "path")!;
     const added = addFlowStepAfter(flow, created.selectedFlowNodeId);
     const edgeId = added.space.edges[0].id;
@@ -153,7 +153,7 @@ describe("Markdown import and export", () => {
       "实现细节",
       "nested-map-node",
     ).document;
-    const flowCreated = createFlowSpace(expandedMap, "nested-map-node");
+    const flowCreated = createFlowWithStep(expandedMap, "nested-map-node");
     const complete = mergeMapSpaceDocument(
       mapCreated.document,
       mapCreated.spaceId,
@@ -208,7 +208,7 @@ describe("Markdown import and export", () => {
   it("protects the whole source when a portal anchor is dangling", () => {
     const source = createSeedDocument();
     const markdown = documentToMarkdown(
-      createFlowSpace(source, "path").document,
+      createFlowWithStep(source, "path").document,
     );
     const broken = markdown.replace('"anchorRef": "/0/2"', '"anchorRef": "/9/9"');
 
@@ -461,7 +461,7 @@ describe("durable local drafts containing literal URLs", () => {
     const original = createBlankDocument();
     original.title = "网址草稿";
     original.nodes[original.rootId].text = text;
-    const withFlow = createFlowSpace(original, original.rootId).document;
+    const withFlow = createFlowWithStep(original, original.rootId).document;
     const serialized = documentToMarkdown(withFlow);
     const reopened = parseMarkdownDocument(serialized);
     expect(reopened.canOverwriteSource).toBe(true);

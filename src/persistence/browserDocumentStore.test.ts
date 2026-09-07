@@ -1,8 +1,9 @@
+import { createFlowWithStep } from "../test/flowFixture";
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createBlankDocument, createSeedDocument } from "../data/seed";
 import { isMindMapDocument } from "../model/document";
-import { addFlowStepAfter, createFlowSpace, deleteFlowNode, flowSpaceForNode, updateFlowSpace } from "../model/spaces";
+import { addFlowStepAfter, deleteFlowNode, flowSpaceForNode, updateFlowSpace } from "../model/spaces";
 import {
   activateBrowserDocument,
   BrowserDocumentConflictError,
@@ -258,7 +259,7 @@ describe("browser document library", () => {
   });
 
   it("keeps a newer flow readable when a stale tab pans after a node deletion", async () => {
-    const flow = createFlowSpace(createSeedDocument(), "path");
+    const flow = createFlowWithStep(createSeedDocument(), "path");
     const added = addFlowStepAfter(flowSpaceForNode(flow.document, "path")!, flow.selectedFlowNodeId);
     const edgeId = added.space.edges[0].id;
     const arranged = {

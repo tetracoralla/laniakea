@@ -129,8 +129,8 @@ function leadPosition(
     y: point.y - gesture.grabOffset.y,
   };
   return {
-    x: Math.round(Math.max(32 - gesture.minimumOffset.x, unclamped.x)),
-    y: Math.round(Math.max(32 - gesture.minimumOffset.y, unclamped.y)),
+    x: Math.round(unclamped.x),
+    y: Math.round(unclamped.y),
   };
 }
 

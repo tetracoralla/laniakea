@@ -216,15 +216,12 @@ export function createFlowSpace(
   }
 
   const now = new Date().toISOString();
-  // Empty anchors keep empty step content; the display layer renders the
-  // "输入步骤" prompt, and placeholder text must never reach the document.
-  const step = createFlowNode("step", anchor.text.trim(), now);
   const id = createRuntimeId("flow-space");
   const space: FlowSpace = {
     id,
     type: "flow",
     anchorNodeId,
-    nodes: { [step.id]: step },
+    nodes: {},
     edges: [],
     viewport: defaultSpaceViewport,
     updatedAt: now,
@@ -247,7 +244,7 @@ export function createFlowSpace(
       updatedAt: now,
     },
     spaceId: id,
-    selectedFlowNodeId: step.id,
+    selectedFlowNodeId: "",
   };
 }
 

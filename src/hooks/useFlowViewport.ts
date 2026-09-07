@@ -48,6 +48,7 @@ interface FlowViewportController {
   zoomOut: () => void;
   resetZoom: () => void;
   flushViewport: () => void;
+  getViewport: () => Viewport;
   panBy: (x: number, y: number) => void;
   /** Live ref: true while Space is held (the pan modifier). */
   panModifierHeld: RefObject<boolean>;
@@ -340,6 +341,7 @@ export function useFlowViewport({
     const current = liveViewport.current;
     scheduleViewport({ ...current, x: current.x + x, y: current.y + y });
   }, [scheduleViewport]);
+  const getViewport = useCallback(() => liveViewport.current, []);
 
   return {
     containerRef,
@@ -350,6 +352,7 @@ export function useFlowViewport({
     zoomOut,
     resetZoom,
     flushViewport,
+    getViewport,
     panBy,
     panModifierHeld: spaceHeldRef,
     bindings: {

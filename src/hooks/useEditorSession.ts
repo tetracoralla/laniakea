@@ -176,8 +176,8 @@ export function useEditorSession({
         );
         return (
           existing &&
-          existing.x === Math.max(32, Math.round(position.x)) &&
-          existing.y === Math.max(32, Math.round(position.y))
+          existing.x === Math.round(position.x) &&
+          existing.y === Math.round(position.y)
         );
       });
       if (unchanged) {
