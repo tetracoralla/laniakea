@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'laniakea-'
-const CACHE_NAME = `${CACHE_PREFIX}v5`
+const CACHE_NAME = `${CACHE_PREFIX}v6`
 const SCOPE_URL = new URL('./', self.location.href)
 const INDEX_URL = new URL('index.html', SCOPE_URL)
 const ASSET_MANIFEST_URL = new URL('asset-manifest.json', SCOPE_URL)
@@ -26,7 +26,10 @@ async function cacheAppShell() {
     new URL('manifest.webmanifest', SCOPE_URL).href,
     new URL('icon-192.png', SCOPE_URL).href,
     new URL('icon-512.png', SCOPE_URL).href,
-    new URL('icon.svg', SCOPE_URL).href,
+    new URL('icon-maskable-512.png', SCOPE_URL).href,
+    new URL('favicon-32.png', SCOPE_URL).href,
+    new URL('favicon-64.png', SCOPE_URL).href,
+    new URL('apple-touch-icon.png', SCOPE_URL).href,
     ASSET_MANIFEST_URL.href,
     ...bundledAssets,
     ...assetPaths,

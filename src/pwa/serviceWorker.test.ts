@@ -25,7 +25,7 @@ describe("PWA application shell", () => {
     expect(viteConfig).toContain('fileName: "asset-manifest.json"');
     expect(serviceWorker).toContain("ASSET_MANIFEST_URL");
     expect(serviceWorker).toContain("...bundledAssets");
-    expect(serviceWorker).toContain("`${CACHE_PREFIX}v5`");
+    expect(serviceWorker).toContain("`${CACHE_PREFIX}v6`");
   });
 
   it("does not register a new PWA shell inside the desktop WebView", () => {

@@ -1,7 +1,7 @@
 {
   "name": "laniakea",
   "private": true,
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "快速、轻量的思维导图",
   "author": "openAdam",
   "license": "Apache-2.0",
@@ -16,6 +16,7 @@
     "build": "npm run build:web && npm run build:mcp",
     "build:web": "tsc -b && vite build",
     "build:mcp": "node scripts/buildMcp.mjs",
+    "build:icons": "node scripts/buildIcons.mjs",
     "check:mcp": "npm run typecheck:mcp && npm run build:mcp && node scripts/checkPluginLegal.mjs && node scripts/checkMcp.mjs",
     "typecheck:mcp": "tsc --noEmit -p tsconfig.mcp.json",
     "desktop:dev": "tauri dev",
