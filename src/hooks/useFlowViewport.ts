@@ -5,7 +5,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from "react";
-import type { FlowLayoutResult } from "../model/flowLayout";
+import { flowContentBounds, type FlowLayoutResult } from "../model/flowLayout";
 import { ignoresSpaceShortcut } from "./useCanvasGestures";
 import {
   hasActiveCanvasDrag,
@@ -132,16 +132,17 @@ export function useFlowViewport({
   const fit = useCallback(() => {
     const bounds = containerRef.current?.getBoundingClientRect();
     if (!bounds) return;
+    const content = flowContentBounds(layout);
     const zoom = canvasZoomToFit(
-      layout.width,
-      layout.height,
+      content.width,
+      content.height,
       bounds.width,
       bounds.height,
     );
     const next = {
       zoom,
-      x: (bounds.width - layout.width * zoom) / 2 - layout.minX * zoom,
-      y: (bounds.height - layout.height * zoom) / 2 - layout.minY * zoom,
+      x: (bounds.width - content.width * zoom) / 2 - content.minX * zoom,
+      y: (bounds.height - content.height * zoom) / 2 - content.minY * zoom,
     };
     renderViewport(next);
     viewportDirtyRef.current = false;

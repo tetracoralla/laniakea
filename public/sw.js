@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'laniakea-'
-const CACHE_NAME = `${CACHE_PREFIX}v6`
+const CACHE_NAME = `${CACHE_PREFIX}v7`
 const SCOPE_URL = new URL('./', self.location.href)
 const INDEX_URL = new URL('index.html', SCOPE_URL)
 const ASSET_MANIFEST_URL = new URL('asset-manifest.json', SCOPE_URL)

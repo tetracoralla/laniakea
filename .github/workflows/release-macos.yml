@@ -119,6 +119,7 @@ jobs:
           trap 'hdiutil detach "$MOUNT_PATH"' EXIT
 
           APP_PATH="$MOUNT_PATH/Laniakea.app"
+          node scripts/checkDesktopBundle.mjs "$APP_PATH"
           codesign --verify --deep --strict --verbose=4 "$APP_PATH"
           codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep 'Authority=Developer ID Application'
           ARCHITECTURES="$(lipo -archs "$APP_PATH/Contents/MacOS/laniakea")"
@@ -138,4 +139,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
-          gh release upload "$RELEASE_TAG" "$DMG_PATH" --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" "$DMG_PATH" --repo "$GITHUB_REPOSITORY"

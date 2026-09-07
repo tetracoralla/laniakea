@@ -50,6 +50,7 @@ if [[ "$MODE" == "--verify" || "$MODE" == "verify" ]]; then
     echo "isolated app is missing its executable: $VERIFY_APP_BINARY" >&2
     exit 1
   fi
+  node scripts/checkDesktopBundle.mjs "$VERIFY_APP_BUNDLE"
   open_verify_app "$VERIFY_APP_BUNDLE"
   for _ in 1 2 3 4 5; do
     if pgrep -f "$VERIFY_APP_BINARY" >/dev/null; then
@@ -75,6 +76,7 @@ if [[ ! -x "$APP_BINARY" ]]; then
   echo "built app is missing its executable: $APP_BINARY" >&2
   exit 1
 fi
+node scripts/checkDesktopBundle.mjs "$APP_BUNDLE"
 
 case "$MODE" in
   run)

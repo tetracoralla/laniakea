@@ -3,6 +3,7 @@ import type { FlowNode, FlowSpace } from "../types/mindmap";
 import {
   compileFlowConnectors,
   computeFlowLayout,
+  flowContentBounds,
   flowConnectorCrossings,
   flowConnectorDeleteAnchor,
   flowConnectorToolbarAnchor,
@@ -45,6 +46,18 @@ const measurePerGlyph =
     Array.from(text).length * glyphWidth;
 
 describe("computeFlowLayout node sizing", () => {
+  it("fits actual translated objects without retaining the old automatic layout", () => {
+    const flow = {
+      ...spaceWith([node("step", "step", "自由节点")], []),
+      positions: { step: { x: 2400, y: -1800 } },
+    };
+    const layout = computeFlowLayout(flow);
+    expect(flowContentBounds(layout)).toEqual({
+      minX: 2400, minY: -1800,
+      width: layout.nodes.step.width, height: layout.nodes.step.height,
+    });
+  });
+
   it("compiles the visible flow through one fixed graph view plan", () => {
     const flow = spaceWith(
       [
@@ -295,6 +308,7 @@ describe("computeFlowLayout node sizing", () => {
     expect(base.minY).toBeGreaterThan(-420);
     expect(withConnectors.minY).toBeLessThan(-420);
     expect(withConnectors.height).toBeGreaterThan(base.height);
+    expect(flowContentBounds(withConnectors).minY).toBeLessThanOrEqual(-420);
   });
 
   it("adds a bridge to the horizontal edge at an unrelated line crossing", () => {

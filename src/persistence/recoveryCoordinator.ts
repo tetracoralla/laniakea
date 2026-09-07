@@ -1,4 +1,5 @@
 import type { MindMapDocument } from "../types/mindmap";
+import { createRuntimeId } from "../model/runtimeId";
 import { sharesDocumentContent } from "./autosavePolicy";
 import type { EditorRecoveryDraft } from "./localDocumentStore";
 import {
@@ -52,13 +53,6 @@ function nextGeneration(): number {
   return generationFloor;
 }
 
-function createSessionId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
@@ -76,7 +70,7 @@ export class RecoveryCoordinator {
   private readonly enabled: boolean;
   private readonly isDocumentSessionCurrent: (session: number) => boolean;
   private readonly onError: (message: string | null) => void;
-  private readonly sessionId = createSessionId();
+  private readonly sessionId = createRuntimeId("session");
   private queue: Promise<void> = Promise.resolve();
   private checkpointByDocument = new WeakMap<MindMapDocument, number>();
   private lastObservedDocument: MindMapDocument | null = null;

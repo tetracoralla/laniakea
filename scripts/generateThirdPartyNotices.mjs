@@ -34,7 +34,7 @@ async function legalFiles(packageRoot) {
     .filter(
       (entry) =>
         entry.isFile() &&
-        /^(?:licen[cs]e|copying|notice|copyright)(?:\..+)?$/iu.test(entry.name),
+        /^(?:licen[cs]e|copying|notice|copyright)(?:[._-].+)?$/iu.test(entry.name),
     )
     .map((entry) => entry.name)
     .sort(compareCodeUnits);
@@ -45,6 +45,7 @@ export async function writeThirdPartyNotices({
   bundledInputs,
   outputPaths,
   productName,
+  distribution = "standalone Codex plugin",
 }) {
   const dependencyRoot = await realpath(resolve(repositoryRoot, "node_modules"));
   const roots = new Set();
@@ -70,7 +71,7 @@ export async function writeThirdPartyNotices({
       throw new Error(`Bundled package at ${packageRoot} has no stable name and version.`);
     }
     const files = await legalFiles(packageRoot);
-    if (!files.some((file) => /^(?:licen[cs]e|copying)(?:\..+)?$/iu.test(file))) {
+    if (!files.some((file) => /^(?:licen[cs]e|copying)(?:[._-].+)?$/iu.test(file))) {
       throw new Error(
         `Bundled package ${packageJson.name}@${packageJson.version} has no license text.`,
       );
@@ -116,7 +117,7 @@ export async function writeThirdPartyNotices({
   const content = [
     "# Third-party notices",
     "",
-    `${productName}'s standalone Codex plugin bundles the packages below. ` +
+    `${productName}'s ${distribution} bundles the packages below. ` +
       "The license and notice texts are preserved from the exact installed package versions used by the build.",
     "",
     ...sections,
@@ -125,5 +126,5 @@ export async function writeThirdPartyNotices({
   for (const outputPath of outputPaths) {
     await writeFile(outputPath, content, "utf8");
   }
-  return packages.map(({ name, version }) => ({ name, version }));
+  return { content, packages: packages.map(({ name, version }) => ({ name, version })) };
 }

@@ -875,6 +875,9 @@
   color: white;
   caret-color: white;
   text-align: center;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .mind-node__disclosure {
@@ -3257,6 +3260,8 @@
 }
 .flow-target-picker__list small { flex: none; margin-left: var(--space-8); }
 
+.mind-node__editor:focus,
+.mind-node__editor:focus-visible,
 .flow-node__editor:focus,
 .flow-node__editor:focus-visible {
   outline: none;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
 import { RecoveryCoordinator } from "./recoveryCoordinator";
 
@@ -27,11 +27,39 @@ const binding = {
 };
 
 describe("RecoveryCoordinator", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     vi.useFakeTimers();
     recovery.checkpoint.mockClear();
     recovery.clear.mockClear();
     recovery.draft.mockClear();
+  });
+
+  it("keeps recovery writers distinct when only secure random values are available", async () => {
+    let sequence = 0;
+    const randomValues = vi.fn((values: Uint32Array) => {
+      values.fill(++sequence);
+      return values;
+    });
+    vi.stubGlobal("crypto", { getRandomValues: randomValues });
+    const source = createSeedDocument();
+    for (const title of ["first writer", "second writer"]) {
+      const coordinator = new RecoveryCoordinator({
+        enabled: true,
+        isDocumentSessionCurrent: () => true,
+        onError: () => undefined,
+      });
+      coordinator.adoptDocument(source);
+      coordinator.observeDocument({ ...source, title }, binding, 7);
+    }
+    await vi.waitFor(() => expect(recovery.checkpoint).toHaveBeenCalledTimes(2));
+    expect(randomValues).toHaveBeenCalledTimes(2);
+    expect(recovery.checkpoint).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      sessionId: "session-0000001-0000001-0000001-0000001",
+    }));
+    expect(recovery.checkpoint).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      sessionId: "session-0000002-0000002-0000002-0000002",
+    }));
   });
 
   it("ignores viewport-only objects but checkpoints the first content mutation", async () => {
