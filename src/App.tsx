@@ -270,6 +270,7 @@ export function App() {
   const canvasRef = useRef<CanvasHandle>(null);
   const flowWorkspaceRef = useRef<FlowWorkspaceHandle>(null);
   const flowEntryRequestRef = useRef(0);
+  const flowSelectionsRef = useRef(new Map<string, string | null>());
   const canvasControlsRef = useRef<CanvasControlsHandle>(null);
   const showZoomPreview = useCallback((zoom: number) => {
     canvasControlsRef.current?.showZoom(zoom);
@@ -443,8 +444,13 @@ export function App() {
   const activeFlow = activeFlowCandidate?.type === "flow"
     ? activeFlowCandidate
     : null;
+  const activeFlowId = activeFlow?.id;
+  const rememberFlowSelection = useCallback((id: string | null) => {
+    if (activeFlowId) flowSelectionsRef.current.set(activeFlowId, id);
+  }, [activeFlowId]);
 
   useEffect(() => {
+    flowSelectionsRef.current.clear();
     setSurface(rootMapSurface);
     setSurfaceStack([]);
     setDrillDownNodeId(null);
@@ -576,14 +582,17 @@ export function App() {
     preloadFlowWorkspace();
     const existing = flowSpaceForNode(activeMap, nodeId);
     const creating = !existing;
+    const rememberedId = existing ? flowSelectionsRef.current.get(existing.id) : undefined;
     const created = existing
       ? {
           document: activeMap,
           spaceId: existing.id,
           selectedFlowNodeId:
-            Object.values(existing.nodes).find(({ kind }) => kind === "step")?.id ??
-            Object.keys(existing.nodes)[0] ??
-            "",
+            rememberedId === null || (rememberedId && existing.nodes[rememberedId])
+              ? rememberedId
+              : Object.values(existing.nodes).find(({ kind }) => kind === "step")?.id ??
+                Object.keys(existing.nodes)[0] ??
+                null,
         }
       : createFlowSpace(activeMap, nodeId);
     if (!created.spaceId) return;
@@ -1362,6 +1371,7 @@ export function App() {
           notify={notify}
           onBack={navigateBack}
           onRedo={redo}
+          onSelectionChange={rememberFlowSelection}
           onUndo={undo}
           onEditorDraftChange={(target, value) =>
             protectEditorDraft({

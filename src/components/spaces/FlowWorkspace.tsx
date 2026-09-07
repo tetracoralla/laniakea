@@ -59,6 +59,7 @@ interface FlowWorkspaceProps {
   notify: (notice: AppNotice) => void;
   onBack: () => void;
   onRedo: () => void;
+  onSelectionChange?: (id: string | null) => void;
   onEditorDraftChange?: (
     target: {
       objectId: string;
@@ -86,6 +87,7 @@ export const FlowWorkspace = forwardRef<
   notify,
   onBack,
   onRedo,
+  onSelectionChange,
   onEditorDraftChange = () => undefined,
   onEditorDraftFinish = () => undefined,
   onUndo,
@@ -112,6 +114,9 @@ export const FlowWorkspace = forwardRef<
   }, []);
 
   selectedIdRef.current = selectedId;
+  useEffect(() => {
+    onSelectionChange?.(selectedId);
+  }, [onSelectionChange, selectedId]);
   // Mutations must compose on the latest applied space instead of a render
   // closure: two updates dispatched in the same event batch would otherwise
   // both start from the same base and the first edit would be lost.
