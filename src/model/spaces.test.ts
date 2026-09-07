@@ -24,11 +24,13 @@ import {
   preserveDocumentViewports,
   reconnectFlowEdge,
   setFlowNodeText,
+  setFlowNodeKind,
   setFlowEdgeLabel,
   setFlowEdgeRoute,
   setFlowEdgeStyle,
   setFlowViewport,
 } from "./spaces";
+import { flowNodeSize } from "./flowPlacement";
 import { isMindMapDocument } from "./document";
 
 describe("typed Laniakea spaces", () => {
@@ -518,4 +520,49 @@ describe("typed Laniakea spaces", () => {
     );
     expect(isMindMapDocument(restored)).toBe(true);
   });
+
+  it("keeps a node's center fixed when switching between step and decision", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const flow = flowSpaceForNode(created.document, "path");
+    if (!flow) throw new Error("expected flow space");
+    const nodeId = created.selectedFlowNodeId;
+    const position = { x: 300, y: 200 };
+    const positioned: typeof flow = {
+      ...flow,
+      positions: { [nodeId]: position },
+    };
+
+    const asDecision = setFlowNodeKind(positioned, nodeId, "decision");
+    const decision = asDecision.positions?.[nodeId];
+    if (!decision) throw new Error("expected adjusted position");
+    const previousSize = flowNodeSize(flow.nodes[nodeId].kind, flow.nodes[nodeId].text);
+    const decisionSize = flowNodeSize("decision", flow.nodes[nodeId].text);
+    // The kind change resizes the node; the stored top-left must absorb the
+    // size delta so the visual center (and every attached connector) stays.
+    expect(decision.x).toBeCloseTo(
+      position.x + (previousSize.width - decisionSize.width) / 2,
+      5,
+    );
+    expect(decision.y).toBeCloseTo(
+      position.y + (previousSize.height - decisionSize.height) / 2,
+      5,
+    );
+
+    const asStepAgain = setFlowNodeKind(asDecision, nodeId, "step");
+    expect(asStepAgain.positions?.[nodeId]).toEqual(position);
+  });
+  it("keeps measured and automatically laid out nodes centered when their kind changes", () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const flow = flowSpaceForNode(created.document, "path")!;
+    const id = created.selectedFlowNodeId;
+    const measureText = () => 315;
+    const currentPositions = { [id]: { x: 140, y: 160 } };
+    const before = flowNodeSize(flow.nodes[id].kind, flow.nodes[id].text, measureText);
+    const after = flowNodeSize("decision", flow.nodes[id].text, measureText);
+    const changed = setFlowNodeKind(flow, id, "decision", currentPositions, measureText);
+    expect(changed.positions![id].x + after.width / 2).toBe(currentPositions[id].x + before.width / 2);
+    expect(changed.positions![id].y + after.height / 2).toBe(currentPositions[id].y + before.height / 2);
+    expect(setFlowNodeKind(changed, id, "step", changed.positions, measureText).positions).toEqual(currentPositions);
+  });
+
 });

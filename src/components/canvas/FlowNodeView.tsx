@@ -219,7 +219,6 @@ export const FlowNodeView = memo(function FlowNodeView({
                 event.stopPropagation();
                 onConnectPointerDown(node.id, port, event);
               }}
-              title="点击创建步骤，拖动连接已有节点"
               type="button"
             >
               <span

@@ -15,7 +15,8 @@ import type {
   SelectionState,
   Viewport,
 } from "../types/mindmap";
-import { resolveFlowDirectionalPlacement } from "./flowPlacement";
+import { flowNodeSize, resolveFlowDirectionalPlacement } from "./flowPlacement";
+import type { TextWidthMeasurer } from "./layout";
 import { singleSelection } from "./selection";
 import type { DocumentMutation } from "./tree";
 
@@ -496,9 +497,26 @@ export function setFlowNodeKind(
   space: FlowSpace,
   nodeId: string,
   kind: FlowNodeKind,
+  currentPositions = space.positions,
+  measureTextWidth?: TextWidthMeasurer,
 ): FlowSpace {
   const node = space.nodes[nodeId];
   if (!node || node.kind === kind) return space;
+  // Kind changes resize the node (steps are rectangles, decisions are
+  // diamonds); keep the anchored top-left from shifting the visual center,
+  // or every attached connector suddenly grows an orthogonal jog.
+  const previousSize = flowNodeSize(node.kind, node.text, measureTextWidth);
+  const nextSize = flowNodeSize(kind, node.text, measureTextWidth);
+  const position = currentPositions?.[nodeId];
+  const positions = position
+    ? {
+        ...currentPositions,
+        [nodeId]: {
+          x: position.x + (previousSize.width - nextSize.width) / 2,
+          y: position.y + (previousSize.height - nextSize.height) / 2,
+        },
+      }
+    : space.positions;
   return withFlowTimestamp(space, {
     nodes: {
       ...space.nodes,
@@ -508,6 +526,7 @@ export function setFlowNodeKind(
         updatedAt: new Date().toISOString(),
       },
     },
+    ...(positions && positions !== space.positions ? { positions } : {}),
   });
 }
 

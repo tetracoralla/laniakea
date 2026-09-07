@@ -81,8 +81,8 @@ describe("recent document file actions", () => {
     const trigger = container.querySelector<HTMLButtonElement>(
       ".document-switcher__trigger",
     )!;
-    expect(trigger.textContent).toBe("桌面");
-    expect(trigger.title).toBe(`正在保存到：${desktopPath}`);
+    expect(trigger.textContent).toBe("");
+    expect(trigger.getAttribute("aria-label")).toBe("切换思维导图");
     expect(
       container.querySelector(".document-switcher__current-row")?.textContent,
     ).toContain("项目计划保存到 · 桌面");
@@ -173,7 +173,7 @@ describe("recent document file actions", () => {
     });
     expect(
       container.querySelector(".document-switcher__trigger")?.textContent,
-    ).toBe("待另存");
+    ).toBe("");
     expect(
       container.querySelector(".document-switcher__current-row")?.textContent,
     ).toContain("尚未另存 · 来源：下载");
@@ -489,7 +489,7 @@ describe("recent document file actions", () => {
     );
     expect(container.textContent).toContain("文档库");
     expect(container.textContent).toContain(
-      "内容保存在此浏览器，建议定期导出完整备份",
+      "内容保存在此浏览器",
     );
     expect(libraryItems).toHaveLength(7);
     await act(async () => {

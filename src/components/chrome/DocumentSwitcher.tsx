@@ -371,13 +371,14 @@ export function DocumentSwitcher({
       <button
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label={
-          currentTitle === undefined
-            ? "切换思维导图"
-            : `切换思维导图；${currentDocument.exactDescription}`
-        }
+        aria-label="切换思维导图"
         className="document-switcher__trigger"
-        onClick={() => onOpenChange(!open)}
+        onClick={(event) => {
+          // WebKit does not focus buttons on pointer activation. Keep menu
+          // keys on its trigger instead of the previously focused canvas.
+          event.currentTarget.focus({ preventScroll: true });
+          onOpenChange(!open);
+        }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
             event.preventDefault();
@@ -391,18 +392,8 @@ export function DocumentSwitcher({
           }
         }}
         ref={triggerRef}
-        title={
-          currentTitle === undefined
-            ? "切换思维导图"
-            : currentDocument.exactDescription
-        }
         type="button"
       >
-        {currentTitle !== undefined && (
-          <span className="document-switcher__current-location">
-            {currentDocument.compactLocation}
-          </span>
-        )}
         <Icon name="chevronDown" size={16} />
       </button>
 
@@ -680,7 +671,7 @@ export function DocumentSwitcher({
                 className="document-switcher__storage-note"
                 id="browser-storage-note"
               >
-                内容保存在此浏览器，建议定期导出完整备份
+                内容保存在此浏览器
               </p>
             </div>
           )}

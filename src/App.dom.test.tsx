@@ -77,6 +77,10 @@ vi.mock("./persistence/localDocumentStore", async (importOriginal) => {
 });
 
 import { App } from "./App";
+import { createSeedDocument } from "./data/seed";
+import { createFlowSpace, flowSpaceForNode, setFlowNodeText, updateFlowSpace } from "./model/spaces";
+import { createBrowserDocument } from "./persistence/browserDocumentStore";
+import { loadLocalDocument } from "./persistence/localDocumentStore";
 
 describe("App document-scoped overlays", () => {
   let container: HTMLDivElement;
@@ -134,4 +138,72 @@ describe("App document-scoped overlays", () => {
     expect(newDocumentKey.defaultPrevented).toBe(true);
     expect(container.textContent).not.toContain("新建浮动节点");
   });
+  it("routes global commands to the current Flow and keeps parent editing out of its palette", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const flow = setFlowNodeText(flowSpaceForNode(created.document, "path")!, created.selectedFlowNodeId, "Flow target");
+    const document = updateFlowSpace(created.document, flow, { primaryId: "path", selectedIds: ["path"] }).document;
+    const stored = await createBrowserDocument(document);
+    vi.mocked(loadLocalDocument).mockResolvedValueOnce({
+      ...stored, sourcePath: null, sourceFormat: "markdown", importedAsCopy: false,
+      recoveredFromBackup: false, notice: null, saveError: null, viewStateRestored: true,
+    });
+    const settle = () => new Promise((resolve) => window.setTimeout(resolve, 30));
+    const press = async (target: Element, key: string, metaKey = false) => {
+      await act(async () => {
+        target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, metaKey }));
+        await settle();
+      });
+    };
+    await act(async () => { root.render(<App />); await settle(); });
+    await press(window.document.body, "f", true);
+    const search = container.querySelector<HTMLInputElement>("[role='combobox']")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Flow target");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await press(search, "Enter");
+    await vi.waitFor(async () => {
+      await act(async () => { await settle(); });
+      expect(container.querySelector(".flow-canvas__content")).not.toBeNull();
+    });
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    expect(canvas).not.toBeNull();
+    const content = canvas.querySelector<HTMLElement>(".flow-canvas__content")!;
+    expect(content, canvas.outerHTML).not.toBeNull();
+    const initialTransform = content.style.transform;
+    await press(canvas, "=", true);
+    expect(content.style.transform).toContain("scale(1.2)");
+    expect(content.style.transform).not.toBe(initialTransform);
+    await press(canvas, "0", true);
+    expect(content.style.transform).toContain("scale(1)");
+    await press(canvas, "k", true);
+    expect(container.querySelector("[aria-label='命令面板']")).not.toBeNull();
+    expect(container.textContent).not.toContain("创建同级节点");
+    expect(container.textContent).not.toContain("删除节点及子节点");
+    expect(container.textContent).toContain("立即保存");
+    await press(container.querySelector("[role='combobox']")!, "Escape");
+    expect(container.querySelector(".flow-canvas")).not.toBeNull();
+    const switcher = container.querySelector<HTMLButtonElement>(".document-switcher__trigger")!;
+    await act(async () => {
+      canvas.focus();
+      switcher.click();
+    });
+    expect(switcher.getAttribute("aria-expanded")).toBe("true");
+    await press(window.document.activeElement!, "Escape");
+    expect(switcher.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector(".flow-canvas__content")).not.toBeNull();
+    const more = container.querySelector<HTMLButtonElement>("[aria-label='更多']")!;
+    await act(async () => {
+      canvas.focus();
+      more.click();
+    });
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    await press(window.document.activeElement!, "Escape");
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector(".flow-canvas__content")).not.toBeNull();
+    await press(container.querySelector("[aria-label='搜索']")!, "Escape");
+    expect(container.querySelector(".flow-canvas")).toBeNull();
+    expect(container.querySelector(".mindmap-canvas")).not.toBeNull();
+  });
+
 });

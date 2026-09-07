@@ -63,6 +63,27 @@ describe("StatusBar", () => {
     expect(container.querySelector(".status-bar")).toBeNull();
   });
 
+  it("reveals both recovery text and actions even when animation frames are suspended", () => {
+    vi.stubGlobal("requestAnimationFrame", () => 1);
+    const onAction = vi.fn();
+    renderStatusBar({
+      saveState: "error",
+      saveError: "文件已在外部修改",
+      notice: { message: "保存副本", actionLabel: "另存为", onAction },
+    });
+    act(() => vi.advanceTimersByTime(1000));
+    expect(container.querySelector(".status-bar")?.classList.contains("is-expanded")).toBe(true);
+    expect(container.querySelector(".status-bar__save")?.classList.contains("is-visible")).toBe(true);
+    expect(container.querySelector(".status-bar__notice")?.classList.contains("is-visible")).toBe(true);
+    act(() => container.querySelector<HTMLButtonElement>(".status-bar__action")!.click());
+    expect(onAction).toHaveBeenCalledOnce();
+
+    renderStatusBar();
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => vi.advanceTimersByTime(1000));
+    expect(container.querySelector(".status-bar")).toBeNull();
+  });
+
   it("shows an actionable notice without repeating the idle save state", () => {
     const onAction = vi.fn();
     const onComplete = vi.fn();

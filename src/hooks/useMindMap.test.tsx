@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
-import { createFlowSpace, flowSpaceForNode, updateFlowSpace } from "../model/spaces";
+import { createFlowSpace, flowSpaceForNode, setFlowEdgeLabelOffset, updateFlowSpace } from "../model/spaces";
 import { isMindMapDocument } from "../model/document";
 import { FlowWorkspace } from "../components/spaces/FlowWorkspace";
 import { setNodeText } from "../model/tree";
@@ -1861,6 +1861,117 @@ describe("mind map save presentation", () => {
     expect(persistence.saveLocalDocument).toHaveBeenLastCalledWith(expect.objectContaining({ nodes: expect.objectContaining({ [document.rootId]: expect.objectContaining({ text: "已修改" }) }) }), "/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/安全副本.md", "hash-v1", null, expect.any(Object));
     await act(async () => { await current!.saveDocumentAs("/tmp/含格式的来源.md"); });
     expect(persistence.moveInternalDraft).toHaveBeenLastCalledWith("/Volumes/Workspace/Library/Application Support/com.openadam.origin/drafts/安全副本.md", "/tmp/含格式的来源.md", "/tmp/含格式的来源.md");
+  });
+
+  it("keeps a dragged edge label when its autosave is superseded by a pan", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const flowSpace = flowSpaceForNode(created.document, "path");
+    if (!flowSpace) throw new Error("expected flow space");
+    const stamp = flowSpace.updatedAt;
+    const document = {
+      ...created.document,
+      spaces: {
+        ...created.document.spaces,
+        [created.spaceId]: {
+          ...flowSpace,
+          nodes: {
+            ...flowSpace.nodes,
+            "flow-b": {
+              id: "flow-b", text: "", kind: "step" as const,
+              createdAt: stamp, updatedAt: stamp,
+            },
+          },
+          edges: [{
+            id: "edge-1",
+            from: created.selectedFlowNodeId,
+            to: "flow-b",
+            label: "",
+          }],
+        },
+      },
+    };
+    persistence.loadLocalDocument.mockResolvedValue({
+      document, documentPath: "/tmp/flow.md", sourcePath: "/tmp/flow.md",
+      sourceHash: "hash-v1", importedAsCopy: false, viewStateRestored: true,
+    });
+    let current: ReturnType<typeof useMindMap>;
+    function Harness() {
+      current = useMindMap();
+      return (
+        <>
+          <output data-testid="save-state">{current.saveState}</output>
+          <button
+            data-testid="drag-label"
+            onClick={() => {
+              const space = flowSpaceForNode(current.snapshot.document, "path");
+              if (!space || space.type !== "flow") return;
+              // Mirrors FlowWorkspace's onChangeEdgeLabelOffset wiring.
+              current.applyMutation((snapshot) =>
+                updateFlowSpace(
+                  snapshot.document,
+                  setFlowEdgeLabelOffset(space, "edge-1", { x: 14, y: -30 }),
+                  snapshot.selection,
+                ),
+              );
+            }}
+          >
+            拖动连线文字
+          </button>
+          <button
+            data-testid="pan"
+            onClick={() => current.setViewport({ x: 50, y: -20, zoom: 1 })}
+          >
+            平移
+          </button>
+        </>
+      );
+    }
+    await act(async () => root.render(<Harness />));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    persistence.saveLocalDocument.mockClear();
+
+    // The label change schedules a content save; the pan lands inside its
+    // debounce window and must not erase the arrangement from persistence.
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='drag-label']",
+      )!.click();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(
+        "[data-testid='pan']",
+      )!.click();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(899);
+    });
+    expect(persistence.saveLocalDocument).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(1);
+    expect(persistence.saveLocalDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        spaces: expect.objectContaining({
+          [created.spaceId]: expect.objectContaining({
+            edgeLabelOffsets: { "edge-1": { x: 14, y: -30 } },
+          }),
+        }),
+      }),
+      "/tmp/flow.md",
+      "hash-v1",
+      null,
+      { viewportOnly: true },
+    );
+    expect(
+      container.querySelector("[data-testid='save-state']")?.textContent,
+    ).toBe("saved");
   });
 
 });

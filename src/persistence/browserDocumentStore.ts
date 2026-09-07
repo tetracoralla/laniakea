@@ -334,9 +334,12 @@ export async function saveBrowserDocumentViewState(
       // state has no owner and content protection belongs to the full save.
       return false;
     }
-    // Only viewports travel: content, revision and updatedAt stay exactly as
-    // the record has them, so a pan can neither overwrite another tab's
-    // newer content nor invalidate its expected revision.
+    // Only local canvas arrangement travels: content, revision and updatedAt
+    // stay exactly as the record has them, so a pan can neither overwrite
+    // another tab's newer content nor invalidate its expected revision. Flow
+    // positions, manual corridors and label offsets change without a content
+    // timestamp, so each must be carried here or a silent view-state save that
+    // supersedes their debounced content save would silently drop them.
     const viewState: MindMapDocument = {
       ...current.document,
       viewport: document.viewport,
@@ -354,7 +357,9 @@ export async function saveBrowserDocumentViewState(
                   ? {
                       ...space,
                       viewport: twin.viewport,
-                      positions: twin.positions,
+                      positions: retainCanvasEntries(twin.positions, new Set(Object.keys(space.nodes))),
+                      edgeRoutes: retainCanvasEntries(twin.edgeRoutes, new Set(space.edges.map(({ id }) => id))),
+                      edgeLabelOffsets: retainCanvasEntries(twin.edgeLabelOffsets, new Set(space.edges.map(({ id }) => id))),
                     }
                   : { ...space, viewport: twin.viewport },
               ]
@@ -369,6 +374,12 @@ export async function saveBrowserDocumentViewState(
     await transactionDone(transaction);
     return true;
   });
+}
+
+// A stale tab may still arrange objects deleted by a newer content save.
+// Never reintroduce those references into the current document's view state.
+function retainCanvasEntries<T>(entries: Record<string, T> | undefined, ids: Set<string>) {
+  return entries && Object.fromEntries(Object.entries(entries).filter(([id]) => ids.has(id)));
 }
 
 export async function activateBrowserDocument(path: string): Promise<void> {

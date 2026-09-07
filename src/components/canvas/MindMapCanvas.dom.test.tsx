@@ -320,7 +320,7 @@ describe("rendered interaction regressions", () => {
           onTitleChange={() => undefined}
           onNavigateBack={onNavigateBack}
           recentDocuments={[]}
-          spacePath={[{ id: "flow-1", label: "当前流程", typeLabel: "流程" }]}
+          spacePath={[{ id: "flow-1", label: "当前流程" }]}
           title="测试"
         />,
       );

@@ -88,13 +88,12 @@ export function useFlowKeyboardCommands({
       if (!enabled || event.defaultPrevented) return;
       if (isDialogTarget(event.target)) return;
       if (isNativeTextEditingTarget(event.target)) return;
-      if (!isFlowCommandTarget(event.target)) return;
       const handlers = handlersRef.current;
 
       const isUndo =
         (event.metaKey || event.ctrlKey) &&
         event.key.toLowerCase() === "z";
-      if (isUndo) {
+      if (isUndo && isFlowCommandTarget(event.target)) {
         event.preventDefault();
         event.stopPropagation();
         if (event.shiftKey) handlers.onRedo();
@@ -104,8 +103,10 @@ export function useFlowKeyboardCommands({
 
       const target = event.target as Element | null;
       // 菜单自己管理 Escape 与方向键；先让它关闭，再谈返回上层。
-      if (target?.closest?.("[role='menu']")) return;
+      if (target?.closest?.("[role='menu'], [aria-haspopup='menu'][aria-expanded='true']")) return;
       if (target?.closest?.("[data-flow-edge-toolbar]")) return;
+      // 返回上层是全局导航：焦点停留在画布外的应用控件（顶栏按钮等）时，
+      // Esc 也必须能离开当前 Space，不能让键盘用户被困在流程层。
       if (handlers.selectedEdgeId && event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -114,6 +115,7 @@ export function useFlowKeyboardCommands({
       }
       if (
         handlers.selectedEdgeId &&
+        isFlowCommandTarget(event.target) &&
         (event.key === "Backspace" || event.key === "Delete")
       ) {
         event.preventDefault();
@@ -127,6 +129,9 @@ export function useFlowKeyboardCommands({
         handlers.onBack();
         return;
       }
+      // 结构编辑命令仍以画布为目标：焦点在应用控件上时，Enter/Space 等保留
+      // 该控件的原生激活行为，也不在画布外误触删除或创建。
+      if (!isFlowCommandTarget(event.target)) return;
       // 适应内容按钮保留原生激活键（Enter/Space 触发点击）。
       if (target?.closest?.("button, input, textarea, select, .flow-fit-button")) return;
 

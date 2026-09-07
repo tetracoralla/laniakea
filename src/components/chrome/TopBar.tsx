@@ -39,7 +39,7 @@ interface TopBarProps {
   showDesktopActions?: boolean;
   onExportFullBackup?: () => void;
   onRestoreFullBackup?: () => void;
-  spacePath?: Array<{ id: string; label: string; typeLabel: string }>;
+  spacePath?: Array<{ id: string; label: string }>;
   onNavigateBack?: () => void;
   saveState?: SaveState;
 }
@@ -254,13 +254,12 @@ export function TopBar({
         />
         {currentSpace && (
           <div
-            aria-label={`当前位置：${currentSpace.typeLabel} ${currentSpace.label}`}
+            aria-label={`当前位置：${currentSpace.label}`}
             className="space-navigation"
-            title={`${currentSpace.typeLabel} · ${currentSpace.label}`}
+            title={currentSpace.label}
           >
             <span aria-hidden="true" className="space-navigation__separator" />
             <strong>{currentSpace.label}</strong>
-            <span className="space-navigation__type">{currentSpace.typeLabel}</span>
           </div>
         )}
       </div>
@@ -304,11 +303,12 @@ export function TopBar({
             aria-haspopup="menu"
             aria-label="更多"
             className="toolbar-button"
-            onClick={() =>
+            onClick={(event) => {
+              event.currentTarget.focus({ preventScroll: true });
               setOpenMenu((value) =>
                 value === "more" ? null : "more",
-              )
-            }
+              );
+            }}
             onKeyDown={(event) => {
               if (event.key === "ArrowDown") {
                 event.preventDefault();

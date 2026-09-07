@@ -130,14 +130,12 @@ export function FlowShapePalette({ onDrop, onInsert }: FlowShapePaletteProps) {
             onPointerDown={(event) => begin(kind, event)}
             onPointerMove={move}
             onPointerUp={finish}
-            title={`拖到画布添加${label}，点击放到视野中央`}
             type="button"
           >
             <span
               aria-hidden="true"
               className={`flow-shape-palette__shape flow-shape-palette__shape--${kind}`}
             />
-            <span>{label}</span>
           </button>
         ))}
       </div>

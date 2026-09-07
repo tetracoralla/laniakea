@@ -18,7 +18,6 @@ export interface CurrentDocumentIdentity {
 
 export interface CurrentDocumentDescription {
   associatedPath: string | null;
-  compactLocation: string;
   exactDescription: string;
   metadata: string;
   pathRole: "binding" | "source" | null;
@@ -94,7 +93,6 @@ export function describeCurrentDocument(
     if (identity.documentPath.startsWith(browserDocumentPrefix)) {
       return {
         associatedPath: identity.documentPath,
-        compactLocation: location,
         exactDescription: "正在编辑的内容保存在此浏览器",
         metadata: "保存在此浏览器",
         pathRole: null,
@@ -103,15 +101,13 @@ export function describeCurrentDocument(
     if (isInternalDocumentPath(identity.documentPath)) {
       return {
         associatedPath: identity.documentPath,
-        compactLocation: location,
-        exactDescription: "正在编辑本地自动保存草稿，尚未整理到用户文件夹",
-        metadata: "自动保存 · 可用另存为整理位置",
+        exactDescription: "本地草稿",
+        metadata: "本地草稿",
         pathRole: null,
       };
     }
     return {
       associatedPath: identity.documentPath,
-      compactLocation: location,
       exactDescription: `正在保存到：${identity.documentPath}`,
       metadata: `保存到 · ${location}`,
       pathRole: "binding",
@@ -122,7 +118,6 @@ export function describeCurrentDocument(
     const location = compactDocumentLocation(identity.sourcePath);
     return {
       associatedPath: identity.sourcePath,
-      compactLocation: "待另存",
       exactDescription: `当前修改尚未写回来源文件，来源：${identity.sourcePath}`,
       metadata: `尚未另存 · 来源：${location}`,
       pathRole: isInternalDocumentPath(identity.sourcePath) ||
@@ -134,7 +129,6 @@ export function describeCurrentDocument(
 
   return {
     associatedPath: null,
-    compactLocation: "待保存",
     exactDescription: "正在编辑的内容尚未建立保存位置",
     metadata: "尚未建立保存位置",
     pathRole: null,

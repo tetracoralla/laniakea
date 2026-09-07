@@ -1,6 +1,8 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createBlankDocument, createSeedDocument } from "../data/seed";
+import { isMindMapDocument } from "../model/document";
+import { addFlowStepAfter, createFlowSpace, deleteFlowNode, flowSpaceForNode, updateFlowSpace } from "../model/spaces";
 import {
   activateBrowserDocument,
   BrowserDocumentConflictError,
@@ -178,5 +180,101 @@ describe("browser document library", () => {
 
     expect(savedViewState).toBe(false);
     expect(await listBrowserDocuments()).toHaveLength(0);
+  });
+
+  it("carries flow canvas arrangement through a view-state save", async () => {
+    const spaceId = "flow-view-state-space";
+    const stamp = "2026-09-06T08:00:00.000Z";
+    const seed = createSeedDocument();
+    const document = {
+      ...seed,
+      nodes: {
+        ...seed.nodes,
+        root: { ...seed.nodes.root, subspaceId: spaceId },
+      },
+      spaces: {
+        [spaceId]: {
+          id: spaceId,
+          type: "flow" as const,
+          anchorNodeId: "root",
+          nodes: {
+            "flow-a": {
+              id: "flow-a", text: "第一步骤", kind: "step" as const,
+              createdAt: stamp, updatedAt: stamp,
+            },
+            "flow-b": {
+              id: "flow-b", text: "第二步骤", kind: "step" as const,
+              createdAt: stamp, updatedAt: stamp,
+            },
+          },
+          edges: [{ id: "edge-1", from: "flow-a", to: "flow-b", label: "" }],
+          viewport: { x: 0, y: 0, zoom: 1 },
+          updatedAt: stamp,
+        },
+      },
+    };
+    const created = await createBrowserDocument(document);
+    const firstTab = await openBrowserDocument(created.documentPath);
+    const storedSpace = firstTab.document.spaces![spaceId];
+    if (storedSpace.type !== "flow") throw new Error("expected flow space");
+
+    // The user dragged a label, a manual corridor, and a node locally, then
+    // panned. The superseding silent save must lift this arrangement into the
+    // record without touching content or the revision lease.
+    const arranged = {
+      ...firstTab.document,
+      title: "不应写入的标题",
+      viewport: { x: 30, y: 60, zoom: 1.5 },
+      spaces: {
+        ...firstTab.document.spaces,
+        [spaceId]: {
+          ...storedSpace,
+          viewport: { x: 4, y: 8, zoom: 1.25 },
+          positions: { "flow-a": { x: 100, y: 40 } },
+          edgeRoutes: { "edge-1": { axis: "x" as const, coordinate: 320 } },
+          edgeLabelOffsets: { "edge-1": { x: 12, y: -28 } },
+        },
+      },
+    };
+
+    expect(
+      await saveBrowserDocumentViewState(arranged, created.documentPath),
+    ).toBe(true);
+
+    const reloaded = await openBrowserDocument(created.documentPath);
+    expect(reloaded.sourceHash).toBe(firstTab.sourceHash);
+    expect(reloaded.document.title).toBe(firstTab.document.title);
+    expect(reloaded.document.viewport).toEqual({ x: 30, y: 60, zoom: 1.5 });
+    const savedSpace = reloaded.document.spaces![spaceId];
+    if (savedSpace.type !== "flow") throw new Error("expected flow space");
+    expect(savedSpace.viewport).toEqual({ x: 4, y: 8, zoom: 1.25 });
+    expect(savedSpace.positions).toEqual({ "flow-a": { x: 100, y: 40 } });
+    expect(savedSpace.edgeRoutes).toEqual({
+      "edge-1": { axis: "x", coordinate: 320 },
+    });
+    expect(savedSpace.edgeLabelOffsets).toEqual({
+      "edge-1": { x: 12, y: -28 },
+    });
+  });
+
+  it("keeps a newer flow readable when a stale tab pans after a node deletion", async () => {
+    const flow = createFlowSpace(createSeedDocument(), "path");
+    const added = addFlowStepAfter(flowSpaceForNode(flow.document, "path")!, flow.selectedFlowNodeId);
+    const edgeId = added.space.edges[0].id;
+    const arranged = {
+      ...added.space,
+      edgeRoutes: { [edgeId]: { axis: "x" as const, coordinate: 320 } },
+      edgeLabelOffsets: { [edgeId]: { x: 20, y: 10 } },
+    };
+    const document = updateFlowSpace(flow.document, arranged, { primaryId: "path", selectedIds: ["path"] }).document;
+    const created = await createBrowserDocument(document);
+    const stale = await openBrowserDocument(created.documentPath);
+    const newer = updateFlowSpace(document, deleteFlowNode(arranged, added.nodeId).space, { primaryId: "path", selectedIds: ["path"] }).document;
+    const saved = await saveBrowserDocument(newer, created.documentPath, created.sourceHash);
+    await saveBrowserDocumentViewState(stale.document, created.documentPath);
+    const reloaded = await openBrowserDocument(created.documentPath);
+    expect(isMindMapDocument(reloaded.document)).toBe(true);
+    expect(reloaded.sourceHash).toBe(saved.sourceHash);
+    expect(flowSpaceForNode(reloaded.document, "path")?.nodes[added.nodeId]).toBeUndefined();
   });
 });

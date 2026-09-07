@@ -22,6 +22,7 @@ import {
   setFlowNodeKind,
   setFlowNodeText,
 } from "../../model/spaces";
+import type { TextWidthMeasurer } from "../../model/layout";
 import type { AppNotice } from "../../types/feedback";
 import type {
   FlowNodeKind,
@@ -39,6 +40,10 @@ import {
 
 export interface FlowWorkspaceHandle {
   fit: () => void;
+  focusSelected: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetZoom: () => void;
   focusCanvas: () => void;
   finishEditing: () => void;
   flushViewport: () => void;
@@ -182,6 +187,10 @@ export const FlowWorkspace = forwardRef<
 
   useImperativeHandle(ref, () => ({
     fit: () => canvasRef.current?.fit(),
+    focusSelected: () => canvasRef.current?.focusSelected(),
+    zoomIn: () => canvasRef.current?.zoomIn(),
+    zoomOut: () => canvasRef.current?.zoomOut(),
+    resetZoom: () => canvasRef.current?.resetZoom(),
     focusCanvas: () => canvasRef.current?.focusCanvas(),
     finishEditing: () => {
       const nodeId = editingIdRef.current;
@@ -253,8 +262,8 @@ export const FlowWorkspace = forwardRef<
     setDraft("");
   }, [applySpace]);
 
-  const changeKind = useCallback((nodeId: string, kind: FlowNodeKind) => {
-    applySpace(setFlowNodeKind(appliedSpaceRef.current, nodeId, kind));
+  const changeKind = useCallback((nodeId: string, kind: FlowNodeKind, positions: Record<string, FlowNodePosition>, measureTextWidth?: TextWidthMeasurer) => {
+    applySpace(setFlowNodeKind(appliedSpaceRef.current, nodeId, kind, positions, measureTextWidth));
   }, [applySpace]);
 
   const changeEdgeLabel = useCallback((edgeId: string, label: string) => {

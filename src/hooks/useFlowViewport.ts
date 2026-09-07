@@ -14,6 +14,7 @@ import {
 } from "./useDragInterruption";
 import {
   canvasZoomFromWheel,
+  steppedCanvasZoom,
   canvasZoomToFit,
   wheelPanPixelDelta,
 } from "../model/zoom";
@@ -42,6 +43,10 @@ interface FlowViewportController {
   containerRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
   fit: () => void;
+  focusSelected: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetZoom: () => void;
   flushViewport: () => void;
   panBy: (x: number, y: number) => void;
   /** Live ref: true while Space is held (the pan modifier). */
@@ -142,6 +147,36 @@ export function useFlowViewport({
     viewportDirtyRef.current = false;
     viewportChangeRef.current(next);
   }, [layout.height, layout.minX, layout.minY, layout.width, renderViewport]);
+
+  const zoomAtCenter = useCallback((resolve: (zoom: number) => number) => {
+    if (hasActiveCanvasDrag()) return;
+    const bounds = containerRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const current = liveViewport.current;
+    const zoom = resolve(current.zoom);
+    const x = bounds.width / 2;
+    const y = bounds.height / 2;
+    scheduleViewport({
+      zoom,
+      x: x - ((x - current.x) / current.zoom) * zoom,
+      y: y - ((y - current.y) / current.zoom) * zoom,
+    });
+  }, [scheduleViewport]);
+  const zoomIn = useCallback(() => zoomAtCenter((zoom) => steppedCanvasZoom(zoom, 1)), [zoomAtCenter]);
+  const zoomOut = useCallback(() => zoomAtCenter((zoom) => steppedCanvasZoom(zoom, -1)), [zoomAtCenter]);
+  const resetZoom = useCallback(() => zoomAtCenter(() => 1), [zoomAtCenter]);
+  const focusSelected = useCallback(() => {
+    if (hasActiveCanvasDrag()) return;
+    const node = selectedId ? layoutRef.current.nodes[selectedId] : null;
+    const bounds = containerRef.current?.getBoundingClientRect();
+    if (!node || !bounds) return;
+    const current = liveViewport.current;
+    scheduleViewport({
+      ...current,
+      x: bounds.width / 2 - (node.x + node.width / 2) * current.zoom,
+      y: bounds.height / 2 - (node.y + node.height / 2) * current.zoom,
+    });
+  }, [scheduleViewport, selectedId]);
 
   useEffect(() => {
     renderViewport(viewport);
@@ -309,6 +344,10 @@ export function useFlowViewport({
     containerRef,
     contentRef,
     fit,
+    focusSelected,
+    zoomIn,
+    zoomOut,
+    resetZoom,
     flushViewport,
     panBy,
     panModifierHeld: spaceHeldRef,
