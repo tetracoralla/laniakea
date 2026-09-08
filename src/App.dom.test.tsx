@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createFlowWithStep } from "./test/flowFixture";
 
 import "fake-indexeddb/auto";
 import { act } from "react";
@@ -83,7 +84,7 @@ vi.mock("./persistence/localDocumentStore", async (importOriginal) => {
 
 import { App } from "./App";
 import { createSeedDocument } from "./data/seed";
-import { createFlowSpace, flowSpaceForNode, setFlowNodeText, updateFlowSpace } from "./model/spaces";
+import { flowSpaceForNode, setFlowNodeText, updateFlowSpace } from "./model/spaces";
 import { createBrowserDocument } from "./persistence/browserDocumentStore";
 import { loadLocalDocument } from "./persistence/localDocumentStore";
 
@@ -144,7 +145,7 @@ describe("App document-scoped overlays", () => {
     expect(container.textContent).not.toContain("新建浮动节点");
   });
   it("resumes the selected Flow step and viewport after a round trip, while explicit search chooses its target", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const flow = setFlowNodeText(flowSpaceForNode(created.document, "path")!, created.selectedFlowNodeId, "起点");
     const stored = await createBrowserDocument(updateFlowSpace(created.document, flow, { primaryId: "path", selectedIds: ["path"] }).document);
     vi.mocked(loadLocalDocument).mockResolvedValueOnce({
@@ -208,7 +209,7 @@ describe("App document-scoped overlays", () => {
   });
 
   it("routes global commands to the current Flow and keeps parent editing out of its palette", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const flow = setFlowNodeText(flowSpaceForNode(created.document, "path")!, created.selectedFlowNodeId, "Flow target");
     const document = updateFlowSpace(created.document, flow, { primaryId: "path", selectedIds: ["path"] }).document;
     const stored = await createBrowserDocument(document);

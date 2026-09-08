@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import {
+  finishWindowClose,
   listenForApplicationExit,
   resolveApplicationExit,
 } from "../desktop/applicationLifecycle";
@@ -70,7 +71,7 @@ export function useApplicationSaveLifecycle({
           closeInProgress = true;
           try {
             if (await saveLatestForLifecycle()) {
-              await appWindow.hide();
+              await finishWindowClose();
             } else {
               onSaveBlockedRef.current?.();
             }

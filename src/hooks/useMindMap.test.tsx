@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createFlowWithStep } from "../test/flowFixture";
 
 import { configureInternalDocumentRoot } from "../persistence/recentDocuments";
 
@@ -7,7 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../data/seed";
-import { createFlowSpace, flowSpaceForNode, setFlowEdgeLabelOffset, updateFlowSpace } from "../model/spaces";
+import { flowSpaceForNode, setFlowEdgeLabelOffset, updateFlowSpace } from "../model/spaces";
 import { isMindMapDocument } from "../model/document";
 import { FlowWorkspace } from "../components/spaces/FlowWorkspace";
 import { setNodeText } from "../model/tree";
@@ -41,7 +42,7 @@ const recovery = vi.hoisted(() => ({
 
 const lifecycle = vi.hoisted(() => ({
   exitHandler: null as null | (() => void | Promise<void>),
-  hide: vi.fn(),
+  finishWindowClose: vi.fn(),
   listenForApplicationExit: vi.fn(
     async (handler: () => void | Promise<void>) => {
       lifecycle.exitHandler = handler;
@@ -84,13 +85,13 @@ vi.mock("../persistence/desktopRecovery", () => ({
 }));
 
 vi.mock("../desktop/applicationLifecycle", () => ({
+  finishWindowClose: lifecycle.finishWindowClose,
   listenForApplicationExit: lifecycle.listenForApplicationExit,
   resolveApplicationExit: lifecycle.resolveApplicationExit,
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
-    hide: lifecycle.hide,
     onCloseRequested: lifecycle.onCloseRequested,
   }),
 }));
@@ -141,7 +142,7 @@ describe("mind map save presentation", () => {
     recovery.draft.mockClear();
     lifecycle.closeHandler = null;
     lifecycle.exitHandler = null;
-    lifecycle.hide.mockReset();
+    lifecycle.finishWindowClose.mockReset();
     lifecycle.listenForApplicationExit.mockClear();
     lifecycle.onCloseRequested.mockClear();
     lifecycle.resolveApplicationExit.mockClear();
@@ -824,14 +825,14 @@ describe("mind map save presentation", () => {
     });
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(lifecycle.hide).not.toHaveBeenCalled();
+    expect(lifecycle.finishWindowClose).not.toHaveBeenCalled();
     expect(
       container.querySelector("[data-testid='lifecycle-blocked']")
         ?.textContent,
     ).toBe("1");
   });
 
-  it("hides the window only after its close-triggered save completes", async () => {
+  it("finishes the platform window close only after its save completes", async () => {
     let completeSave!: (value: { sourceHash: string }) => void;
     const pendingSave = new Promise<{ sourceHash: string }>((resolve) => {
       completeSave = resolve;
@@ -859,14 +860,45 @@ describe("mind map save presentation", () => {
     });
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(lifecycle.hide).not.toHaveBeenCalled();
+    expect(lifecycle.finishWindowClose).not.toHaveBeenCalled();
 
     await act(async () => {
       completeSave({ sourceHash: "hash-close" });
       await closeHandling;
     });
 
-    expect(lifecycle.hide).toHaveBeenCalledTimes(1);
+    expect(lifecycle.finishWindowClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for startup recovery before saving a replayed window close", async () => {
+    persistence.desktopRuntime = true;
+    const startupResult = await persistence.loadLocalDocument();
+    const startup = deferred<typeof startupResult>();
+    const saving = deferred<{ sourceHash: string }>();
+    persistence.loadLocalDocument.mockReturnValueOnce(startup.promise);
+    persistence.saveLocalDocument.mockReturnValueOnce(saving.promise);
+    function Harness() {
+      const mindMap = useMindMap();
+      return <output>{mindMap.snapshot.document.title}</output>;
+    }
+    await act(async () => root.render(<Harness />));
+    expect(lifecycle.closeHandler).not.toBeNull();
+    let closing!: Promise<void>;
+    await act(async () => {
+      closing = Promise.resolve(lifecycle.closeHandler!({ preventDefault: vi.fn() }));
+    });
+    expect(persistence.saveLocalDocument).not.toHaveBeenCalled();
+    expect(lifecycle.finishWindowClose).not.toHaveBeenCalled();
+    await act(async () => { startup.resolve(startupResult); });
+    expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(1);
+    expect(persistence.saveLocalDocument.mock.calls[0][0]).toEqual(startupResult.document);
+    expect(persistence.saveLocalDocument.mock.calls[0][1]).toBe(startupResult.documentPath);
+    expect(lifecycle.finishWindowClose).not.toHaveBeenCalled();
+    await act(async () => {
+      saving.resolve({ sourceHash: "hash-after-recovery" });
+      await closing;
+    });
+    expect(lifecycle.finishWindowClose).toHaveBeenCalledTimes(1);
   });
 
   it("keeps an unbound rich Markdown source in recent documents and defers viewport-only autosave", async () => {
@@ -1784,7 +1816,7 @@ describe("mind map save presentation", () => {
     ).toEqual(["hash-v1", "hash-b1"]);
   });
   it("drags a flow node, undoes and redoes its position, then undoes creation without dangling positions", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     persistence.loadLocalDocument.mockResolvedValue({
       document: created.document, documentPath: "/tmp/flow.md", sourcePath: "/tmp/flow.md",
       sourceHash: "v1", importedAsCopy: false, viewStateRestored: true,
@@ -1864,7 +1896,7 @@ describe("mind map save presentation", () => {
   });
 
   it("keeps a dragged edge label when its autosave is superseded by a pan", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const flowSpace = flowSpaceForNode(created.document, "path");
     if (!flowSpace) throw new Error("expected flow space");
     const stamp = flowSpace.updatedAt;

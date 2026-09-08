@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createFlowWithStep } from "../../test/flowFixture";
 
 import {
   act,
@@ -10,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedDocument } from "../../data/seed";
 import {
   addFlowStepAfter,
-  createFlowSpace,
   flowSpaceForNode,
 } from "../../model/spaces";
 import type { FlowSpace } from "../../types/mindmap";
@@ -41,7 +41,7 @@ describe("FlowWorkspace", () => {
   });
 
   it("keeps a flow edit session intact when another app takes window focus", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const updates: FlowSpace[] = [];
     const onEditorDraftChange = vi.fn();
@@ -96,7 +96,7 @@ describe("FlowWorkspace", () => {
   });
 
   it("owns the flow edit sequence while committing updates through the document owner", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const updates: FlowSpace[] = [];
 
@@ -138,7 +138,7 @@ describe("FlowWorkspace", () => {
   });
 
   it("composes same-batch flow mutations without dropping the first edit", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const updates: FlowSpace[] = [];
 
@@ -185,7 +185,7 @@ describe("FlowWorkspace", () => {
   });
 
   it("accepts a new search-entry request without remounting the workspace", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowStepAfter(initial, created.selectedFlowNodeId);
     const space = added.space;

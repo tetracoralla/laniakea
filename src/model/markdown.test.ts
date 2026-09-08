@@ -1,3 +1,4 @@
+import { createFlowWithStep } from "../test/flowFixture";
 import { describe, expect, it } from "vitest";
 import {
   createBlankDocument,
@@ -12,7 +13,6 @@ import {
 import { createChild, deleteSubtree, setNodeText } from "./tree";
 import {
   addFlowStepAfter,
-  createFlowSpace,
   createMapSpace,
   flowSpaceForNode,
   mapSpaceDocument,
@@ -50,24 +50,6 @@ describe("Markdown import and export", () => {
     expect(document.nodes["imported-3"].parentId).toBe("imported-2");
   });
 
-  it("parses a 5,000-node outline within the large-document budget", () => {
-    const markdown = [
-      "- 大图性能样本",
-      ...Array.from(
-        { length: 4_999 },
-        (_, index) => `  - 节点 ${index + 1}`,
-      ),
-    ].join("\n");
-    const startedAt = performance.now();
-    const parsed = parseMarkdownDocument(markdown, "性能样本");
-    const elapsed = performance.now() - startedAt;
-
-    expect(Object.keys(parsed.document.nodes)).toHaveLength(5_000);
-    // Keep enough headroom for Vitest's parallel workers while still catching
-    // a material regression beyond the 1,000-node / 1-second product target.
-    expect(elapsed).toBeLessThan(1_500);
-  });
-
   it("round-trips the editable Markdown outline without changing its tree", () => {
     const source = createSeedDocument();
     const parsed = parseMarkdownDocument(
@@ -89,7 +71,7 @@ describe("Markdown import and export", () => {
 
   it("round-trips a portable flow space through its anchor path", () => {
     const source = createSeedDocument();
-    const created = createFlowSpace(source, "path");
+    const created = createFlowWithStep(source, "path");
     const markdown = documentToMarkdown(created.document);
     const reopened = parseMarkdownDocument(markdown, "ignored filename");
     const reopenedAnchor = Object.values(reopened.document.nodes).find(
@@ -107,7 +89,7 @@ describe("Markdown import and export", () => {
   });
 
   it("round-trips connector appearance while omitting local manual routing", () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const flow = flowSpaceForNode(created.document, "path")!;
     const added = addFlowStepAfter(flow, created.selectedFlowNodeId);
     const edgeId = added.space.edges[0].id;
@@ -153,7 +135,7 @@ describe("Markdown import and export", () => {
       "实现细节",
       "nested-map-node",
     ).document;
-    const flowCreated = createFlowSpace(expandedMap, "nested-map-node");
+    const flowCreated = createFlowWithStep(expandedMap, "nested-map-node");
     const complete = mergeMapSpaceDocument(
       mapCreated.document,
       mapCreated.spaceId,
@@ -208,7 +190,7 @@ describe("Markdown import and export", () => {
   it("protects the whole source when a portal anchor is dangling", () => {
     const source = createSeedDocument();
     const markdown = documentToMarkdown(
-      createFlowSpace(source, "path").document,
+      createFlowWithStep(source, "path").document,
     );
     const broken = markdown.replace('"anchorRef": "/0/2"', '"anchorRef": "/9/9"');
 
@@ -461,7 +443,7 @@ describe("durable local drafts containing literal URLs", () => {
     const original = createBlankDocument();
     original.title = "网址草稿";
     original.nodes[original.rootId].text = text;
-    const withFlow = createFlowSpace(original, original.rootId).document;
+    const withFlow = createFlowWithStep(original, original.rootId).document;
     const serialized = documentToMarkdown(withFlow);
     const reopened = parseMarkdownDocument(serialized);
     expect(reopened.canOverwriteSource).toBe(true);

@@ -768,7 +768,12 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           });
         }}
         onDoubleClick={(event) => {
-          if (event.target !== event.currentTarget) return;
+          if (
+            event.target !== event.currentTarget || event.button !== 0 ||
+            event.metaKey || event.ctrlKey || event.altKey || event.shiftKey ||
+            panModifierHeld.current || hasActiveCanvasDrag()
+          ) return;
+          event.preventDefault();
           const point = canvasPointFromClient(
             event.clientX,
             event.clientY,

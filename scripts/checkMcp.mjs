@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { checkRawMcpRequest } from "./checkRawMcpRequest.mjs";
 
 const pluginRoot = resolve(process.argv[2] ?? "plugins/laniakea");
 const packageManifest = JSON.parse(
@@ -205,18 +206,11 @@ try {
   assert.equal(duplicateCreate.isError, true);
   assert.equal(duplicateCreate.structuredContent?.error?.code, "already_exists");
 
-  let tooDeepRoot = { text: "Leaf" };
-  for (let depth = 0; depth < 3_000; depth += 1) {
-    tooDeepRoot = { text: `Level ${depth}`, children: [tooDeepRoot] };
-  }
-  const tooDeep = await client.callTool({
-    name: "create_mind_map",
-    arguments: {
-      filePath: join(workspace, "too-deep.md"),
-      title: "Too deep",
-      root: tooDeepRoot,
-    },
-  });
+  const tooDeepRoot = '{"text":"Level","children":['.repeat(3_000)
+    + '{"text":"Leaf"}' + ']}'.repeat(3_000);
+  const tooDeep = await checkRawMcpRequest(pluginRoot,
+    `{"name":"create_mind_map","arguments":{"filePath":${JSON.stringify(join(workspace, "too-deep.md"))},"title":"Too deep","root":${tooDeepRoot}}}`,
+  );
   assert.equal(tooDeep.isError, true);
   assert.equal(tooDeep.structuredContent?.error?.code, "too_deep");
   assert.match(tooDeep.content?.[0]?.text ?? "", /64 levels/);

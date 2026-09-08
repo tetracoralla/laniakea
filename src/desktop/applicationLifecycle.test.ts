@@ -16,6 +16,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 import {
   applicationExitRequestedEvent,
+  finishWindowClose,
   listenForApplicationExit,
   resolveApplicationExit,
 } from "./applicationLifecycle";
@@ -58,5 +59,10 @@ describe("desktop application lifecycle bridge", () => {
       "resolve_application_exit",
       { saved: true },
     );
+  });
+
+  it("delegates a saved window close to the native platform lifecycle", async () => {
+    await finishWindowClose();
+    expect(mocks.invoke).toHaveBeenCalledWith("finish_window_close");
   });
 });

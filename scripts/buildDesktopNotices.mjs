@@ -11,9 +11,20 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const supplementalRoot = resolve(root, "licenses/rust");
 const supplements = JSON.parse(await readFile(resolve(supplementalRoot, "supplements.json"), "utf8"));
 const packages = new Map();
-// Include the union of the two supported macOS dependency graphs, including
-// build tools. This is a conservative inventory, not a binary-size report.
-for (const target of ["aarch64-apple-darwin", "x86_64-apple-darwin"]) {
+// Include build tools as well as runtime dependencies. A universal macOS
+// bundle needs both architectures; Windows must use its own dependency graph.
+const platform = process.env.TAURI_ENV_PLATFORM ?? process.platform;
+const defaultTargets = {
+  macos: ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+  darwin: ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+  windows: ["x86_64-pc-windows-msvc"],
+  win32: ["x86_64-pc-windows-msvc"],
+};
+const targets = process.env.LANIAKEA_NOTICE_TARGETS?.split(",") ?? defaultTargets[platform];
+const supported = new Set(Object.values(defaultTargets).flat());
+assert.ok(targets?.length && targets.every((target) => supported.has(target)),
+  `Unsupported notice target for ${platform}; specify LANIAKEA_NOTICE_TARGETS explicitly`);
+for (const target of targets) {
   const { stdout } = await run("cargo", ["metadata", "--locked", "--format-version", "1",
     "--manifest-path", "src-tauri/Cargo.toml", "--filter-platform", target],
   { cwd: root, maxBuffer: 32 * 1024 * 1024 });
@@ -62,10 +73,10 @@ const output = resolve(root, "src-tauri/notices");
 await mkdir(output, { recursive: true });
 await writeFile(resolve(output, "THIRD_PARTY_NOTICES.txt"),
   "# Laniakea native dependencies\n\n" +
-  "License and notice texts from the exact locked macOS dependencies follow. " +
+  `License and notice texts from the exact locked dependencies for ${targets.join(", ")} follow. ` +
   "This inventory includes build dependencies as well as runtime dependencies. " +
   "The source archive links provide the unchanged sources, including any MPL-covered components. " +
   "Crates whose published archives omit license files use the checked-in upstream supplements, verified by version, commit and digest. " +
   "Frontend dependency notices are in THIRD_PARTY_NOTICES.web.txt.\n\n" + sections.join("\n"));
 await writeFile(resolve(output, "inventory.json"), JSON.stringify(inventory, null, 2) + "\n");
-console.log(`Native distribution notices: ${inventory.length} locked macOS packages`);
+console.log(`Native distribution notices: ${inventory.length} locked packages for ${targets.join(", ")}`);

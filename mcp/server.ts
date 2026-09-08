@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import packageManifest from "../package.json";
+import { version } from "../package.json";
 import {
   mindMapToAgentView,
   searchAgentMindMap,
@@ -203,7 +203,7 @@ const readOnlyAnnotations = {
 
 export function createLaniakeaServer() {
   const server = new McpServer(
-    { name: "laniakea", version: packageManifest.version },
+    { name: "laniakea", version },
     {
       instructions:
         "Use Laniakea for durable, user-visible hierarchical artifacts, not as private scratch reasoning. Read before updating, pass the exact revision, and never rewrite a rich Markdown source in place.",

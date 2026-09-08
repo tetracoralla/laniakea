@@ -8,6 +8,7 @@ import {
   attachSubtrees,
   attachSubtree,
   createChild,
+  createFloatingNode,
   detachSubtrees,
   detachSubtree,
   deleteNodePreserveChildren,
@@ -47,6 +48,19 @@ function deepDocument(count: number) {
 }
 
 describe("tree mutations", () => {
+  it("creates and moves a free topic at signed canvas coordinates, then attaches it without a leftover root", () => {
+    const source = createSeedDocument();
+    const created = createFloatingNode(source, -320, -160, "idea");
+    expect(created.document.floatingRoots).toEqual([{ id: "idea", x: -320, y: -160 }]);
+    const moved = detachSubtree(created.document, "idea", { x: -480, y: -220 });
+    expect(moved.document.floatingRoots).toEqual([{ id: "idea", x: -480, y: -220 }]);
+    const attached = attachSubtree(moved.document, "idea", "path");
+    expect(attached.document.floatingRoots).toEqual([]);
+    expect(attached.document.nodes.idea.parentId).toBe("path");
+    expect(attached.document.nodes.path.children).toContain("idea");
+    expect(isMindMapDocument(attached.document)).toBe(true);
+    expect(createFloatingNode(source, Number.NaN, 0).document).toBe(source);
+  });
   it("creates a child without mutating the previous document", () => {
     const document = createSeedDocument();
     const originalChildren = document.nodes.experience.children;

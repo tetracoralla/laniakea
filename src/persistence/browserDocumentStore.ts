@@ -1,3 +1,4 @@
+import { documentToMarkdown } from "../model/markdown";
 import { parseMindMapDocument } from "../model/document";
 import { createRuntimeId } from "../model/runtimeId";
 import type { MindMapDocument } from "../types/mindmap";
@@ -283,6 +284,24 @@ export async function saveBrowserDocument(
   path: string,
   expectedSourceHash: string | null,
 ): Promise<BrowserStoredDocument> {
+  return writeBrowserDocument(document, path, expectedSourceHash, false);
+}
+
+/** A close-time snapshot can outlive the acknowledgement of its own commit. */
+export async function recoverBrowserDocument(
+  document: MindMapDocument,
+  path: string,
+  expectedSourceHash: string | null,
+): Promise<BrowserStoredDocument> {
+  return writeBrowserDocument(document, path, expectedSourceHash, true);
+}
+
+async function writeBrowserDocument(
+  document: MindMapDocument,
+  path: string,
+  expectedSourceHash: string | null,
+  recovery: boolean,
+): Promise<BrowserStoredDocument> {
   const id = browserDocumentId(path);
   const expected = parseRevisionToken(expectedSourceHash);
   if (!id || !expected || expected.id !== id) {
@@ -294,6 +313,15 @@ export async function saveBrowserDocument(
     const current = await requestResult(store.get(id)) as
       | BrowserDocumentRecord
       | undefined;
+    if (recovery && current && current.revision !== expected.revision &&
+        documentToMarkdown(current.document) === documentToMarkdown(document)) {
+      // The content is already committed. Restore only local arrangement in
+      // this same transaction; never waive revision checks for normal edits.
+      const record = { ...current, document: mergeBrowserViewState(current.document, document) };
+      store.put(record);
+      await transactionDone(transaction);
+      return recordToStored(record);
+    }
     if (!current || current.revision !== expected.revision) {
       transaction.abort();
       try {
@@ -334,46 +362,50 @@ export async function saveBrowserDocumentViewState(
       // state has no owner and content protection belongs to the full save.
       return false;
     }
-    // Only local canvas arrangement travels: content, revision and updatedAt
-    // stay exactly as the record has them, so a pan can neither overwrite
-    // another tab's newer content nor invalidate its expected revision. Flow
-    // positions, manual corridors and label offsets change without a content
-    // timestamp, so each must be carried here or a silent view-state save that
-    // supersedes their debounced content save would silently drop them.
-    const viewState: MindMapDocument = {
-      ...current.document,
-      viewport: document.viewport,
-    };
-    const currentSpaces = current.document.spaces;
-    const incomingSpaces = document.spaces;
-    if (currentSpaces && incomingSpaces) {
-      viewState.spaces = Object.fromEntries(
-        Object.entries(currentSpaces).map(([spaceId, space]) => {
-          const twin = incomingSpaces[spaceId];
-          return twin && twin.type === space.type
-            ? [
-                spaceId,
-                space.type === "flow" && twin.type === "flow"
-                  ? {
-                      ...space,
-                      viewport: twin.viewport,
-                      positions: retainCanvasEntries(twin.positions, new Set(Object.keys(space.nodes))),
-                      edgeRoutes: retainCanvasEntries(twin.edgeRoutes, new Set(space.edges.map(({ id }) => id))),
-                      edgeLabelOffsets: retainCanvasEntries(twin.edgeLabelOffsets, new Set(space.edges.map(({ id }) => id))),
-                    }
-                  : { ...space, viewport: twin.viewport },
-              ]
-            : [spaceId, space];
-        }),
-      );
-    }
-    store.put({
-      ...current,
-      document: cloneDocument(viewState),
-    });
+    store.put({ ...current, document: mergeBrowserViewState(current.document, document) });
     await transactionDone(transaction);
     return true;
   });
+}
+
+// Content and its revision remain authoritative, including during recovery.
+function mergeBrowserViewState(current: MindMapDocument, document: MindMapDocument): MindMapDocument {
+  const incomingRoots = new Map(document.floatingRoots.map((root) => [root.id, root]));
+  const viewState: MindMapDocument = {
+    ...current,
+    nodes: Object.fromEntries(Object.entries(current.nodes).map(([id, node]) => [
+      id, document.nodes[id] ? { ...node, collapsed: document.nodes[id].collapsed } : node,
+    ])),
+    floatingRoots: current.floatingRoots.map((root) => {
+      const incoming = incomingRoots.get(root.id);
+      return incoming ? { ...root, x: incoming.x, y: incoming.y } : root;
+    }),
+    viewport: document.viewport,
+  };
+  const currentSpaces = current.spaces;
+  const incomingSpaces = document.spaces;
+  if (currentSpaces && incomingSpaces) {
+    viewState.spaces = Object.fromEntries(
+      Object.entries(currentSpaces).map(([spaceId, space]) => {
+        const twin = incomingSpaces[spaceId];
+        return twin && twin.type === space.type
+          ? [
+              spaceId,
+              space.type === "flow" && twin.type === "flow"
+                ? {
+                    ...space,
+                    viewport: twin.viewport,
+                    positions: retainCanvasEntries(twin.positions, new Set(Object.keys(space.nodes))),
+                    edgeRoutes: retainCanvasEntries(twin.edgeRoutes, new Set(space.edges.map(({ id }) => id))),
+                    edgeLabelOffsets: retainCanvasEntries(twin.edgeLabelOffsets, new Set(space.edges.map(({ id }) => id))),
+                  }
+                : { ...space, viewport: twin.viewport },
+            ]
+          : [spaceId, space];
+      }),
+    );
+  }
+  return cloneDocument(viewState);
 }
 
 // A stale tab may still arrange objects deleted by a newer content save.

@@ -769,14 +769,14 @@ export function useDocumentWorkflow({
     void (async () => {
       try {
         await revealDocumentInFileManager(path);
-        notify({ message: "已在访达中显示" });
+        notify({ message: "已在文件夹中显示" });
       } catch (error) {
         const message =
           typeof error === "string"
             ? error
             : error instanceof Error
             ? error.message
-            : "无法在访达中显示这个文件";
+            : "无法在文件夹中显示这个文件";
         const isMissing = /不存在|找不到|no such file/i.test(message);
         notify({
           message,

@@ -219,13 +219,13 @@ describe("node drag geometry", () => {
     ).toEqual({ blockedByDraggedSubtree: false, targetId: "currentParent" });
   });
 
-  it("keeps a blank-canvas drop inside the usable content area", () => {
+  it("keeps the pointer offset when dropping left or above the original canvas origin", () => {
     expect(
       floatingPositionFromPointer(
         { x: 20, y: 12 },
         { x: 70, y: 18 },
       ),
-    ).toEqual({ x: 32, y: 32 });
+    ).toEqual({ x: -50, y: -6 });
   });
 
   it("draws the attachment preview from the candidate parent to the dragged node", () => {

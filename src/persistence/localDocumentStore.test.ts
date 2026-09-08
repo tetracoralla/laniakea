@@ -16,6 +16,8 @@ import {
 } from "./localDocumentStore";
 import {
   createBrowserDocument,
+  listBrowserDocuments,
+  saveBrowserDocument,
   openBrowserDocument,
   resetBrowserDocumentStoreForTests,
 } from "./browserDocumentStore";
@@ -115,6 +117,68 @@ describe("local document persistence errors", () => {
     expect(recovered.notice).toContain("独立副本");
     expect((await openBrowserDocument(created.documentPath)).document.title)
       .toBe("较新版本");
+  });
+
+  it("does not duplicate a committed recovery after reload with an old acknowledgement", async () => {
+    const created = await createBrowserDocument(createSeedDocument());
+    const changed = { ...created.document, title: "刚刚保存的内容" };
+    // The database commit wins the race, but the closing page still holds its old token.
+    await saveBrowserDocument(changed, created.documentPath, created.sourceHash);
+    const returned = {
+      ...changed,
+      nodes: { ...changed.nodes, root: { ...changed.nodes.root, collapsed: true } },
+      viewport: { x: -90, y: 240, zoom: 0.8 },
+    };
+    saveBrowserDocumentSynchronously(returned, created.documentPath, created.sourceHash);
+    const restored = await loadLocalDocument();
+    expect(restored.documentPath).toBe(created.documentPath);
+    expect(restored.document?.viewport).toEqual(returned.viewport);
+    expect(restored.document?.nodes.root.collapsed).toBe(true);
+    expect(restored.document?.title).toBe(changed.title);
+    expect(await listBrowserDocuments()).toHaveLength(1);
+    expect(restored.notice).toBe("已恢复关闭前的状态。");
+  });
+
+  it("clears an acknowledged snapshot regardless of JSON object key order", async () => {
+    const created = await createBrowserDocument(createSeedDocument());
+    const reordered = JSON.parse(JSON.stringify(created.document, (_key, value) =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).reverse()) : value,
+    ));
+    expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(created.document));
+    saveBrowserDocumentSynchronously(reordered, created.documentPath, created.sourceHash);
+    await saveLocalDocument(created.document, created.documentPath, created.sourceHash);
+    expect([...values.keys()].filter((key) => key.startsWith("laniakea.browser-recovery.v2.")))
+      .toHaveLength(0);
+    expect((await loadLocalDocument()).notice).toBeNull();
+  });
+
+  it("retains a newer snapshot with reordered siblings even when its text is unchanged", async () => {
+    const created = await createBrowserDocument(createSeedDocument());
+    const pending = saveLocalDocument(created.document, created.documentPath, created.sourceHash);
+    const reordered = structuredClone(created.document);
+    expect(reordered.nodes.root.children.length).toBeGreaterThan(1);
+    reordered.nodes.root.children.reverse();
+    saveBrowserDocumentSynchronously(reordered, created.documentPath, created.sourceHash);
+    await pending;
+    expect([...values.keys()].filter((key) => key.startsWith("laniakea.browser-recovery.v2.")))
+      .toHaveLength(1);
+    const restored = await loadLocalDocument();
+    expect(restored.document?.nodes.root.children).toEqual(reordered.nodes.root.children);
+    expect(restored.documentPath).not.toBe(created.documentPath);
+  });
+
+  it("keeps newer close-time content when an older save completes afterwards", async () => {
+    const created = await createBrowserDocument(createSeedDocument());
+    const writing = { ...created.document, title: "保存开始时的内容" };
+    const pending = saveLocalDocument(writing, created.documentPath, created.sourceHash);
+    const newest = { ...created.document, title: "保存期间追加并关闭" };
+    saveBrowserDocumentSynchronously(newest, created.documentPath, created.sourceHash);
+    await pending;
+    const restored = await loadLocalDocument();
+    expect(restored.document?.title).toBe(newest.title);
+    expect((await openBrowserDocument(created.documentPath)).document.title).toBe(writing.title);
+    expect(restored.documentPath).not.toBe(created.documentPath);
   });
 
   it("does not renew a stale tab's content lease through a view-only save", async () => {

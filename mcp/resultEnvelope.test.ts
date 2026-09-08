@@ -94,4 +94,28 @@ describe("MCP result envelopes", () => {
       /complete MCP tool request/,
     );
   });
+
+  it("matches UTF-8 JSON size at the exact request boundary", () => {
+    const request = {
+      '引号"与换行\n': [null, true, false, 12.5, "文字🧭\t\\", undefined],
+      omitted: undefined,
+      nested: { empty: {}, list: [] },
+      padding: "",
+    };
+    const initialBytes = Buffer.byteLength(JSON.stringify(request), "utf8");
+    request.padding = "a".repeat(MAX_MCP_REQUEST_BYTES - initialBytes);
+    expect(() => assertMcpRequestBudget(request)).not.toThrow();
+    request.padding += "a";
+    expect(() => assertMcpRequestBudget(request)).toThrow(/complete MCP tool request/);
+  });
+
+  it("counts deeply nested input without consuming the JavaScript call stack", () => {
+    let root: object = { text: "Leaf" };
+    for (let depth = 0; depth < 3_000; depth += 1) {
+      root = { text: "Level", children: [root] };
+    }
+    expect(() => assertMcpRequestBudget({ root })).not.toThrow();
+    expect(() => assertMcpRequestBudget({ root, text: "x".repeat(MAX_MCP_REQUEST_BYTES) }))
+      .toThrow(/complete MCP tool request/);
+  });
 });

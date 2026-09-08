@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useFlowConnectionDrag } from "../../hooks/useFlowConnectionDrag";
+import { hasActiveCanvasDrag } from "../../hooks/useDragInterruption";
 import { useFlowAutoPan } from "../../hooks/useFlowAutoPan";
 import { useFlowEdgeReconnect } from "../../hooks/useFlowEdgeReconnect";
 import { useFlowKeyboardCommands } from "../../hooks/useFlowKeyboardCommands";
@@ -227,6 +228,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       zoomOut,
       resetZoom,
       flushViewport,
+      getViewport,
       panBy,
       panModifierHeld,
     } = useFlowViewport({
@@ -373,40 +375,6 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       const target = flowNavigationTarget(space, selectedId, direction);
       if (target) selectNode(target);
     }, [selectNode, selectedId, space]);
-    useFlowKeyboardCommands({
-      enabled: keyboardEnabled && edgeReconnectPicker === null,
-      selectedEdgeId,
-      selectedId,
-      onAddNext,
-      onAddBranch,
-      onBeginEdit,
-      onClearEdgeSelection: () => {
-        setSelectedEdgeId(null);
-        setEdgeReconnectPicker(null);
-      },
-      onDelete,
-      onDeleteEdge: (edgeId) => {
-        onDeleteEdge(edgeId);
-        setSelectedEdgeId(null);
-        setEdgeReconnectPicker(null);
-      },
-      onNavigate: navigateSelection,
-      onBack,
-      onUndo,
-      onRedo,
-    });
-    const autoPan = useFlowAutoPan(containerRef);
-    const keepAutoPanning = useCallback((
-      clientX: number,
-      clientY: number,
-      shiftViewport: (x: number, y: number) => void,
-      interactionActive: () => boolean,
-    ) => {
-      autoPan.update(clientX, clientY, (x, y) => {
-        panBy(x, y);
-        shiftViewport(x, y);
-      }, interactionActive);
-    }, [autoPan, panBy]);
     const insertShapeAtClientPoint = useCallback((
       kind: Extract<FlowNodeKind, "step" | "decision" | "start">,
       clientPoint: { x: number; y: number },
@@ -421,16 +389,17 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
           clientPoint.y < bounds.top || clientPoint.y > bounds.bottom)
       ) return;
       const size = flowNodeSize(kind, "", measureTextWidth);
+      const viewport = getViewport();
       const canvasPoint = {
-        x: (clientPoint.x - bounds.left - space.viewport.x) / space.viewport.zoom,
-        y: (clientPoint.y - bounds.top - space.viewport.y) / space.viewport.zoom,
+        x: (clientPoint.x - bounds.left - viewport.x) / viewport.zoom,
+        y: (clientPoint.y - bounds.top - viewport.y) / viewport.zoom,
       };
       const grid = 12;
       let x = Math.round((canvasPoint.x - size.width / 2) / grid) * grid;
       let y = Math.round((canvasPoint.y - size.height / 2) / grid) * grid;
       const centerX = x + size.width / 2;
       const centerY = y + size.height / 2;
-      const alignmentRange = 10 / space.viewport.zoom;
+      const alignmentRange = 10 / viewport.zoom;
       for (const node of Object.values(layout.nodes)) {
         const nodeCenterX = node.x + node.width / 2;
         const nodeCenterY = node.y + node.height / 2;
@@ -457,11 +426,54 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     }, [
       containerRef,
       currentPositions,
+      getViewport,
       layout.nodes,
       measureTextWidth,
       onAddShape,
-      space.viewport,
     ]);
+    const insertStepAtViewCenter = useCallback(() => {
+      const bounds = containerRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      insertShapeAtClientPoint("step", {
+        x: (bounds.left + bounds.right) / 2,
+        y: (bounds.top + bounds.bottom) / 2,
+      }, false);
+    }, [containerRef, insertShapeAtClientPoint]);
+    useFlowKeyboardCommands({
+      enabled: keyboardEnabled && edgeReconnectPicker === null,
+      selectedEdgeId,
+      selectedId,
+      onAddNext,
+      onAddBranch,
+      onBeginEdit,
+      onClearEdgeSelection: () => {
+        setSelectedEdgeId(null);
+        setEdgeReconnectPicker(null);
+      },
+      onDelete,
+      onDeleteEdge: (edgeId) => {
+        onDeleteEdge(edgeId);
+        setSelectedEdgeId(null);
+        setEdgeReconnectPicker(null);
+      },
+      onCreateFirstStep: nodes.length === 0 ? insertStepAtViewCenter : undefined,
+      onNavigate: navigateSelection,
+      onBack,
+      onUndo,
+      onRedo,
+    });
+    const autoPan = useFlowAutoPan(containerRef);
+    const keepAutoPanning = useCallback((
+      clientX: number,
+      clientY: number,
+      shiftViewport: (x: number, y: number) => void,
+      interactionActive: () => boolean,
+    ) => {
+      autoPan.update(clientX, clientY, (x, y) => {
+        panBy(x, y);
+        shiftViewport(x, y);
+      }, interactionActive);
+    }, [autoPan, panBy]);
     useImperativeHandle(ref, () => ({
       fit,
       focusSelected,
@@ -546,6 +558,16 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
           bindings.onPointerCancel(event);
         }}
         onPointerDown={bindings.onPointerDown}
+        onDoubleClick={(event) => {
+          if (
+            event.target !== event.currentTarget || event.button !== 0 ||
+            event.metaKey || event.ctrlKey || event.altKey || event.shiftKey ||
+            panModifierHeld.current || hasActiveCanvasDrag() || !keyboardEnabled
+          ) return;
+          event.preventDefault();
+          clearCanvasSelection();
+          insertShapeAtClientPoint("step", { x: event.clientX, y: event.clientY }, true);
+        }}
         onPointerMove={(event) => {
           if (edgeReconnect.pointerMove(event)) {
             keepAutoPanning(

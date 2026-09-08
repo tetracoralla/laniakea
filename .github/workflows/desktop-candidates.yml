@@ -1,0 +1,85 @@
+name: Build desktop candidates
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-candidates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm run check:regression
+      - run: npm run desktop:build
+      - name: Record candidate provenance
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one Windows installer' }
+          node scripts/writeArtifactChecksums.mjs $installers[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare installer checksums' }
+      # Retain the candidate even if the later installed-runtime check fails,
+      # so the exact executable can be diagnosed without rebuilding it.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laniakea-windows-x64-candidate
+          path: src-tauri/target/release/bundle/nsis/*
+          if-no-files-found: error
+      - name: Check installed Windows application
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one Windows installer' }
+          ./script/check_windows_install.ps1 -Installer $installers[0].FullName
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: laniakea-windows-runtime
+          path: ${{ runner.temp }}/laniakea-runtime/*
+          if-no-files-found: ignore
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - run: npm ci
+      - run: npm run check:regression
+      - run: npm run desktop:build -- --target universal-apple-darwin --bundles dmg
+      - name: Check candidate DMG contents
+        run: |
+          node scripts/checkMacDmg.mjs src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg universal
+          node scripts/writeArtifactChecksums.mjs src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laniakea-macos-universal-candidate-adhoc
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*
+          if-no-files-found: error

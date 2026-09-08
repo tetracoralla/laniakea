@@ -597,8 +597,8 @@ export function DocumentSwitcher({
                     <Icon name="folder" size={16} />
                     <span>
                       {actionsIsCurrent && currentDocument.pathRole === "source"
-                        ? "在访达中显示来源"
-                        : "在访达中显示"}
+                        ? "在文件夹中显示来源"
+                        : "在文件夹中显示"}
                     </span>
                   </button>
                   <button

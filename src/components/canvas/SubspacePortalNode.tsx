@@ -4,7 +4,9 @@ import {
   useMemo,
   useRef,
   type PointerEvent as ReactPointerEvent,
+  type CSSProperties,
 } from "react";
+import { nodeInlinePadding } from "../../model/layout";
 import { subspacePreview } from "../../model/subspacePreview";
 import { passedDragThreshold } from "../../model/marquee";
 import {
@@ -146,7 +148,7 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
 
   return (
     <div
-      className={`subspace-portal subspace-portal--${space.type} subspace-portal--${layout.tone} ${selected ? "is-selected" : ""}`}
+      className={`subspace-portal subspace-portal--${space.type} subspace-portal--${layout.tone} subspace-portal--${layout.depth === 1 ? "branch" : layout.depth === 2 ? "secondary" : "leaf"} ${selected ? "is-selected" : ""}`}
       data-subspace-anchor-id={anchorId}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -157,11 +159,12 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
       }}
       ref={containerRef}
       style={{
+        "--node-padding-inline": `${nodeInlinePadding(layout.depth)}px`,
         height: layout.height,
         left: layout.x,
         top: layout.y,
         width: layout.width,
-      }}
+      } as CSSProperties}
     >
       <button
         aria-label={`${preview.typeLabel}概要：${preview.text}`}
@@ -197,15 +200,7 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
         }}
         type="button"
       >
-        {space.type === "map" ? (
-          <span className="subspace-portal__map-summary">
-            {preview.lines.map((line, index) => (
-              <span key={`${index}:${line}`}>{line}</span>
-            ))}
-          </span>
-        ) : (
-          <span className="subspace-portal__flow-summary">{preview.text}</span>
-        )}
+        <span className="subspace-portal__summary">{preview.text}</span>
       </button>
       <button
         aria-label={preview.accessibleLabel}

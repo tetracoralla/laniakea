@@ -81,14 +81,18 @@ function orderedContentNodes(space: FlowSpace): FlowNode[] {
 }
 
 function flowPreview(space: FlowSpace): SubspacePreview {
-  const steps = orderedContentNodes(space).map(({ text }) =>
-    visibleLabel(text, "未命名步骤"),
-  );
+  const nodes = orderedContentNodes(space);
+  const steps = nodes.map(({ text }) => visibleLabel(text, "未命名步骤"));
+  const separator = (index: number) => space.edges.some(({ from, to }) =>
+    from === nodes[index - 1]?.id && to === nodes[index]?.id,
+  ) ? "→" : " · ";
+  const joinSteps = (count: number) => steps.slice(0, count)
+    .map((text, index) => `${index ? separator(index) : ""}${text}`).join("");
   const truncated = steps.length > 4;
   const text = truncated
-    ? `${steps.slice(0, 3).join("→")}...→${steps[steps.length - 1]}`
+    ? `${joinSteps(3)}...${separator(steps.length - 1)}${steps[steps.length - 1]}`
     : steps.length > 0
-      ? steps.join("→")
+      ? joinSteps(steps.length)
       : "暂无步骤";
   return {
     accessibleLabel: `打开流程：${text}`,
@@ -100,64 +104,4 @@ function flowPreview(space: FlowSpace): SubspacePreview {
 
 export function subspacePreview(space: LaniakeaSpace): SubspacePreview {
   return space.type === "map" ? mapPreview(space) : flowPreview(space);
-}
-
-export interface SubspacePreviewTextStyle {
-  fontSize: number;
-  fontWeight: number;
-  letterSpacing: number;
-}
-
-export type SubspacePreviewTextMeasurer = (
-  text: string,
-  style: SubspacePreviewTextStyle,
-) => number;
-
-const previewTextStyle: SubspacePreviewTextStyle = {
-  fontSize: 13,
-  fontWeight: 500,
-  letterSpacing: 0,
-};
-
-/**
- * Sizing prefers a real text measurer (the same one nodes use) and falls back
- * to per-character estimates: CJK counts one unit, latin roughly half.
- */
-export function sizeForSubspacePreview(
-  space: LaniakeaSpace,
-  measureTextWidth?: SubspacePreviewTextMeasurer,
-): {
-  height: number;
-  width: number;
-} {
-  const preview = subspacePreview(space);
-  const lineWidth = (line: string) =>
-    measureTextWidth
-      ? measureTextWidth(line, previewTextStyle)
-      : Array.from(line).reduce(
-          (total, character) =>
-            total +
-            (/[\u2e80-\u9fff\uf900-\ufaff]/u.test(character) ? 13 : 8),
-          0,
-        );
-  if (space.type === "flow") {
-    return {
-      height: 62,
-      width: Math.min(420, Math.max(238, 58 + lineWidth(preview.text))),
-    };
-  }
-  return {
-    height: Math.max(62, 26 + preview.lines.length * 20),
-    width: Math.min(
-      340,
-      Math.max(
-        220,
-        54 +
-          preview.lines.reduce(
-            (maximum, line) => Math.max(maximum, lineWidth(line)),
-            0,
-          ),
-      ),
-    ),
-  };
 }

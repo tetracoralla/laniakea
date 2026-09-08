@@ -619,7 +619,7 @@ export function App() {
       anchorNodeId: nodeId,
       entryRequest: ++flowEntryRequestRef.current,
       fitOnMount: creating,
-      initialEditing: creating,
+      initialEditing: false,
       initialSelectedId: created.selectedFlowNodeId || null,
     });
     setSelection(singleSelection(nodeId));

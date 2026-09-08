@@ -25,7 +25,9 @@ body:
       options:
         - 网页版
         - macOS 桌面版
-        - 两者都需要
+        - Windows 桌面版
+        - Agent / Codex 插件
+        - 多个环境
     validations:
       required: true
   - type: textarea

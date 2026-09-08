@@ -370,12 +370,14 @@ describe("document workflow", () => {
     );
   });
 
-  it("does not offer to remove the active binding when reveal says it is missing", async () => {
+  it.each([
+    { error: new Error("这个文件已不存在"), message: "这个文件已不存在", failed: true },
+    { error: null, message: "无法在文件夹中显示这个文件", failed: true },
+    { error: undefined, message: "已在文件夹中显示", failed: false },
+  ])("reports reveal result $message without removing the active binding", async ({ error, message, failed }) => {
     const notify = vi.fn();
     const removeRecentDocument = vi.fn();
-    mocks.revealDocumentInFileManager.mockRejectedValue(
-      new Error("这个文件已不存在"),
-    );
+    if (failed) mocks.revealDocumentInFileManager.mockRejectedValue(error);
 
     function Harness() {
       const workflow = useDocumentWorkflow({
@@ -415,12 +417,13 @@ describe("document workflow", () => {
       await Promise.resolve();
     });
 
-    expect(notify).toHaveBeenLastCalledWith({
-      message: "这个文件已不存在",
+    expect(mocks.revealDocumentInFileManager).toHaveBeenCalledWith("/tmp/当前.md");
+    expect(notify).toHaveBeenLastCalledWith(failed ? {
+      message,
       tone: "error",
       actionLabel: undefined,
       onAction: undefined,
-    });
+    } : { message });
     expect(removeRecentDocument).not.toHaveBeenCalled();
   });
 

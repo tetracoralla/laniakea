@@ -8,7 +8,7 @@ import {
   stat,
   unlink,
 } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, join, normalize } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, normalize, posix, win32 } from "node:path";
 import {
   applyMindMapOperations,
   createAgentMindMap,
@@ -178,7 +178,8 @@ export function updateLockPath(
 ): string {
   const key = normalizeUpdateLockKey(filePath, platform);
   const digest = createHash("sha256").update(key).digest("hex").slice(0, 32);
-  return join(dirname(filePath), `.laniakea-lock-${digest}`);
+  const paths = platform === "win32" ? win32 : posix;
+  return paths.join(paths.dirname(filePath), `.laniakea-lock-${digest}`);
 }
 
 function delay(milliseconds: number) {
@@ -271,7 +272,22 @@ async function withUpdateLock<T>(
         throw error;
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const failure = error as NodeJS.ErrnoException;
+      // Windows can keep a removed lock pending deletion until a concurrent
+      // reader closes its handle. CreateFile then reports access denied.
+      // Retry only lock acquisition, never an error while initializing it;
+      // a persistent permission failure still reports its original error.
+      if (
+        process.platform === "win32" &&
+        (failure.code === "EPERM" || failure.code === "EACCES") &&
+        failure.syscall === "open" &&
+        failure.path === lockPath &&
+        Date.now() < deadline
+      ) {
+        await delay(LOCK_RETRY_MS);
+        continue;
+      }
+      if (failure.code !== "EEXIST") throw error;
       const stale = await lockCanBeRemoved(lockPath);
       let removed = stale === "gone";
       if (stale && stale !== "gone") {

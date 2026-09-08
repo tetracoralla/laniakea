@@ -93,10 +93,13 @@ export function createFloatingNode(
   y: number,
   nodeId = createNodeId(),
 ): DocumentMutation {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return { document, selection: singleSelection(document.rootId) };
+  }
   const floatingRoot: FloatingRoot = {
     id: nodeId,
-    x: Math.max(32, Math.round(x)),
-    y: Math.max(32, Math.round(y)),
+    x: Math.round(x),
+    y: Math.round(y),
   };
   return {
     document: {
@@ -553,11 +556,12 @@ export function detachSubtrees(
   selection: SelectionState,
 ): DocumentMutation {
   const requested = positions
-    .filter(({ id }) => id !== document.rootId && document.nodes[id])
+    .filter(({ id, x, y }) => id !== document.rootId && document.nodes[id] &&
+      Number.isFinite(x) && Number.isFinite(y))
     .map(({ id, x, y }) => ({
       id,
-      x: Math.max(32, Math.round(x)),
-      y: Math.max(32, Math.round(y)),
+      x: Math.round(x),
+      y: Math.round(y),
     }));
   const rootIds = normalizeSelectedRoots(
     document,

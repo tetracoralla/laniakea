@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createFlowWithStep } from "../../test/flowFixture";
 
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -82,7 +83,7 @@ describe("FlowCanvas", () => {
   });
 
   it("renders semantic shapes for the seeded space", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
 
     await act(async () => {
@@ -116,8 +117,97 @@ describe("FlowCanvas", () => {
     expect(canvas.getAttribute("role")).toBe("application");
   });
 
-  it("leaves Space activation to controls outside the Flow canvas", async () => {
+  it("places a blank double-click in the live viewport and ignores object or modified double-clicks", async () => {
     const created = createFlowSpace(createSeedDocument(), "path");
+    const space = flowSpaceForNode(created.document, "path")!;
+    const onAddShape = vi.fn();
+    const onViewportChange = vi.fn();
+    await act(async () => root.render(
+      <FlowCanvas
+        space={space} selectedId={null} editingId={null} draft=""
+        onAddShape={onAddShape} onAddBranch={vi.fn()} onAddNext={vi.fn()}
+        onBeginEdit={vi.fn()} onCancelEdit={vi.fn()} onCommitEdit={vi.fn()}
+        onChangeKind={vi.fn()} onChangeEdgeLabel={vi.fn()} onConnect={vi.fn()}
+        onDelete={vi.fn()} onDraftChange={vi.fn()} onSelect={vi.fn()}
+        onViewportChange={onViewportChange}
+      />,
+    ));
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, x: 0, y: 0, width: 1200, height: 800, right: 1200, bottom: 800, toJSON: () => ({}),
+    });
+    const doubleClick = (target: Element, options = {}) => target.dispatchEvent(
+      new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0, clientX: 600, clientY: 400, ...options }),
+    );
+    await act(async () => {
+      canvas.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaX: 200, deltaY: 100 }));
+      doubleClick(canvas);
+    });
+    expect(onViewportChange).not.toHaveBeenCalled(); // Its 120ms persistence debounce has not fired.
+    expect(onAddShape).toHaveBeenCalledExactlyOnceWith("step", { x: 612, y: 396 }, {});
+    onAddShape.mockClear();
+    await act(async () => {
+      doubleClick(container.querySelector(".flow-shape-palette button")!);
+      doubleClick(canvas, { shiftKey: true });
+      doubleClick(canvas, { metaKey: true });
+      doubleClick(canvas, { button: 2 });
+      canvas.focus();
+      canvas.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: " " }));
+      doubleClick(canvas);
+      canvas.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " " }));
+    });
+    expect(onAddShape).not.toHaveBeenCalled();
+  });
+
+  it("starts an empty flow from Enter at the view center but not where steps already exist", async () => {
+    const created = createFlowSpace(createSeedDocument(), "path");
+    const space = flowSpaceForNode(created.document, "path")!;
+    const onAddShape = vi.fn();
+    const onAddNext = vi.fn();
+    await act(async () => root.render(
+      <FlowCanvas
+        space={space} selectedId={null} editingId={null} draft=""
+        onAddShape={onAddShape} onAddBranch={vi.fn()} onAddNext={onAddNext}
+        onBeginEdit={vi.fn()} onCancelEdit={vi.fn()} onCommitEdit={vi.fn()}
+        onChangeKind={vi.fn()} onChangeEdgeLabel={vi.fn()} onConnect={vi.fn()}
+        onDelete={vi.fn()} onDraftChange={vi.fn()} onSelect={vi.fn()}
+        onViewportChange={vi.fn()}
+      />,
+    ));
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      left: 0, top: 0, x: 0, y: 0, width: 1200, height: 800, right: 1200, bottom: 800, toJSON: () => ({}),
+    });
+    await act(async () => {
+      canvas.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaX: 200, deltaY: 100 }));
+      canvas.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    });
+    // Same placement decision as the verified blank double-click at (600, 400).
+    expect(onAddShape).toHaveBeenCalledExactlyOnceWith("step", { x: 612, y: 396 }, {});
+    expect(onAddNext).not.toHaveBeenCalled();
+
+    onAddShape.mockClear();
+    const populated = createFlowWithStep(createSeedDocument(), "path");
+    await act(async () => root.render(
+      <FlowCanvas
+        space={flowSpaceForNode(populated.document, "path")!}
+        selectedId={null} editingId={null} draft=""
+        onAddShape={onAddShape} onAddBranch={vi.fn()} onAddNext={onAddNext}
+        onBeginEdit={vi.fn()} onCancelEdit={vi.fn()} onCommitEdit={vi.fn()}
+        onChangeKind={vi.fn()} onChangeEdgeLabel={vi.fn()} onConnect={vi.fn()}
+        onDelete={vi.fn()} onDraftChange={vi.fn()} onSelect={vi.fn()}
+        onViewportChange={vi.fn()}
+      />,
+    ));
+    await act(async () => {
+      canvas.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }));
+    });
+    expect(onAddShape).not.toHaveBeenCalled();
+    expect(onAddNext).not.toHaveBeenCalled();
+  });
+
+  it("leaves Space activation to controls outside the Flow canvas", async () => {
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     const onSpaceTap = vi.fn();
     const chromeButton = document.createElement("button");
@@ -176,7 +266,7 @@ describe("FlowCanvas", () => {
   });
 
   it("uses four ports for creation and retains the right-click object menu", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     const onAddNode = vi.fn();
 
@@ -283,7 +373,7 @@ describe("FlowCanvas", () => {
   });
 
   it("preserves native composition text and commits once on Enter", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     const onCommitEdit = vi.fn();
     const onDraftChange = vi.fn();
@@ -334,7 +424,7 @@ describe("FlowCanvas", () => {
   });
 
   it("uses the shared session-local undo stack while editing a flow node", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     let draft = "旧步骤";
 
@@ -404,7 +494,7 @@ describe("FlowCanvas", () => {
   });
 
   it("commits final IME text after composition-time blur", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     const onCommitEdit = vi.fn();
 
@@ -448,7 +538,7 @@ describe("FlowCanvas", () => {
   });
 
   it("keeps Shift+Enter as a newline instead of committing", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     const onCommitEdit = vi.fn();
 
@@ -495,7 +585,7 @@ describe("FlowCanvas", () => {
   });
 
   it("renders a real decision outline and edits branch labels in place", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const branched = addFlowBranch(initial, created.selectedFlowNodeId).space;
     const onChangeEdgeLabel = vi.fn();
@@ -544,7 +634,7 @@ describe("FlowCanvas", () => {
   });
 
   it("waits for final IME text when a branch label blurs during composition", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const branched = addFlowBranch(initial, created.selectedFlowNodeId).space;
     const onChangeEdgeLabel = vi.fn();
@@ -595,7 +685,7 @@ describe("FlowCanvas", () => {
   });
 
   it("connects two different sources to one existing target through direct drag", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const firstBranch = addFlowBranch(
       initial,
@@ -779,7 +869,7 @@ describe("FlowCanvas", () => {
   });
 
   it("moves a node directly and discards an interrupted drag", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = {
       ...flowSpaceForNode(created.document, "path")!,
       viewport: { x: 0, y: 0, zoom: 1 },
@@ -856,7 +946,7 @@ describe("FlowCanvas", () => {
   });
 
   it("ignores wheel viewport changes while a node drag owns the pointer", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = {
       ...flowSpaceForNode(created.document, "path")!,
       viewport: { x: 0, y: 0, zoom: 1 },
@@ -930,7 +1020,7 @@ describe("FlowCanvas", () => {
   });
 
   it("adds palette shapes by click or drag without forcing a terminal", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = {
       ...flowSpaceForNode(created.document, "path")!,
       viewport: { x: 0, y: 0, zoom: 1 },
@@ -1014,7 +1104,7 @@ describe("FlowCanvas", () => {
   });
 
   it("selects a connector and drags its existing endpoint to another side", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
     const sourceId = created.selectedFlowNodeId;
@@ -1125,7 +1215,7 @@ describe("FlowCanvas", () => {
   });
 
   it("selects a connector and reopens either endpoint from the keyboard", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
     const onReconnectEdge = vi.fn();
@@ -1191,7 +1281,7 @@ describe("FlowCanvas", () => {
   });
 
   it("deletes a selected edge from the contextual control or Delete key", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
     const onDeleteEdge = vi.fn();
@@ -1241,7 +1331,7 @@ describe("FlowCanvas", () => {
   });
 
   it("edits connector appearance and drags its route without changing endpoints", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
     const onChangeEdgeRoute = vi.fn();
@@ -1366,7 +1456,7 @@ describe("FlowCanvas", () => {
   });
 
   it("keeps connector controls and hit areas usable when the canvas is zoomed out", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
     const space = {
@@ -1418,7 +1508,7 @@ describe("FlowCanvas", () => {
   });
 
   it("keeps a directional arrow on a selected edge and highlights its marker", async () => {
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const initial = flowSpaceForNode(created.document, "path")!;
     const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
     await act(async () => {
@@ -1472,7 +1562,7 @@ describe("FlowCanvas", () => {
 
   it("flushes the latest wheel viewport when the flow surface unmounts", async () => {
     vi.useFakeTimers();
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     const onViewportChange = vi.fn();
 
@@ -1514,7 +1604,7 @@ describe("FlowCanvas", () => {
 
   it("keeps a manual pan when an edit elsewhere relayouts the space", async () => {
     vi.useFakeTimers();
-    const created = createFlowSpace(createSeedDocument(), "path");
+    const created = createFlowWithStep(createSeedDocument(), "path");
     const space = flowSpaceForNode(created.document, "path")!;
     const onViewportChange = vi.fn();
     const renderCanvas = (current: typeof space) => (

@@ -5,7 +5,7 @@ import type {
   MindMapDocument,
 } from "../types/mindmap";
 import { nodePlaceholder } from "./canvasRender";
-import { sizeForSubspacePreview } from "./subspacePreview";
+import { subspacePreview } from "./subspacePreview";
 import {
   NODE_FONT_WEIGHT,
   NODE_LETTER_SPACING_RATIO,
@@ -225,7 +225,7 @@ export function computeLayout(
         if (portal) {
           portalSizes.set(
             frame.id,
-            sizeForSubspacePreview(portal, measureTextWidth),
+            sizeForNode(frame.depth + 1, subspacePreview(portal).text, null, measureTextWidth),
           );
         }
         if (

@@ -91,6 +91,20 @@ describe("subspace preview", () => {
     expect(preview.text).toBe("-二级节点1\n-二级节点2\n-二级节点3\n...");
     expect(preview.text).not.toContain("二级节点4");
     expect(preview.text).not.toContain("深层节点");
+    expect(preview.text).not.toContain("主题");
+  });
+
+  it("does not imply a connection between free-standing flow ideas", () => {
+    const flow = flowSpace(3);
+    flow.edges = [{ id: "a", from: "step-1", to: "step-2", label: "" }];
+    const preview = subspacePreview(flow);
+    expect(preview.text).not.toContain("步骤1→步骤3");
+    expect(preview.text).not.toContain("步骤3→步骤2");
+    expect(preview.text).toContain(" · ");
+    flow.edges = [];
+    expect(subspacePreview(flow).text).toBe("步骤1 · 步骤2 · 步骤3");
+    flow.nodes = {};
+    expect(subspacePreview(flow).text).toBe("暂无步骤");
   });
 
   it("shows all four flow steps when the fourth is the final step", () => {

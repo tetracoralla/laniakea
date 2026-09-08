@@ -18,6 +18,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const DEFAULT_GLOBAL_SHORTCUT: &str = "CommandOrControl+Shift+M";
 const APPLICATION_EXIT_REQUESTED_EVENT: &str = "origin://application-exit-requested";
+const WINDOW_CLOSE_REQUESTED_EVENT: &str = "tauri://close-requested";
 #[cfg(target_os = "macos")]
 const APPLICATION_QUIT_MENU_ID: &str = "origin-quit-after-save";
 
@@ -27,6 +28,26 @@ struct DesktopRuntimeState {
     application_exit_allowed: AtomicBool,
     application_exit_listener_ready: AtomicBool,
     application_exit_request_pending: AtomicBool,
+    window_close: Mutex<WindowCloseState>,
+}
+
+#[derive(Default)]
+struct WindowCloseState {
+    listener_ready: bool,
+    pending: bool,
+}
+
+impl WindowCloseState {
+    fn request(&mut self) {
+        if !self.listener_ready {
+            self.pending = true;
+        }
+    }
+
+    fn register_listener(&mut self) -> bool {
+        self.listener_ready = true;
+        std::mem::take(&mut self.pending)
+    }
 }
 
 impl Default for DesktopRuntimeState {
@@ -37,6 +58,7 @@ impl Default for DesktopRuntimeState {
             application_exit_allowed: AtomicBool::new(false),
             application_exit_listener_ready: AtomicBool::new(false),
             application_exit_request_pending: AtomicBool::new(false),
+            window_close: Mutex::new(WindowCloseState::default()),
         }
     }
 }
@@ -103,6 +125,24 @@ fn register_application_exit_listener(
     app: AppHandle,
     state: State<'_, DesktopRuntimeState>,
 ) -> Result<(), String> {
+    // The frontend registers onCloseRequested before this readiness command.
+    // Keep the WebView alive until then and replay an early close through that
+    // same handler, which waits for document recovery and the latest save.
+    let replay_close = state
+        .window_close
+        .lock()
+        .map_err(|_| "无法恢复关闭窗口请求".to_string())?
+        .register_listener();
+    if replay_close {
+        app.emit_to(
+            tauri::EventTarget::Window {
+                label: "main".into(),
+            },
+            WINDOW_CLOSE_REQUESTED_EVENT,
+            (),
+        )
+        .map_err(|_| "无法通知前端完成关闭前保存".to_string())?;
+    }
     state
         .application_exit_listener_ready
         .store(true, Ordering::SeqCst);
@@ -124,7 +164,25 @@ fn resolve_application_exit(app: AppHandle, state: State<'_, DesktopRuntimeState
     }
 }
 
-#[cfg(target_os = "macos")]
+#[tauri::command]
+fn finish_window_close(
+    app: AppHandle,
+    state: State<'_, DesktopRuntimeState>,
+) -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        #[cfg(desktop)]
+        if let Some(window) = app.get_webview_window("main") {
+            window.hide().map_err(|_| "无法关闭窗口".to_string())?;
+        }
+    } else {
+        // Windows/Linux have no macOS Dock reopen event. A successful close
+        // ends the process instead of leaving an invisible app behind.
+        resolve_application_exit(app, state, true);
+    }
+    Ok(())
+}
+
+#[cfg(desktop)]
 fn request_frontend_application_exit(app: &AppHandle) {
     let state = app.state::<DesktopRuntimeState>();
     if state.application_exit_allowed.load(Ordering::SeqCst) {
@@ -306,6 +364,22 @@ pub fn run() {
     );
     builder
         .manage(DesktopRuntimeState::default())
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let state = window.state::<DesktopRuntimeState>();
+                if !state.application_exit_allowed.load(Ordering::SeqCst) {
+                    // Tauri's own veto depends on a registered JS listener.
+                    // Own the veto from window creation, including cold start.
+                    api.prevent_close();
+                    if let Ok(mut close) = state.window_close.lock() {
+                        close.request();
+                    }
+                }
+            }
+        })
         .setup(|app| {
             #[cfg(desktop)]
             {
@@ -329,6 +403,13 @@ pub fn run() {
                     }
                 });
             }
+            // WebView2 constructs its environment while pumping native window
+            // messages. Expose the window only after native construction has
+            // completed; JavaScript readiness still uses the save handshake.
+            #[cfg(desktop)]
+            if let Some(window) = app.get_webview_window("main") {
+                window.show()?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -336,6 +417,7 @@ pub fn run() {
             register_application_exit_listener,
             reveal_document_in_file_manager,
             resolve_application_exit,
+            finish_window_close,
             set_global_shortcut,
             storage::activate_local_document,
             storage::clear_pending_recovery,
@@ -354,8 +436,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Laniakea")
         .run(|app, event| {
-            #[cfg(target_os = "macos")]
+            #[cfg(desktop)]
             match event {
+                #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen {
                     has_visible_windows: false,
                     ..
@@ -374,7 +457,9 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_global_shortcut, validate_reveal_target, DesktopRuntimeState};
+    use super::{
+        validate_global_shortcut, validate_reveal_target, DesktopRuntimeState, WindowCloseState,
+    };
     use std::sync::atomic::Ordering;
 
     #[test]
@@ -406,5 +491,17 @@ mod tests {
         assert!(!state
             .application_exit_request_pending
             .load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn early_window_closes_are_coalesced_and_replayed_once_after_registration() {
+        let mut close = WindowCloseState::default();
+        close.request();
+        close.request();
+        assert!(close.register_listener());
+        assert!(!close.register_listener());
+        // Once ready, Tauri delivers ordinary close events to the JS listener.
+        close.request();
+        assert!(!close.pending);
     }
 }

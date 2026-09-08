@@ -36,7 +36,7 @@ describe("Laniakea Agent Markdown file store", () => {
   });
 
   it("shares the desktop canonical-path lock naming contract", () => {
-    expect(updateLockPath("/tmp/方案.md")).toBe(
+    expect(updateLockPath("/tmp/方案.md", "darwin")).toBe(
       "/tmp/.laniakea-lock-1dd1bad2ed9e0344d0c85c386dd1e6ff",
     );
   });
@@ -52,11 +52,20 @@ describe("Laniakea Agent Markdown file store", () => {
       ),
     ).toBe(String.raw`\\server\share\方案.md`);
     expect(
-      updateLockPath(String.raw`\\?\C:\Users\Ada\方案.md`, "win32"),
+      normalizeUpdateLockKey(
+        updateLockPath(String.raw`\\?\C:\Users\Ada\方案.md`, "win32"),
+        "win32",
+      ),
     ).toBe(updateLockPath(String.raw`C:\Users\Ada\方案.md`, "win32"));
     expect(
       updateLockPath(String.raw`C:\Users\Ada\方案.md`, "win32"),
-    ).toContain(".laniakea-lock-863ef6696318b82b930aeb9cb8aa0120");
+    ).toBe(String.raw`C:\Users\Ada\.laniakea-lock-863ef6696318b82b930aeb9cb8aa0120`);
+    expect(
+      normalizeUpdateLockKey(
+        updateLockPath(String.raw`\\?\UNC\server\share\方案.md`, "win32"),
+        "win32",
+      ),
+    ).toBe(updateLockPath(String.raw`\\server\share\方案.md`, "win32"));
   });
 
   it("creates a new file but never overwrites an existing destination", async () => {
@@ -142,7 +151,8 @@ describe("Laniakea Agent Markdown file store", () => {
         expect(
           (fulfilled[0] as PromiseFulfilledResult<unknown>).value,
         ).toMatchObject({ wrote: true });
-        expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+        const failure = (rejected[0] as PromiseRejectedResult).reason;
+        expect(failure, `${failure.stack}\n${JSON.stringify(failure)}`).toMatchObject({
           code: "conflict",
         });
       }

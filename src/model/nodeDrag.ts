@@ -338,8 +338,8 @@ export function floatingPositionFromPointer(
   grabOffset: CanvasPoint,
 ): CanvasPoint {
   return {
-    x: Math.max(32, Math.round(point.x - grabOffset.x)),
-    y: Math.max(32, Math.round(point.y - grabOffset.y)),
+    x: Math.round(point.x - grabOffset.x),
+    y: Math.round(point.y - grabOffset.y),
   };
 }
 

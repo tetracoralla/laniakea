@@ -124,7 +124,7 @@ describe("recent document file actions", () => {
     expect(currentActions.textContent).not.toContain("从最近编辑中移除");
     await act(async () => {
       Array.from(currentActions.querySelectorAll("button"))
-        .find((button) => button.textContent?.includes("在访达中显示"))
+        .find((button) => button.textContent?.includes("在文件夹中显示"))
         ?.click();
     });
     expect(onRevealCurrent).toHaveBeenCalledWith(desktopPath);
@@ -234,7 +234,7 @@ describe("recent document file actions", () => {
     )!;
     await act(async () => externalMore.click());
 
-    expect(container.textContent).toContain("在访达中显示");
+    expect(container.textContent).toContain("在文件夹中显示");
     expect(container.textContent).toContain("复制路径");
     expect(container.textContent).toContain("从最近编辑中移除");
 
@@ -275,7 +275,7 @@ describe("recent document file actions", () => {
     const internalActions = container.querySelector<HTMLElement>(
       ".document-switcher__actions-menu",
     )!;
-    expect(internalActions.textContent).not.toContain("在访达中显示");
+    expect(internalActions.textContent).not.toContain("在文件夹中显示");
     expect(internalActions.textContent).not.toContain("复制路径");
     expect(internalActions.textContent).toContain("移动到…");
     const remove = Array.from(

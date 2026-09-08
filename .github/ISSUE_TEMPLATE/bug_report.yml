@@ -29,14 +29,16 @@ body:
       options:
         - 网页版
         - macOS 桌面版
-        - 两者都有
+        - Windows 桌面版
+        - Agent / Codex 插件
+        - 多个环境
     validations:
       required: true
   - type: input
     id: browser_or_system
     attributes:
-      label: 浏览器或系统版本
-      placeholder: 例如 Chrome 138 / macOS 15.5
+      label: 应用、浏览器或系统版本
+      placeholder: 例如 Laniakea 0.3.6 / Windows 11 / Chrome / macOS
   - type: textarea
     id: extra
     attributes:

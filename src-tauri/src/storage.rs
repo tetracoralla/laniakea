@@ -602,6 +602,15 @@ fn create_markdown_draft_with_activation_in(
     })
 }
 
+fn sync_existing_file(path: &Path) -> std::io::Result<()> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    // FlushFileBuffers requires a handle opened for writing on Windows.
+    #[cfg(windows)]
+    options.write(true);
+    options.open(path)?.sync_all()
+}
+
 fn sync_directory(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -876,6 +885,16 @@ fn acquire_update_lock_with_timing(
                 }
                 thread::sleep(retry);
             }
+            // Delete-pending Windows locks can temporarily deny CreateFile
+            // while another reader releases its handle. Keep the same bounded
+            // wait as normal contention, preserving persistent access errors.
+            #[cfg(windows)]
+            Err(error)
+                if matches!(error.raw_os_error(), Some(5 | 32))
+                    && Instant::now() < deadline =>
+            {
+                thread::sleep(retry);
+            }
             Err(error) => return Err(storage_error("无法创建本地文件写入锁", error)),
         }
     }
@@ -1043,8 +1062,7 @@ fn preserve_unreadable(app_data: &Path, target: &Path) -> Result<(), String> {
         .unwrap_or("unreadable.mindmap.json");
     let recovery = recovery_directory.join(format!("{source_name}.{}.recovery", unique_stamp()));
     fs::copy(target, &recovery).map_err(|error| storage_error("无法保留损坏的原文件", error))?;
-    File::open(&recovery)
-        .and_then(|file| file.sync_all())
+    sync_existing_file(&recovery)
         .map_err(|error| storage_error("无法同步恢复副本", error))?;
     sync_directory(&recovery_directory)
 }
@@ -1070,8 +1088,7 @@ fn backup_current(app_data: &Path, target: &Path) -> Result<(), String> {
         .map_err(|error| storage_error("无法创建备份目录", error))?;
     let backup = backup_directory.join(format!("origin-{}.mindmap.json", unique_stamp()));
     fs::write(&backup, current_json).map_err(|error| storage_error("无法创建自动备份", error))?;
-    File::open(&backup)
-        .and_then(|file| file.sync_all())
+    sync_existing_file(&backup)
         .map_err(|error| storage_error("无法同步自动备份", error))?;
     sync_directory(&backup_directory)
 }
@@ -1089,8 +1106,7 @@ fn backup_markdown_current(app_data: &Path, target: &Path, current: &str) -> Res
     let backup = backup_directory.join(format!("origin-{}.md", unique_stamp()));
     fs::write(&backup, current)
         .map_err(|error| storage_error("无法创建 Markdown 自动备份", error))?;
-    File::open(&backup)
-        .and_then(|file| file.sync_all())
+    sync_existing_file(&backup)
         .map_err(|error| storage_error("无法同步 Markdown 自动备份", error))?;
     sync_directory(&backup_directory)
 }
@@ -1668,8 +1684,7 @@ fn quarantine_pending_record(app_data: &Path, path: &Path) -> Result<(), String>
     let target = recovery_directory.join(format!("{name}.{}.recovery", unique_stamp()));
     fs::rename(path, &target)
         .map_err(|error| storage_error("无法保留损坏的临时恢复记录", error))?;
-    File::open(&target)
-        .and_then(|file| file.sync_all())
+    sync_existing_file(&target)
         .map_err(|error| storage_error("无法同步损坏恢复记录", error))?;
     prune_quarantined_recovery_files(&recovery_directory);
     sync_directory(&recovery_directory)
@@ -3616,9 +3631,15 @@ mod tests {
 
     #[test]
     fn desktop_and_mcp_use_the_same_lock_name() {
+        #[cfg(not(windows))]
         assert_eq!(
             update_lock_path(Path::new("/tmp/方案.md")),
             Path::new("/tmp/.laniakea-lock-1dd1bad2ed9e0344d0c85c386dd1e6ff")
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            update_lock_path(Path::new(r"C:\Users\Ada\方案.md")),
+            Path::new(r"C:\Users\Ada\.laniakea-lock-863ef6696318b82b930aeb9cb8aa0120")
         );
     }
 
