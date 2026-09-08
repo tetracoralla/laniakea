@@ -22,7 +22,12 @@ if (mode === "disk") {
     "com.openadam.origin", "active-document.json"), "utf8"));
   const markdown = await readFile(active.path, "utf8");
   for (const text of [rootText, finalText, flowText]) assert.ok(markdown.includes(text), text);
-  assert.match(markdown, /```laniakea/);
+  const block = markdown.match(/^(`{3,}|~{3,})laniakea\r?\n([\s\S]*?)\r?\n\1/m);
+  assert.ok(block, "Markdown must contain the persisted Space block");
+  const spaces = JSON.parse(block[2]);
+  assert.equal(spaces.version, 1);
+  assert.ok(spaces.portals.some(({ space }) => space.type === "flow"
+    && Object.values(space.nodes).some((node) => node.text === flowText)));
   console.log("PASS: native close persisted the last editor text and Flow to Markdown");
 } else {
   let browser;
