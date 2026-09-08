@@ -9,8 +9,10 @@ const files = process.argv.slice(2);
 assert.ok(files.length, "Provide the built installer paths");
 const version = JSON.parse(await readFile("package.json", "utf8")).version;
 const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-const sourceDirty = Boolean(execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim());
+const sourceStatus = execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim();
+const sourceDirty = Boolean(sourceStatus);
 if (process.env.GITHUB_ACTIONS === "true") {
+  if (sourceDirty) console.error(`Files changed during the build:\n${sourceStatus}`);
   assert.equal(sourceDirty, false, "Release assets require a clean, committed source tree");
 }
 for (const input of files) {

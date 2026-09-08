@@ -25,6 +25,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          cache-on-failure: true
       - run: npm ci
       - run: npm run check:regression
       - run: npm run desktop:build
@@ -63,6 +64,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          cache-on-failure: true
       - run: npm ci
       - run: npm run check:regression
       - run: npm run desktop:build -- --target universal-apple-darwin --bundles dmg
