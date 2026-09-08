@@ -22,9 +22,11 @@
 
 ### 桌面安装包
 
-桌面版通过 [Releases](https://github.com/tetracoralla/laniakea/releases) 提供网页下载，不需要应用商店。当前公开版本仍未附带安装包；候选包正在验证，现阶段可直接使用网页版。
+桌面版通过 [Releases](https://github.com/tetracoralla/laniakea/releases) 提供网页下载，不需要应用商店。可用安装包以该版本附件为准；没有适用安装包时可以直接使用网页版。
 
-正式提供后，macOS 用户下载对应芯片的 `.dmg`，打开后把 Laniakea 拖到“应用程序”；Windows 用户运行 `-setup.exe`，按安装向导完成安装。两者均包含应用运行所需内容，不需要安装 Node.js 或开发工具。以每个 Release 列出的支持平台、系统版本、签名状态和校验和为准。
+Windows 用户运行 `-setup.exe`，按安装向导完成安装，应用自带 WebView2 运行环境，不需要安装 Node.js 或开发工具。当前 Windows 包没有发行者签名，系统可能显示未知发布者提示；下载前请查看 Release 的验证范围与校验和。
+
+macOS 的交付方式是下载 `.dmg`，打开后拖到“应用程序”。公开 DMG 尚待 Developer ID 签名和公证凭据配置完成；本地临时签名包不会冒充已通过系统信任检查的公开安装包。
 
 ## 主要能力
 
@@ -84,9 +86,12 @@ codex plugin add laniakea@laniakea
 | 搜索节点 | `⌘F` |
 | 命令面板 | `⌘K` |
 
+Windows 使用 `Ctrl` 代替表中的 `⌘`，`⇧` 表示 `Shift`。应用内菜单会按当前平台显示快捷键。
+
 ## 开源与参与
 
 Laniakea 使用 [Apache License 2.0](LICENSE) 开源。开发、构建和验证方式见 [`CONTRIBUTING.md`](CONTRIBUTING.md)，网页部署说明见 [`docs/deployment.md`](docs/deployment.md)。
+项目由个人维护，后续以可靠性、兼容性和实际使用反馈驱动的改进为主。
 Flow 的端口、正交连线和交叉处理复用可独立打包的
 `@openadam/graph-view-compiler`；Laniakea 仍独立拥有文档格式、布局意图、交互与渲染。
 

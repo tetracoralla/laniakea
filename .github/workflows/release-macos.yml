@@ -93,6 +93,10 @@ jobs:
           fi
           printf 'APPLE_SIGNING_IDENTITY=%s\n' "$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
 
+      - name: Select the release signing identity
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; import path from "node:path"; fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "laniakea-signing.json"), JSON.stringify({ bundle: { macOS: { signingIdentity: process.env.APPLE_SIGNING_IDENTITY } } }));'
+
       - name: Build signed and notarized universal DMG
         id: build
         uses: tauri-apps/tauri-action@v1
@@ -103,7 +107,7 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          args: --target universal-apple-darwin --bundles dmg
+          args: --target universal-apple-darwin --bundles dmg --config ${{ runner.temp }}/laniakea-signing.json
 
       - name: Verify signed and notarized application
         run: |

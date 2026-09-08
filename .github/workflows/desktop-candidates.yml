@@ -14,6 +14,7 @@ concurrency:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -36,6 +37,12 @@ jobs:
           node scripts/writeArtifactChecksums.mjs $installers[0].FullName
           if ($LASTEXITCODE -ne 0) { throw 'Could not prepare installer checksums' }
       - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: laniakea-windows-runtime
+          path: ${{ runner.temp }}/laniakea-runtime/*
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
         with:
           name: laniakea-windows-x64-candidate
           path: src-tauri/target/release/bundle/nsis/*
@@ -43,6 +50,7 @@ jobs:
 
   macos:
     runs-on: macos-15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
