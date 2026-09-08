@@ -26,7 +26,7 @@
 4. 等待 `Deploy to GitHub Pages` 工作流完成。
 5. 在正式 HTTPS 地址执行下面的发布验收。
 
-当前公开版不附带桌面安装包。macOS 的交付路线是网页直下 DMG；不需要提交 Mac App Store。Developer ID 签名和公证用于网站下载后的系统信任，与应用商店审核是不同的流程。本地临时签名可验证构建与运行，但不能证明普通用户下载后能顺利首次打开。
+公开安装包以对应 Release 的附件为准。macOS 的交付路线是网页直下 DMG；不需要提交 Mac App Store。Developer ID 签名和公证用于网站下载后的系统信任，与应用商店审核是不同的流程。本地临时签名可验证构建与运行，但不能证明普通用户下载后能顺利首次打开。
 
 源码、网页版与 Codex Plugin 的版本可以先通过普通 GitHub Release 发布，不把缺少
 签名的本地 `.app` 或 DMG 作为 Release 资产。`.github/workflows/release-macos.yml`
@@ -35,9 +35,14 @@
 一个注定失败的签名任务，桌面二进制也仍然保持凭据、签名、公证和 Gatekeeper
 检查全部失败关闭。
 
+`.github/workflows/release-windows.yml` 同样接受现有 Release tag，重新检出对应源码，
+完成开发回归、安装态编辑与恢复检查后，上传 x64 安装程序、校验和与构建来源。
+首次发布可先创建草稿 Release，待附件和验证齐全再公开；已有附件不会被静默覆盖。
+Windows 安装程序当前未作发行者签名，Release 必须说明这一点及实际验证系统。
+
 ## 桌面候选包
 
-`0.3.6` 是本轮尚未发布的候选版本。`.github/workflows/desktop-candidates.yml`
+`.github/workflows/desktop-candidates.yml`
 在 PR 或人工触发时构建 macOS 通用 DMG 和 Windows x64 NSIS 安装程序，只存为
 工作流产物，不创建 Release、不替换公开资产。Windows 使用自动合并的
 `src-tauri/tauri.windows.conf.json`，按当前用户安装，包含 WebView2 离线安装器，
