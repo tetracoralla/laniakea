@@ -23,3 +23,8 @@ export async function resolveApplicationExit(
 ): Promise<void> {
   await invoke("resolve_application_exit", { saved });
 }
+
+/** Native host chooses macOS hide versus Windows/Linux process exit. */
+export async function finishWindowClose(): Promise<void> {
+  await invoke("finish_window_close");
+}

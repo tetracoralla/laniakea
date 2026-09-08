@@ -133,10 +133,11 @@ jobs:
           trap - EXIT
 
           printf 'DMG_PATH=%s\n' "$DMG_PATH" >> "$GITHUB_ENV"
+          node scripts/writeArtifactChecksums.mjs "$DMG_PATH"
 
       - name: Upload DMG to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
-          gh release upload "$RELEASE_TAG" "$DMG_PATH" --repo "$GITHUB_REPOSITORY"
+          gh release upload "$RELEASE_TAG" "$DMG_PATH" "$DMG_PATH.sha256" "$DMG_PATH.build.json" --repo "$GITHUB_REPOSITORY"

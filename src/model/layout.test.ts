@@ -9,6 +9,8 @@ import {
   sizeForNode,
   stabilizeMainBranchAnchor,
 } from "./layout";
+import { subspacePreview } from "./subspacePreview";
+import { createFlowWithStep } from "../test/flowFixture";
 import { createMapSpace, mapSpaceForNode } from "./spaces";
 
 function largeDocument(count: number): MindMapDocument {
@@ -103,6 +105,45 @@ describe("automatic layout", () => {
     expect(portal!.y + portal!.height).toBeLessThanOrEqual(
       layout.nodes["node-2"].y,
     );
+  });
+
+  it.each(["简短概要", "长中文正文需要和普通二级节点一样换行".repeat(8), "第一行\n第二行\n第三行"])(
+    "lays out summary text with the same geometry as an ordinary sibling: %s",
+    (text) => {
+      const source = largeDocument(3);
+      source.nodes.root.children = ["node-1"];
+      source.nodes["node-1"].children = ["node-2"];
+      source.nodes["node-2"].parentId = "node-1";
+      source.nodes["node-2"].text = text;
+      const created = createFlowWithStep(source, "node-1", text);
+      const layout = computeLayout(created.document);
+      const summary = layout.portals!["node-1"];
+      const sibling = layout.nodes["node-2"];
+      expect(summary.width).toBe(sibling.width);
+      expect(summary.height).toBe(sibling.height);
+      expect(summary.width).toBeLessThanOrEqual(560);
+      expect(summary.y).toBeGreaterThanOrEqual(sibling.y + sibling.height);
+      if (text === "简短概要") {
+        expect(summary.width).toBeLessThan(120);
+        expect(summary.height).toBe(44);
+      } else {
+        expect(summary.height).toBeGreaterThan(44);
+      }
+    },
+  );
+
+  it("wraps Map summary lines with the ordinary node text measurer", () => {
+    const created = createMapSpace(largeDocument(2), "node-1");
+    const space = mapSpaceForNode(created.document, "node-1")!;
+    const root = space.nodes[space.rootId];
+    root.children = ["long-child"];
+    space.nodes["long-child"] = { ...root, id: "long-child", parentId: root.id,
+      children: [], text: "需要完整显示的二级主题".repeat(12) + "\n补充条件" };
+    const measure = (text: string) => Array.from(text).length * 15;
+    const summary = computeLayout(created.document, undefined, measure).portals!["node-1"];
+    expect(summary).toMatchObject(sizeForNode(2, subspacePreview(space).text, null, measure));
+    expect(summary.width).toBe(560);
+    expect(summary.height).toBeGreaterThan(100);
   });
 
   it("hides the subspace preview with its collapsed anchor branch", () => {

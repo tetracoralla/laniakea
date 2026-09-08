@@ -6,7 +6,7 @@ export async function revealDocumentInFileManager(
   path: string,
 ): Promise<void> {
   if (!isDesktopRuntime()) {
-    throw new Error("请在桌面应用中使用“在访达中显示”");
+    throw new Error("请在桌面应用中使用“在文件夹中显示”");
   }
   await invoke("reveal_document_in_file_manager", {
     documentPath: path,

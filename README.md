@@ -20,9 +20,11 @@
 
 清除网站数据、使用无痕窗口或更换浏览器后，未另行备份的内容可能消失。首次成功打开后，网页版也可以离线重新使用。
 
-### macOS
+### 桌面安装包
 
-当前公开版本暂未提供面向普通用户的 macOS 安装包。完成 Apple Developer 签名和公证后，DMG 会发布到 [Releases](https://github.com/tetracoralla/laniakea/releases)；在此之前请使用网页版。
+桌面版通过 [Releases](https://github.com/tetracoralla/laniakea/releases) 提供网页下载，不需要应用商店。当前公开版本仍未附带安装包；候选包正在验证，现阶段可直接使用网页版。
+
+正式提供后，macOS 用户下载对应芯片的 `.dmg`，打开后把 Laniakea 拖到“应用程序”；Windows 用户运行 `-setup.exe`，按安装向导完成安装。两者均包含应用运行所需内容，不需要安装 Node.js 或开发工具。以每个 Release 列出的支持平台、系统版本、签名状态和校验和为准。
 
 ## 主要能力
 

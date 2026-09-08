@@ -26,7 +26,7 @@
 4. 等待 `Deploy to GitHub Pages` 工作流完成。
 5. 在正式 HTTPS 地址执行下面的发布验收。
 
-当前公开版不附带 macOS 安装包。本地构建仍采用临时签名；待 Apple Developer 签名和公证流程完成后，再提供可供普通用户安装的桌面包。
+当前公开版不附带桌面安装包。macOS 的交付路线是网页直下 DMG；不需要提交 Mac App Store。Developer ID 签名和公证用于网站下载后的系统信任，与应用商店审核是不同的流程。本地临时签名可验证构建与运行，但不能证明普通用户下载后能顺利首次打开。
 
 源码、网页版与 Codex Plugin 的版本可以先通过普通 GitHub Release 发布，不把缺少
 签名的本地 `.app` 或 DMG 作为 Release 资产。`.github/workflows/release-macos.yml`
@@ -34,6 +34,43 @@
 它才会为该同版本 Release 构建、验证并上传通用架构 DMG。这样源码发布不会制造
 一个注定失败的签名任务，桌面二进制也仍然保持凭据、签名、公证和 Gatekeeper
 检查全部失败关闭。
+
+## 桌面候选包
+
+`0.3.6` 是本轮尚未发布的候选版本。`.github/workflows/desktop-candidates.yml`
+在 PR 或人工触发时构建 macOS 通用 DMG 和 Windows x64 NSIS 安装程序，只存为
+工作流产物，不创建 Release、不替换公开资产。Windows 使用自动合并的
+`src-tauri/tauri.windows.conf.json`，按当前用户安装，包含 WebView2 离线安装器，
+无需用户另外找运行时。Windows ARM 原生包与 Linux 包尚未提供。
+
+本地 macOS 构建与包内容检查：
+
+```bash
+npm ci
+npm run check:regression
+npm run desktop:build -- --bundles dmg
+node scripts/checkMacDmg.mjs src-tauri/target/release/bundle/dmg/*.dmg
+node scripts/writeArtifactChecksums.mjs src-tauri/target/release/bundle/dmg/*.dmg
+```
+
+默认仅构建本机架构；通用包需安装两个 Rust macOS target 并增加
+`--target universal-apple-darwin`。产物附 `.sha256` 和 `.build.json`，后者记录
+版本、提交、源码是否有未提交改动和产物摘要。公开工作流拒绝脏源码；本地候选如实
+记录，不把摘要当作发行者签名或运行验证。
+
+Windows runner 执行相同开发回归，构建后在临时目录静默安装，核对版本与许可资源，
+验证窗口出现和关闭后进程退出。这不覆盖输入、保存、重开及升级保留数据；这些真实
+Windows 流程仍是首次公开 Windows 包前待取得的证据。工作流成功也不代表安装程序
+已具备发行者签名。发布时逐平台写明已验证的系统/架构与签名状态，附同批校验和，
+不覆盖已有版本资产。
+
+原生许可清单根据目标平台从锁定依赖图生成。macOS 包含两个架构的依赖并集，Windows
+包含 x64 MSVC 依赖；缺少原始许可文本、补充文件摘要或来源不符均使构建失败。
+可用 `LANIAKEA_NOTICE_TARGETS=x86_64-pc-windows-msvc npm run build:desktop-notices`
+单独检查 Windows 许可图，但该命令不证明 Windows 编译或运行成功。
+
+分发机制参考：[Tauri Windows 安装程序](https://v2.tauri.app/distribute/windows-installer/)、
+[Apple：安全打开 Mac App](https://support.apple.com/en-gb/102445)。
 
 ## 发布验收
 

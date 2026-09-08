@@ -20,6 +20,7 @@ import {
   loadActiveBrowserDocument,
   openBrowserDocument,
   requestPersistentBrowserStorage,
+  recoverBrowserDocument,
   saveBrowserDocument,
   saveBrowserDocumentViewState,
 } from "./browserDocumentStore";
@@ -410,7 +411,7 @@ export async function loadLocalDocument(): Promise<DocumentLoadResult> {
             let recovered;
             try {
               recovered = recovery.snapshot.documentPath
-                ? await saveBrowserDocument(
+                ? await recoverBrowserDocument(
                     recovery.snapshot.document,
                     recovery.snapshot.documentPath,
                     recovery.snapshot.sourceHash,
@@ -439,7 +440,7 @@ export async function loadLocalDocument(): Promise<DocumentLoadResult> {
           await activateBrowserDocument(selected.documentPath!);
           selected.notice = recoveredAsCopy > 0
             ? "已恢复关闭前的内容；发生冲突的修改已保留为独立副本。"
-            : "已恢复关闭页面前尚未写完的内容。";
+            : "已恢复关闭前的状态。";
           return selected;
         }
         if (firstError) throw firstError;
@@ -645,7 +646,7 @@ export async function saveLocalDocument(
       documentPath,
       expectedSourceHash,
     );
-    clearBrowserRecoverySnapshot(documentPath);
+    clearBrowserRecoverySnapshot(documentPath, serialized);
     requestPersistentBrowserStorage();
     return { sourceHash: saved.sourceHash, auxiliaryWarning: null };
   } catch (error) {
@@ -980,12 +981,43 @@ function readBrowserRecoverySnapshots(): Array<{
   return snapshots;
 }
 
-function clearBrowserRecoverySnapshot(documentPath: string | null): void {
+function clearBrowserRecoverySnapshot(documentPath: string | null, committedDocument: string): void {
   try {
-    localStorage.removeItem(browserRecoveryKey(documentPath));
+    const key = browserRecoveryKey(documentPath);
+    const stored = localStorage.getItem(key);
+    if (!stored) return;
+    // A beforeunload snapshot may contain edits made while this asynchronous
+    // save was in flight. Acknowledging the older write must not erase them.
+    const snapshot = parseBrowserRecoverySnapshot(stored, false);
+    if (sameJsonValue(snapshot.document, parseMindMapDocument(committedDocument))) {
+      localStorage.removeItem(key);
+    }
   } catch {
     // Recovery cleanup is best-effort and must not turn a saved document red.
   }
+}
+
+// JSON object member order is not document state; array order (nodes, edges,
+// roots) is. Iteration also avoids recursion on deeply nested accepted input.
+function sameJsonValue(left: unknown, right: unknown): boolean {
+  const pending: [unknown, unknown][] = [[left, right]];
+  while (pending.length > 0) {
+    const [a, b] = pending.pop()!;
+    if (a === b) continue;
+    if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+    if (Array.isArray(a) || Array.isArray(b)) {
+      if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+      a.forEach((value, index) => pending.push([value, b[index]]));
+      continue;
+    }
+    const keys = Object.keys(a);
+    if (keys.length !== Object.keys(b).length) return false;
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+      pending.push([(a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]]);
+    }
+  }
+  return true;
 }
 
 function clearBrowserRecoveryRecord(storageKey: string): void {

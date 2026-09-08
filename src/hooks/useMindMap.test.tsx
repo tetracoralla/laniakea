@@ -42,7 +42,7 @@ const recovery = vi.hoisted(() => ({
 
 const lifecycle = vi.hoisted(() => ({
   exitHandler: null as null | (() => void | Promise<void>),
-  hide: vi.fn(),
+  finishWindowClose: vi.fn(),
   listenForApplicationExit: vi.fn(
     async (handler: () => void | Promise<void>) => {
       lifecycle.exitHandler = handler;
@@ -85,13 +85,13 @@ vi.mock("../persistence/desktopRecovery", () => ({
 }));
 
 vi.mock("../desktop/applicationLifecycle", () => ({
+  finishWindowClose: lifecycle.finishWindowClose,
   listenForApplicationExit: lifecycle.listenForApplicationExit,
   resolveApplicationExit: lifecycle.resolveApplicationExit,
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
-    hide: lifecycle.hide,
     onCloseRequested: lifecycle.onCloseRequested,
   }),
 }));
@@ -142,7 +142,7 @@ describe("mind map save presentation", () => {
     recovery.draft.mockClear();
     lifecycle.closeHandler = null;
     lifecycle.exitHandler = null;
-    lifecycle.hide.mockReset();
+    lifecycle.finishWindowClose.mockReset();
     lifecycle.listenForApplicationExit.mockClear();
     lifecycle.onCloseRequested.mockClear();
     lifecycle.resolveApplicationExit.mockClear();
@@ -825,14 +825,14 @@ describe("mind map save presentation", () => {
     });
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(lifecycle.hide).not.toHaveBeenCalled();
+    expect(lifecycle.finishWindowClose).not.toHaveBeenCalled();
     expect(
       container.querySelector("[data-testid='lifecycle-blocked']")
         ?.textContent,
     ).toBe("1");
   });
 
-  it("hides the window only after its close-triggered save completes", async () => {
+  it("finishes the platform window close only after its save completes", async () => {
     let completeSave!: (value: { sourceHash: string }) => void;
     const pendingSave = new Promise<{ sourceHash: string }>((resolve) => {
       completeSave = resolve;
@@ -860,14 +860,45 @@ describe("mind map save presentation", () => {
     });
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
-    expect(lifecycle.hide).not.toHaveBeenCalled();
+    expect(lifecycle.finishWindowClose).not.toHaveBeenCalled();
 
     await act(async () => {
       completeSave({ sourceHash: "hash-close" });
       await closeHandling;
     });
 
-    expect(lifecycle.hide).toHaveBeenCalledTimes(1);
+    expect(lifecycle.finishWindowClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for startup recovery before saving a replayed window close", async () => {
+    persistence.desktopRuntime = true;
+    const startupResult = await persistence.loadLocalDocument();
+    const startup = deferred<typeof startupResult>();
+    const saving = deferred<{ sourceHash: string }>();
+    persistence.loadLocalDocument.mockReturnValueOnce(startup.promise);
+    persistence.saveLocalDocument.mockReturnValueOnce(saving.promise);
+    function Harness() {
+      const mindMap = useMindMap();
+      return <output>{mindMap.snapshot.document.title}</output>;
+    }
+    await act(async () => root.render(<Harness />));
+    expect(lifecycle.closeHandler).not.toBeNull();
+    let closing!: Promise<void>;
+    await act(async () => {
+      closing = Promise.resolve(lifecycle.closeHandler!({ preventDefault: vi.fn() }));
+    });
+    expect(persistence.saveLocalDocument).not.toHaveBeenCalled();
+    expect(lifecycle.finishWindowClose).not.toHaveBeenCalled();
+    await act(async () => { startup.resolve(startupResult); });
+    expect(persistence.saveLocalDocument).toHaveBeenCalledTimes(1);
+    expect(persistence.saveLocalDocument.mock.calls[0][0]).toEqual(startupResult.document);
+    expect(persistence.saveLocalDocument.mock.calls[0][1]).toBe(startupResult.documentPath);
+    expect(lifecycle.finishWindowClose).not.toHaveBeenCalled();
+    await act(async () => {
+      saving.resolve({ sourceHash: "hash-after-recovery" });
+      await closing;
+    });
+    expect(lifecycle.finishWindowClose).toHaveBeenCalledTimes(1);
   });
 
   it("keeps an unbound rich Markdown source in recent documents and defers viewport-only autosave", async () => {

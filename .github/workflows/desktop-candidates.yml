@@ -1,0 +1,69 @@
+name: Build desktop candidates
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-candidates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run check:regression
+      - run: npm run desktop:build
+      - name: Check installed Windows application
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one Windows installer' }
+          ./script/check_windows_install.ps1 -Installer $installers[0].FullName
+          node scripts/writeArtifactChecksums.mjs $installers[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Could not prepare installer checksums' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laniakea-windows-x64-candidate
+          path: src-tauri/target/release/bundle/nsis/*
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm run check:regression
+      - run: npm run desktop:build -- --target universal-apple-darwin --bundles dmg
+      - name: Check candidate DMG contents
+        run: |
+          node scripts/checkMacDmg.mjs src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg universal
+          node scripts/writeArtifactChecksums.mjs src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: laniakea-macos-universal-candidate-adhoc
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*
+          if-no-files-found: error
