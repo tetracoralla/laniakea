@@ -272,7 +272,22 @@ async function withUpdateLock<T>(
         throw error;
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const failure = error as NodeJS.ErrnoException;
+      // Windows can keep a removed lock pending deletion until a concurrent
+      // reader closes its handle. CreateFile then reports access denied.
+      // Retry only lock acquisition, never an error while initializing it;
+      // a persistent permission failure still reports its original error.
+      if (
+        process.platform === "win32" &&
+        (failure.code === "EPERM" || failure.code === "EACCES") &&
+        failure.syscall === "open" &&
+        failure.path === lockPath &&
+        Date.now() < deadline
+      ) {
+        await delay(LOCK_RETRY_MS);
+        continue;
+      }
+      if (failure.code !== "EEXIST") throw error;
       const stale = await lockCanBeRemoved(lockPath);
       let removed = stale === "gone";
       if (stale && stale !== "gone") {

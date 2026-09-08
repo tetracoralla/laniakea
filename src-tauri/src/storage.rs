@@ -876,6 +876,16 @@ fn acquire_update_lock_with_timing(
                 }
                 thread::sleep(retry);
             }
+            // Delete-pending Windows locks can temporarily deny CreateFile
+            // while another reader releases its handle. Keep the same bounded
+            // wait as normal contention, preserving persistent access errors.
+            #[cfg(windows)]
+            Err(error)
+                if matches!(error.raw_os_error(), Some(5 | 32))
+                    && Instant::now() < deadline =>
+            {
+                thread::sleep(retry);
+            }
             Err(error) => return Err(storage_error("无法创建本地文件写入锁", error)),
         }
     }

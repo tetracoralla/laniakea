@@ -151,7 +151,8 @@ describe("Laniakea Agent Markdown file store", () => {
         expect(
           (fulfilled[0] as PromiseFulfilledResult<unknown>).value,
         ).toMatchObject({ wrote: true });
-        expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+        const failure = (rejected[0] as PromiseRejectedResult).reason;
+        expect(failure, `${failure.stack}\n${JSON.stringify(failure)}`).toMatchObject({
           code: "conflict",
         });
       }
