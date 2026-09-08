@@ -7,10 +7,10 @@ const IS_DESKTOP_RUNTIME = self.location.protocol === 'tauri:'
 
 async function cacheAppShell() {
   const cache = await caches.open(CACHE_NAME)
-  const indexResponse = await fetch(INDEX_URL)
+  const indexResponse = await fetch(INDEX_URL, { cache: 'reload' })
   const indexForCache = indexResponse.clone()
   const html = await indexResponse.text()
-  const assetManifestResponse = await fetch(ASSET_MANIFEST_URL)
+  const assetManifestResponse = await fetch(ASSET_MANIFEST_URL, { cache: 'reload' })
   if (!assetManifestResponse.ok) {
     throw new Error('Laniakea asset manifest is unavailable')
   }
@@ -35,9 +35,9 @@ async function cacheAppShell() {
     ...assetPaths,
   ]
 
+  await cache.addAll([...new Set(staticUrls)])
   await cache.put(SCOPE_URL, indexForCache.clone())
   await cache.put(INDEX_URL, indexForCache)
-  await cache.addAll([...new Set(staticUrls)])
 }
 
 self.addEventListener('install', (event) => {
@@ -96,10 +96,11 @@ self.addEventListener('fetch', (event) => {
       fetch(event.request)
         .then((response) => {
           if (response.ok && response.type !== 'opaque') {
+            const responseForCache = response.clone()
             event.waitUntil(
               caches
                 .open(CACHE_NAME)
-                .then((cache) => cache.put(SCOPE_URL, response.clone())),
+                .then((cache) => cache.put(SCOPE_URL, responseForCache)),
             )
           }
           return response
@@ -114,10 +115,11 @@ self.addEventListener('fetch', (event) => {
       if (cached) return cached
       return fetch(event.request).then((response) => {
         if (response.ok && response.type !== 'opaque') {
+          const responseForCache = response.clone()
           event.waitUntil(
             caches
               .open(CACHE_NAME)
-              .then((cache) => cache.put(event.request, response.clone())),
+              .then((cache) => cache.put(event.request, responseForCache)),
           )
         }
         return response

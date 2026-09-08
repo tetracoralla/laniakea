@@ -22,6 +22,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npx playwright-core install --with-deps chromium --only-shell
+      - run: node scripts/checkOfflineUpgrade.mjs
 
   check:
     runs-on: macos-15
