@@ -9,7 +9,7 @@ import { chromium } from "playwright-core";
 assert.equal(process.platform, "win32");
 assert.equal(process.env.GITHUB_ACTIONS, "true");
 const mode = process.argv[2];
-assert.ok(["edit", "reopen", "reinstall", "disk"].includes(mode));
+assert.ok(["edit", "reopen", "reinstall", "disk", "inspect"].includes(mode));
 const rootText = "Windows 安装态验证";
 const childText = "交付检查";
 const finalText = "关闭时仍在编辑的最新内容";
@@ -44,14 +44,21 @@ if (mode === "disk") {
       await delay(250);
     }
     browser = await chromium.connectOverCDP(endpoint, { timeout: 15_000 });
-    page = browser.contexts().flatMap((context) => context.pages())
-      .find((candidate) => candidate.url().includes("tauri.localhost"));
+    const pageDeadline = Date.now() + 15_000;
+    do {
+      page = browser.contexts().flatMap((context) => context.pages())
+        .find((candidate) => candidate.url().includes("tauri.localhost"));
+      if (page) break;
+      await delay(100);
+    } while (Date.now() < pageDeadline);
     assert.ok(page, "The installed Tauri window was not found");
     page.setDefaultTimeout(15_000);
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.getByRole("application", { name: "思维导图画布" }).waitFor();
-
-    if (mode === "edit") {
+    if (mode === "inspect") {
+      console.log("Installed window after startup-close timeout:", (await page.locator("body").innerText()).slice(0,5000));
+      await page.screenshot({ path: path.join(output, "windows-startup-close-failure.png") });
+    } else if (mode === "edit") {
+      await page.getByRole("application", { name: "思维导图画布" }).waitFor();
       await page.getByRole("button", { name: "新建", exact: true }).click();
       const editor = page.getByRole("textbox", { name: "编辑节点", exact: true });
       if (!(await editor.isVisible())) await page.locator(".mind-node__content").first().dblclick();
@@ -79,6 +86,7 @@ if (mode === "disk") {
       // Leave this textarea uncommitted. PowerShell now sends native WM_CLOSE.
       console.log("PASS: installed editor created a mind map and a Flow; last edit awaits native close");
     } else {
+      await page.getByRole("application", { name: "思维导图画布" }).waitFor();
       await page.getByRole("button", { name: rootText, exact: true }).waitFor();
       await page.getByRole("button", { name: finalText, exact: true }).waitFor();
       await page.locator(".subspace-portal__content").filter({ hasText: flowText }).dblclick();

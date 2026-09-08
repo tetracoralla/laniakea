@@ -15,6 +15,13 @@ $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
 if ((Get-Item $binary).VersionInfo.ProductVersion -notlike "$version*") {
   throw 'Installed application version differs from the source version'
 }
+# Release builds must be a GUI app, without a second console window.
+$pe = [IO.File]::ReadAllBytes($binary)
+$peHeader = [BitConverter]::ToInt32($pe, 0x3c)
+$subsystem = [BitConverter]::ToUInt16($pe, $peHeader + 24 + 68)
+if ($subsystem -ne 2) { throw 'Windows release must use the GUI subsystem' }
+$previousStartupArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
 $appProcess = Start-Process -FilePath $binary -PassThru
 try {
   $deadline = (Get-Date).AddSeconds(30)
@@ -27,10 +34,14 @@ try {
   # Close as soon as a window exists, including before frontend readiness.
   # The native guard must retain the WebView until recovery/save can complete.
   if (!$appProcess.CloseMainWindow()) { throw 'Could not request window close' }
-  if (!$appProcess.WaitForExit(30000)) { throw 'Closing the window left a background process' }
+  if (!$appProcess.WaitForExit(30000)) {
+    node scripts/checkWindowsRuntime.mjs inspect
+    throw 'Closing the window left a background process'
+  }
   if ($appProcess.ExitCode -ne 0) { throw 'Installed app exited unsuccessfully' }
   Write-Output 'PASS: installed resources and immediate native close during startup'
 } finally {
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previousStartupArguments
   if (!$appProcess.HasExited) { Stop-Process -Id $appProcess.Id }
 }
 
