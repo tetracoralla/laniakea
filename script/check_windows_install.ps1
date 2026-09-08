@@ -9,7 +9,7 @@ if ($env:GITHUB_ACTIONS -ne 'true') {
 # https://learn.microsoft.com/microsoft-edge/webview2/concepts/security
 $debugPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
 New-Item -Path $debugPolicy -Force | Out-Null
-$oldDebugArguments = Get-ItemPropertyValue -Path $debugPolicy -Name 'laniakea.exe' -ErrorAction SilentlyContinue
+$oldDebugArguments = (Get-Item -Path $debugPolicy).GetValue('laniakea.exe')
 try {
   New-ItemProperty -Path $debugPolicy -Name 'laniakea.exe' -Value '--remote-debugging-port=9222' -PropertyType String -Force | Out-Null
   $installDirectory = Join-Path $env:RUNNER_TEMP 'Laniakea installation'

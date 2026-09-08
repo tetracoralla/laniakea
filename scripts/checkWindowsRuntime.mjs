@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright-core";
 
 // Connect to the installed application's WebView2, not a browser surrogate.
-// Only the disposable CI process enables CDP; no test hook ships in the app.
+// Only the disposable CI runner enables CDP; no test hook ships in the app.
 assert.equal(process.platform, "win32");
 assert.equal(process.env.GITHUB_ACTIONS, "true");
 const mode = process.argv[2];
