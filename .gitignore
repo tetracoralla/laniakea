@@ -12,3 +12,8 @@ src-tauri/gen/schemas/
 .v2c/
 .video_agent/
 .zcode/
+
+# Private working records; not public project documentation
+.task-notes/
+docs/internal/
+docs/reviews/
