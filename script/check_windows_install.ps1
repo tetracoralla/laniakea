@@ -117,8 +117,8 @@ try {
   }
 
   function Test-InstalledEditor([string]$Mode) {
-    # WebView2 supports process-local CDP for testing. The shipped app does not
-    # enable a debugging endpoint, and this environment ends with the CI runner.
+    # The runner's temporary per-app WebView2 policy enables CDP for testing.
+    # The shipped app does not enable a debugging endpoint.
     $previousArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
     $editorProcess = Start-Process -FilePath $binary -PassThru
