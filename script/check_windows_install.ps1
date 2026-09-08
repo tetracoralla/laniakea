@@ -3,6 +3,55 @@ $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') {
   throw 'Run this install smoke only in a disposable Windows CI runner.'
 }
+# Process.MainWindowHandle can select Tao's zero-size, technically visible
+# message-dispatch window before the real UI appears. WM_CLOSE to that helper
+# destroys IPC instead of exercising a user's close action. Select the actual
+# non-tool window with a caption and positive bounds; do not wait for JS.
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class LaniakeaNativeWindow {
+  private delegate bool EnumWindow(IntPtr window, IntPtr state);
+  [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindow callback, IntPtr state);
+  [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+  [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
+  [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] private static extern int GetWindowLong(IntPtr window, int index);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder title, int count);
+  [DllImport("user32.dll", SetLastError = true)] public static extern bool PostMessageW(IntPtr window, uint message, IntPtr wparam, IntPtr lparam);
+  public static IntPtr Find(int process) {
+    IntPtr result = IntPtr.Zero;
+    EnumWindows((window, state) => {
+      GetWindowThreadProcessId(window, out uint owner);
+      if (owner != process || !IsWindowVisible(window) || (GetWindowLong(window, -20) & 0x80) != 0) return true;
+      var title = new StringBuilder(256);
+      GetWindowText(window, title, title.Capacity);
+      if (title.ToString() != "Laniakea" || !GetWindowRect(window, out Rect rect) || rect.Right <= rect.Left || rect.Bottom <= rect.Top) return true;
+      result = window;
+      return false;
+    }, IntPtr.Zero);
+    return result;
+  }
+}
+'@
+
+function Request-VisibleWindowClose($Process) {
+  $deadline = (Get-Date).AddSeconds(30)
+  do {
+    $Process.Refresh()
+    if ($Process.HasExited) { throw 'Installed app exited before its window appeared' }
+    $windowHandle = [LaniakeaNativeWindow]::Find($Process.Id)
+    if ($windowHandle -ne [IntPtr]::Zero) { break }
+    Start-Sleep -Milliseconds 50
+  } until ((Get-Date) -gt $deadline)
+  if ($windowHandle -eq [IntPtr]::Zero) { throw 'Installed app has no visible application window' }
+  Write-Output "Native close target: Laniakea, process $($Process.Id), visible window $windowHandle"
+  if (![LaniakeaNativeWindow]::PostMessageW($windowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
+    throw 'Could not request application window close'
+  }
+}
 # Hosted runners are elevated. WebView2 150+ ignores environment/HKCU
 # debugging overrides for elevated hosts. Scope the documented HKLM override
 # to this executable on the disposable runner and restore it on every exit.
@@ -35,16 +84,9 @@ try {
   New-Item -ItemType Directory -Force -Path $runtimeOutput | Out-Null
   $appProcess = Start-Process -FilePath $binary -PassThru -RedirectStandardError (Join-Path $runtimeOutput 'windows-startup-stderr.log')
   try {
-    $deadline = (Get-Date).AddSeconds(30)
-    do {
-      Start-Sleep -Milliseconds 250
-      $appProcess.Refresh()
-      if ($appProcess.HasExited) { throw 'Installed app exited during startup' }
-    } until ($appProcess.MainWindowHandle -ne 0 -or (Get-Date) -gt $deadline)
-    if ($appProcess.MainWindowHandle -eq 0) { throw 'Installed app has no window' }
     # Close as soon as a window exists, including before frontend readiness.
     # The native guard must retain the WebView until recovery/save can complete.
-    if (!$appProcess.CloseMainWindow()) { throw 'Could not request window close' }
+    Request-VisibleWindowClose $appProcess
     if (!$appProcess.WaitForExit(30000)) {
       node scripts/checkWindowsRuntime.mjs inspect
       throw 'Closing the window left a background process'
@@ -83,8 +125,7 @@ try {
     try {
       node scripts/checkWindowsRuntime.mjs $Mode
       if ($LASTEXITCODE -ne 0) { throw "Installed editor check failed: $Mode" }
-      $editorProcess.Refresh()
-      if (!$editorProcess.CloseMainWindow()) { throw 'Could not close the installed editor' }
+      Request-VisibleWindowClose $editorProcess
       if (!$editorProcess.WaitForExit(30000)) { throw 'Editor close left a background process' }
       if ($editorProcess.ExitCode -ne 0) { throw 'Editor exited unsuccessfully' }
       node scripts/checkWindowsRuntime.mjs disk
@@ -108,4 +149,18 @@ try {
   } else {
     Set-ItemProperty -Path $debugPolicy -Name 'laniakea.exe' -Value $oldDebugArguments
   }
+}
+
+# Repeat early native close with the CI debugging override already restored.
+$normalProcess = Start-Process -FilePath $binary -PassThru
+try {
+  Request-VisibleWindowClose $normalProcess
+  if (!$normalProcess.WaitForExit(30000) -or $normalProcess.ExitCode -ne 0) {
+    throw 'Normal startup close did not exit successfully'
+  }
+  node scripts/checkWindowsRuntime.mjs disk
+  if ($LASTEXITCODE -ne 0) { throw 'Normal startup close did not preserve saved content' }
+  Write-Output 'PASS: immediate native close without the CI debugging override'
+} finally {
+  if (!$normalProcess.HasExited) { Stop-Process -Id $normalProcess.Id }
 }
