@@ -8,7 +8,7 @@ import {
   stat,
   unlink,
 } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, join, normalize } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, normalize, posix, win32 } from "node:path";
 import {
   applyMindMapOperations,
   createAgentMindMap,
@@ -178,7 +178,8 @@ export function updateLockPath(
 ): string {
   const key = normalizeUpdateLockKey(filePath, platform);
   const digest = createHash("sha256").update(key).digest("hex").slice(0, 32);
-  return join(dirname(filePath), `.laniakea-lock-${digest}`);
+  const paths = platform === "win32" ? win32 : posix;
+  return paths.join(paths.dirname(filePath), `.laniakea-lock-${digest}`);
 }
 
 function delay(milliseconds: number) {

@@ -1,0 +1,2 @@
+# Keep script execution, raw-style checks and license hashes identical on each OS.
+* text=auto eol=lf
