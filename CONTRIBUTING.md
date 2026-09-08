@@ -12,6 +12,10 @@
 
 修改 MCP、Codex Plugin 或 Agent 内容模型时，可以先运行 `npm run check:mcp` 做针对性检查。涉及桌面文件、窗口、快捷键或打包行为时，还应运行 `npm run check:desktop-runtime`。
 
+修改网页离线缓存或构建分包时，运行 `node scripts/checkOfflineUpgrade.mjs`。首次运行前用
+`npx playwright-core install chromium --only-shell` 准备隔离浏览器；CI 会运行同一检查，
+覆盖已有浏览器升级、离线重开与新旧标签页首次加载流程页面。
+
 ## 变更原则
 
 - 保持核心体验快速、轻量，避免把设置、诊断或实现细节放到主要画布上。
