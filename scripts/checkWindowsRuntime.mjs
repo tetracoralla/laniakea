@@ -57,6 +57,26 @@ if (mode === "disk") {
     if (mode === "inspect") {
       console.log("Installed window after startup-close timeout:", (await page.locator("body").innerText()).slice(0,5000));
       await page.screenshot({ path: path.join(output, "windows-startup-close-failure.png") });
+      console.log("Native bridge diagnostics:", await page.evaluate(async () => {
+        const bridge = window.__TAURI_INTERNALS__;
+        const result = { url: location.href, bridge: Boolean(bridge), metadata: bridge?.metadata };
+        if (!bridge) return result;
+        const bounded = (operation) => Promise.race([
+          operation.catch((error) => ({ error: String(error) })),
+          new Promise((resolve) => setTimeout(() => resolve({ error: "IPC timed out" }), 5000)),
+        ]);
+        result.status = await bounded(bridge.invoke("desktop_runtime_status"));
+        result.events = await bounded((async () => {
+          const event = "laniakea://delivery-diagnostic";
+          const eventId = await bridge.invoke("plugin:event|listen", {
+            event, target: { kind: "Window", label: "main" },
+            handler: bridge.transformCallback(() => {}),
+          });
+          await bridge.invoke("plugin:event|unlisten", { event, eventId });
+          return "Event registration available";
+        })());
+        return result;
+      }));
     } else if (mode === "edit") {
       await page.getByRole("application", { name: "思维导图画布" }).waitFor();
       await page.getByRole("button", { name: "新建", exact: true }).click();
