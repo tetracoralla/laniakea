@@ -14,7 +14,7 @@ export const provisionalDocumentTitle = "未命名思维";
 
 export function isProvisionalDocumentTitle(title: string): boolean {
   const normalized = title.trim();
-  return normalized.length === 0 || normalized === provisionalDocumentTitle;
+  return normalized.length === 0 || normalized === provisionalDocumentTitle || normalized === "Untitled mind map";
 }
 
 export function resolveProvisionalDocumentTitle(
@@ -29,7 +29,7 @@ export function resolveProvisionalDocumentTitle(
     ? normalizedHint
     : !isProvisionalDocumentTitle(rootText)
       ? rootText
-      : provisionalDocumentTitle;
+      : document.title.trim() || provisionalDocumentTitle;
 
   return title === document.title ? document : { ...document, title };
 }

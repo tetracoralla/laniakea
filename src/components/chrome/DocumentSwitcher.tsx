@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t, getLocale } from "../../i18n/locale";
 import {
   useCallback,
   useEffect,
@@ -42,13 +44,13 @@ function formatRecentTime(value: string): string {
   if (Number.isNaN(date.getTime())) return "";
   const today = new Date();
   if (date.toDateString() === today.toDateString()) {
-    return new Intl.DateTimeFormat("zh-CN", {
+    return new Intl.DateTimeFormat(getLocale() === "zh" ? "zh-CN" : "en", {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
     }).format(date);
   }
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(getLocale() === "zh" ? "zh-CN" : "en", {
     month: "numeric",
     day: "numeric",
   }).format(date);
@@ -71,6 +73,7 @@ export function DocumentSwitcher({
   onDeleteDocument,
   showFileActions = true,
 }: DocumentSwitcherProps) {
+  useLocale();
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -360,7 +363,7 @@ export function DocumentSwitcher({
     ? actionsIsCurrent
       ? {
           path: actionsPath,
-          title: currentTitle ?? "当前文档",
+          title: currentTitle ?? t("当前文档"),
           lastOpenedAt: "",
         }
       : visibleDocuments.find((document) => document.path === actionsPath)
@@ -371,7 +374,7 @@ export function DocumentSwitcher({
       <button
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label="切换思维导图"
+        aria-label={t("切换思维导图")}
         className="document-switcher__trigger"
         onClick={(event) => {
           // WebKit does not focus buttons on pointer activation. Keep menu
@@ -409,9 +412,9 @@ export function DocumentSwitcher({
         >
           {currentTitle !== undefined && (
             <>
-              <span className="document-switcher__heading">正在编辑</span>
+              <span className="document-switcher__heading">{t("正在编辑")}</span>
               <div
-                aria-label={`${currentTitle}，${currentDocument.exactDescription}`}
+                aria-label={`${currentTitle}${getLocale() === "zh" ? "，" : ", "}${currentDocument.exactDescription}`}
                 className="document-switcher__current-row"
                 onContextMenu={(event) => {
                   if (!currentDocument.pathRole || !currentDocument.associatedPath) {
@@ -434,7 +437,7 @@ export function DocumentSwitcher({
                     <button
                       aria-expanded={actionsIsCurrent}
                       aria-haspopup="menu"
-                      aria-label={`当前文件操作：${currentTitle}`}
+                      aria-label={t("当前文件操作：{0}", currentTitle)}
                       className="document-switcher__recent-more"
                       data-document-switcher-item="true"
                       onClick={() => {
@@ -468,15 +471,15 @@ export function DocumentSwitcher({
           <span className="document-switcher__heading">
             {currentTitle === undefined
               ? showFileActions
-                ? "最近编辑"
-                : "文档库"
+                ? t("最近编辑")
+                : t("文档库")
               : showFileActions
-                ? "其他最近文档"
-                : "其他文档"}
+                ? t("其他最近文档")
+                : t("其他文档")}
           </span>
           {visibleDocuments.length === 0 ? (
             <span className="document-switcher__empty">
-              {showFileActions ? "暂无其他最近文档" : "暂无其他文档"}
+              {showFileActions ? t("暂无其他最近文档") : t("暂无其他文档")}
             </span>
           ) : (
             <div
@@ -523,7 +526,7 @@ export function DocumentSwitcher({
                     <button
                       aria-expanded={actionsOpen}
                       aria-haspopup="menu"
-                      aria-label={`更多操作：${document.title}`}
+                      aria-label={t("更多操作：{0}", document.title)}
                       className="document-switcher__recent-more"
                       data-document-switcher-item="true"
                       onClick={() => {
@@ -549,7 +552,7 @@ export function DocumentSwitcher({
                   )}
                   {!showFileActions && onDeleteDocument && (
                     <button
-                      aria-label={`删除：${document.title}`}
+                      aria-label={t("删除：{0}", document.title)}
                       className="document-switcher__recent-more"
                       data-document-switcher-item="true"
                       onClick={() =>
@@ -568,7 +571,7 @@ export function DocumentSwitcher({
           )}
           {showFileActions && actionsDocument && (
             <div
-              aria-label={`${actionsDocument.title}的文件操作`}
+              aria-label={t("{0}的文件操作", actionsDocument.title)}
               className="document-switcher__actions-menu"
               onKeyDown={handleActionsKeyDown}
               onPointerEnter={keepActionsOpen}
@@ -597,8 +600,8 @@ export function DocumentSwitcher({
                     <Icon name="folder" size={16} />
                     <span>
                       {actionsIsCurrent && currentDocument.pathRole === "source"
-                        ? "在文件夹中显示来源"
-                        : "在文件夹中显示"}
+                        ? t("在文件夹中显示来源")
+                        : t("在文件夹中显示")}
                     </span>
                   </button>
                   <button
@@ -614,8 +617,8 @@ export function DocumentSwitcher({
                     <Icon name="code" size={16} />
                     <span>
                       {actionsIsCurrent && currentDocument.pathRole === "source"
-                        ? "复制来源路径"
-                        : "复制路径"}
+                        ? t("复制来源路径")
+                        : t("复制路径")}
                     </span>
                   </button>
                 </>
@@ -632,7 +635,7 @@ export function DocumentSwitcher({
                   type="button"
                 >
                   <Icon name="folder" size={16} />
-                  <span>移动到…</span>
+                  <span>{t("移动到…")}</span>
                 </button>
               )}
               {!actionsIsCurrent && (
@@ -647,7 +650,7 @@ export function DocumentSwitcher({
                   type="button"
                 >
                   <Icon name="minus" size={16} />
-                  <span>从最近编辑中移除</span>
+                  <span>{t("从最近编辑中移除")}</span>
                 </button>
               )}
             </div>
@@ -663,7 +666,7 @@ export function DocumentSwitcher({
             type="button"
           >
             <Icon name="folder" size={17} />
-            <span>打开文件…</span>
+            <span>{t("打开文件…")}</span>
           </button>
           {!showFileActions && (
             <div role="none">
@@ -671,8 +674,7 @@ export function DocumentSwitcher({
                 className="document-switcher__storage-note"
                 id="browser-storage-note"
               >
-                内容保存在此浏览器
-              </p>
+                {t("内容保存在此浏览器")}</p>
             </div>
           )}
         </div>

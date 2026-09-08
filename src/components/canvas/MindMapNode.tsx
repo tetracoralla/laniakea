@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   memo,
   useLayoutEffect,
@@ -60,6 +62,7 @@ export const MindMapNode = memo(function MindMapNode({
   onOpenContextMenu = () => undefined,
   onDragPointerDown,
 }: MindMapNodeProps) {
+  useLocale();
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const inputMethodComposingRef = useRef(false);
   const commitAfterCompositionRef = useRef(false);
@@ -180,7 +183,7 @@ export const MindMapNode = memo(function MindMapNode({
       {editing ? (
         <div className="mind-node__editor-shell">
           <textarea
-            aria-label="编辑节点"
+            aria-label={t("编辑节点")}
             className="mind-node__editor"
             defaultValue={draft}
             placeholder={placeholder}
@@ -276,7 +279,7 @@ export const MindMapNode = memo(function MindMapNode({
         <button
           aria-label={
             markdownDivider
-              ? "Markdown 分隔线"
+              ? t("Markdown 分隔线")
               : node.text.trim()
                 ? undefined
                 : emptyNodeLabel(layout)
@@ -300,7 +303,7 @@ export const MindMapNode = memo(function MindMapNode({
       )}
       {(node.children.length > 0 || node.subspaceId) && (
         <button
-          aria-label={node.collapsed ? "展开分支" : "折叠分支"}
+          aria-label={node.collapsed ? t("展开分支") : t("折叠分支")}
           className={`mind-node__disclosure ${node.collapsed ? "is-collapsed" : ""}`}
           onClick={(event) => {
             event.stopPropagation();

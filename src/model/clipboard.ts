@@ -27,24 +27,24 @@ export function adoptRootTextTitle(
   return { ...document, title: rootText };
 }
 
-export function clipboardTextToForest(text: string): ClipboardForest {
+export function clipboardTextToForest(text: string, importTitle = importedPasteTitle): ClipboardForest {
   const value = text.trim();
   if (!value) throw new Error("剪贴板中没有可粘贴的内容");
 
   const oneLineMarkdownList = /^(?:[-+*]|\d+[.)])\s+\S/u.test(value);
   if (!value.includes("\n") && !oneLineMarkdownList) {
     const document = createBlankDocument();
-    document.title = importedPasteTitle;
+    document.title = importTitle;
     document.nodes[document.rootId].text = value;
     return {
-      document: adoptRootTextTitle(document, importedPasteTitle),
+      document: adoptRootTextTitle(document, importTitle),
       rootIds: [document.rootId],
     };
   }
 
   let document: MindMapDocument;
   try {
-    document = markdownToDocument(value, importedPasteTitle);
+    document = markdownToDocument(value, importTitle);
   } catch {
     const lines = value
       .split(/\r?\n/)
@@ -52,17 +52,17 @@ export function clipboardTextToForest(text: string): ClipboardForest {
       .filter(Boolean);
     if (lines.length === 1) {
       document = createBlankDocument();
-      document.title = importedPasteTitle;
+      document.title = importTitle;
       document.nodes[document.rootId].text = lines[0];
     } else {
       document = markdownToDocument(
         lines.map((line) => `- ${line}`).join("\n"),
-        importedPasteTitle,
+        importTitle,
       );
     }
   }
 
-  document = adoptRootTextTitle(document, importedPasteTitle);
+  document = adoptRootTextTitle(document, importTitle);
   return {
     document,
     rootIds: topLevelRootIds(document),

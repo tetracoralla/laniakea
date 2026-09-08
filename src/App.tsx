@@ -1,3 +1,5 @@
+import { useLocale } from "./i18n/useLocale";
+import { t } from "./i18n/locale";
 import {
   useCallback,
   useEffect,
@@ -161,6 +163,11 @@ export function resolveSurfaceAfterInvalidation(
   };
 }
 
+function LoadingSurface({ label, className }: { label: "正在打开流程" | "正在打开" | "正在打开快捷键设置"; className: string }) {
+  useLocale();
+  return <div aria-label={t(label)} className={className} role="status" />;
+}
+
 const flowWorkspaceSection = createRetryableLazySection(
   () => import("./components/spaces/FlowWorkspace").then(
     ({ FlowWorkspace }) => ({ default: FlowWorkspace }),
@@ -168,11 +175,7 @@ const flowWorkspaceSection = createRetryableLazySection(
   {
     errorLabel: "无法打开流程",
     loadingFallback: (
-      <div
-        aria-label="正在打开流程"
-        className="flow-canvas flow-canvas--loading"
-        role="status"
-      />
+      <LoadingSurface label="正在打开流程" className="flow-canvas flow-canvas--loading" />
     ),
   },
 );
@@ -186,7 +189,7 @@ const commandOverlaySection = createRetryableLazySection(
   {
     errorLabel: "无法打开命令面板",
     loadingFallback: (
-      <div aria-label="正在打开" className="overlay-backdrop" role="status" />
+      <LoadingSurface label="正在打开" className="overlay-backdrop" />
     ),
   },
 );
@@ -200,11 +203,7 @@ const shortcutSettingsSection = createRetryableLazySection(
   {
     errorLabel: "无法打开快捷键设置",
     loadingFallback: (
-      <div
-        aria-label="正在打开快捷键设置"
-        className="overlay-backdrop"
-        role="status"
-      />
+      <LoadingSurface label="正在打开快捷键设置" className="overlay-backdrop" />
     ),
   },
 );
@@ -212,6 +211,7 @@ const LazyShortcutSettings = shortcutSettingsSection.Component;
 const preloadShortcutSettings = shortcutSettingsSection.preload;
 
 export function App() {
+  const locale = useLocale();
   const desktopRuntime = isDesktopRuntime();
   const prepareForLifecycleSave = useCallback(() => {
     flushSync(() => {
@@ -331,7 +331,7 @@ export function App() {
   useEffect(() => {
     if (lifecycleSaveBlockedRequest === 0) return;
     notify({
-      message: "未能保存，应用已保持打开",
+      message: t("未能保存，应用已保持打开"),
       tone: "error",
     });
   }, [lifecycleSaveBlockedRequest, notify]);
@@ -717,8 +717,8 @@ export function App() {
       anchorNodeId: targetNodeId,
     });
     notify({
-      message: "已移动下层图",
-      actionLabel: "撤销",
+      message: t("已移动下层图"),
+      actionLabel: t("撤销"),
       onAction: undo,
     });
   }, [activeMap, applyActiveMapMutation, notify, undo]);
@@ -751,7 +751,7 @@ export function App() {
     setDeleteSubspaceRequest(null);
     if (!isCurrentCanvasInteractionTarget(activeMap, target)) {
       setCanvasInteractionTarget(mindNodeInteractionTarget);
-      notify({ message: "下层图已发生变化，未执行删除", tone: "error" });
+      notify({ message: t("下层图已发生变化，未执行删除"), tone: "error" });
       window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
       return;
     }
@@ -761,8 +761,8 @@ export function App() {
       selection: singleSelection(target.anchorNodeId),
     }));
     notify({
-      message: "已删除下层图",
-      actionLabel: "撤销",
+      message: t("已删除下层图"),
+      actionLabel: t("撤销"),
       onAction: undo,
     });
     window.requestAnimationFrame(() => canvasRef.current?.focusCanvas());
@@ -775,10 +775,10 @@ export function App() {
     const space = documentSpaces(activeMap)[target.spaceId];
     if (!space) return false;
     if (!(await writeTextClipboard(subspacePreview(space).text))) {
-      notify({ message: "无法写入系统剪贴板", tone: "error" });
+      notify({ message: t("无法写入系统剪贴板"), tone: "error" });
       return false;
     }
-    notify({ message: "已复制下层图概要" });
+    notify({ message: t("已复制下层图概要") });
     return true;
   }, [activeMap, notify]);
 
@@ -890,13 +890,13 @@ export function App() {
       const anchor = findMindNode(mindMap, space.anchorNodeId);
       items.push({
         id: space.id,
-        label: anchor?.text || "未命名节点",
+        label: anchor?.text || t("未命名节点"),
       });
     };
     surfaceStack.forEach(({ surface: candidate }) => appendSurface(candidate));
     appendSurface(surface);
     return items;
-  }, [mindMap, surface, surfaceStack]);
+  }, [mindMap, surface, surfaceStack, locale]);
   const openOverlay = useCallback((
     mode: OverlayMode,
     returnFocus?: HTMLElement | null,
@@ -956,10 +956,10 @@ export function App() {
   useEffect(() => {
     if (!recoveredWorkPending) return;
     notify({
-      message: "已恢复上次中断前的内容",
-      actionLabel: "保留",
+      message: t("已恢复上次中断前的内容"),
+      actionLabel: t("保留"),
       onAction: () => void keepRecoveredWork(),
-      secondaryActionLabel: "放弃",
+      secondaryActionLabel: t("放弃"),
       onSecondaryAction: () => void discardRecoveredWork(),
       persistent: true,
     });
@@ -980,8 +980,8 @@ export function App() {
   useEffect(() => {
     if (!recoveryError) return;
     notify({
-      message: "临时恢复保护失败",
-      actionLabel: "重试",
+      message: t("临时恢复保护失败"),
+      actionLabel: t("重试"),
       onAction: retryRecoveryProtection,
       tone: "error",
     });
@@ -993,7 +993,7 @@ export function App() {
       setDesktopRuntimeStatus(status);
       if (status && !status.globalShortcutRegistered) {
         notify({
-          message: `唤醒快捷键 ${displayGlobalShortcut(status.globalShortcut)} 被占用，可在“更多”中更换`,
+          message: t("唤醒快捷键 {0} 被占用，可在“更多”中更换", displayGlobalShortcut(status.globalShortcut)),
           tone: "error",
         });
       }
@@ -1217,7 +1217,7 @@ export function App() {
       try {
         const status = await updateDesktopGlobalShortcut(shortcut);
         setDesktopRuntimeStatus(status);
-        notify({ message: "唤醒快捷键已更新" });
+        notify({ message: t("唤醒快捷键已更新") });
         return true;
       } catch (error) {
         notify({
@@ -1226,7 +1226,7 @@ export function App() {
               ? error
               : error instanceof Error
                 ? error.message
-                : "无法更新唤醒快捷键",
+                : t("无法更新唤醒快捷键"),
           tone: "error",
         });
         return false;
@@ -1262,7 +1262,7 @@ export function App() {
           applyMutation((current) =>
             setDocumentTitle(
               current.document,
-              title,
+              title.trim() || t("未命名思维"),
               current.selection,
             ),
           )
@@ -1526,7 +1526,7 @@ export function App() {
             nodeLabel={node.text}
             onCancel={cancelDeleteSubspace}
             onConfirm={confirmDeleteSubspace}
-            typeLabel={space.type === "map" ? "思维图" : "流程"}
+            typeLabel={space.type === "map" ? t("思维图") : t("流程")}
           />
         );
       })()}
@@ -1547,7 +1547,7 @@ export function App() {
 
       <input
         accept=".mindmap.json,.md,.markdown,.txt,application/json,text/markdown,text/plain"
-        className="sr-only"
+        hidden
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void importFile(file);
@@ -1559,7 +1559,7 @@ export function App() {
       />
       <input
         accept="application/json,.json"
-        className="sr-only"
+        hidden
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void restoreFullBackup(file);

@@ -682,10 +682,19 @@ export function reconnectFlowEdge(
  * that already branches keeps those branches and adds the new node as one
  * more outgoing path instead of silently moving the whole branch set.
  */
+export interface FlowLabelDefaults {
+  branch: string;
+  main: string;
+  yes: string;
+  no: string;
+}
+const defaultFlowLabels: FlowLabelDefaults = { branch: "分支", main: "主线", yes: "是", no: "否" };
+
 export function addFlowNodeAfter(
   space: FlowSpace,
   nodeId: string,
   kind: "step" | "decision",
+  labels: FlowLabelDefaults = defaultFlowLabels,
 ): { space: FlowSpace; nodeId: string } {
   const current = space.nodes[nodeId];
   if (!current) return { space, nodeId };
@@ -698,7 +707,7 @@ export function addFlowNodeAfter(
   if (isBranchingSource) {
     const branchLabel = outgoing.length === 0
       ? ""
-      : `分支 ${outgoing.length + 1}`;
+      : `${labels.branch} ${outgoing.length + 1}`;
     return {
       nodeId: created.id,
       space: withFlowTimestamp(space, {
@@ -706,7 +715,7 @@ export function addFlowNodeAfter(
         edges: [
           ...space.edges.map((edge) =>
             edge.from === nodeId && !edge.label
-              ? { ...edge, label: "主线" }
+              ? { ...edge, label: labels.main }
               : edge,
           ),
           createFlowEdge(nodeId, created.id, branchLabel),
@@ -835,10 +844,11 @@ export function addFlowNodeAtPosition(
 export function addFlowStepAfter(
   space: FlowSpace,
   nodeId: string,
+  labels: FlowLabelDefaults = defaultFlowLabels,
 ): { space: FlowSpace; nodeId: string } {
   const current = space.nodes[nodeId];
   if (!current) return { space, nodeId };
-  if (current.kind === "decision") return addFlowBranch(space, nodeId);
+  if (current.kind === "decision") return addFlowBranch(space, nodeId, labels);
   const now = new Date().toISOString();
   const created = createFlowNode("step", "", now);
   const outgoing = space.edges.filter((edge) => edge.from === nodeId);
@@ -883,6 +893,7 @@ export function addFlowStepAfter(
 export function addFlowBranch(
   space: FlowSpace,
   nodeId: string,
+  labels: FlowLabelDefaults = defaultFlowLabels,
 ): { space: FlowSpace; nodeId: string } {
   const current = space.nodes[nodeId];
   if (!current) return { space, nodeId };
@@ -950,16 +961,16 @@ export function addFlowBranch(
       edges: [
         ...space.edges.map((edge) =>
           edge.from === nodeId && !edge.label
-            ? { ...edge, label: "主线" }
+            ? { ...edge, label: labels.main }
             : edge,
         ),
         createFlowEdge(
           nodeId,
           branch.id,
-          outgoingCount === 0 ? "是" : `分支 ${outgoingCount + 1}`,
+          outgoingCount === 0 ? labels.yes : `${labels.branch} ${outgoingCount + 1}`,
         ),
         ...(alternative
-          ? [createFlowEdge(nodeId, alternative.id, "否")]
+          ? [createFlowEdge(nodeId, alternative.id, labels.no)]
           : []),
       ],
       positions,

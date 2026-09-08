@@ -1,3 +1,5 @@
+import { t } from "../i18n/locale";
+import { isProvisionalDocumentTitle as isUntitledTitle } from "../model/document";
 const recentDocumentsKey = "origin.recent-documents.v1";
 const maximumStoredDocuments = 20;
 const browserDocumentPrefix = "browser://laniakea/";
@@ -56,10 +58,10 @@ export function isInternalDocumentPath(path: string): boolean {
 }
 
 export function recentDocumentLocation(path: string): string {
-  if (path.startsWith(browserDocumentPrefix)) return "此浏览器";
-  if (isInternalDocumentPath(path)) return "本地草稿";
+  if (path.startsWith(browserDocumentPrefix)) return t("此浏览器");
+  if (isInternalDocumentPath(path)) return t("本地草稿");
   const parent = documentParentDirectory(path);
-  if (!parent) return "本地文件";
+  if (!parent) return t("本地文件");
   const segments = normalizedPath(parent)
     .split("/")
     .filter((segment) => segment && !/^[A-Za-z]:$/.test(segment));
@@ -67,16 +69,16 @@ export function recentDocumentLocation(path: string): string {
 }
 
 function compactDocumentLocation(path: string): string {
-  if (path.startsWith(browserDocumentPrefix)) return "此浏览器";
-  if (isInternalDocumentPath(path)) return "本地草稿";
+  if (path.startsWith(browserDocumentPrefix)) return t("此浏览器");
+  if (isInternalDocumentPath(path)) return t("本地草稿");
   const parent = documentParentDirectory(path);
-  if (!parent) return "本地文件";
+  if (!parent) return t("本地文件");
   const directory = normalizedPath(parent).split("/").filter(Boolean).at(-1);
   if (!directory) return parent;
   const familiarLocations: Record<string, string> = {
-    Desktop: "桌面",
-    Documents: "文稿",
-    Downloads: "下载",
+    Desktop: t("桌面"),
+    Documents: t("文稿"),
+    Downloads: t("下载"),
   };
   return familiarLocations[directory] ?? directory;
 }
@@ -93,23 +95,23 @@ export function describeCurrentDocument(
     if (identity.documentPath.startsWith(browserDocumentPrefix)) {
       return {
         associatedPath: identity.documentPath,
-        exactDescription: "正在编辑的内容保存在此浏览器",
-        metadata: "保存在此浏览器",
+        exactDescription: t("正在编辑的内容保存在此浏览器"),
+        metadata: t("保存在此浏览器"),
         pathRole: null,
       };
     }
     if (isInternalDocumentPath(identity.documentPath)) {
       return {
         associatedPath: identity.documentPath,
-        exactDescription: "本地草稿",
-        metadata: "本地草稿",
+        exactDescription: t("本地草稿"),
+        metadata: t("本地草稿"),
         pathRole: null,
       };
     }
     return {
       associatedPath: identity.documentPath,
-      exactDescription: `正在保存到：${identity.documentPath}`,
-      metadata: `保存到 · ${location}`,
+      exactDescription: t("正在保存到：{0}", identity.documentPath),
+      metadata: t("保存到 · {0}", location),
       pathRole: "binding",
     };
   }
@@ -118,8 +120,8 @@ export function describeCurrentDocument(
     const location = compactDocumentLocation(identity.sourcePath);
     return {
       associatedPath: identity.sourcePath,
-      exactDescription: `当前修改尚未写回来源文件，来源：${identity.sourcePath}`,
-      metadata: `尚未另存 · 来源：${location}`,
+      exactDescription: t("当前修改尚未写回来源文件，来源：{0}", identity.sourcePath),
+      metadata: t("尚未另存 · 来源：{0}", location),
       pathRole: isInternalDocumentPath(identity.sourcePath) ||
           identity.sourcePath.startsWith(browserDocumentPrefix)
         ? null
@@ -129,8 +131,8 @@ export function describeCurrentDocument(
 
   return {
     associatedPath: null,
-    exactDescription: "正在编辑的内容尚未建立保存位置",
-    metadata: "尚未建立保存位置",
+    exactDescription: t("正在编辑的内容尚未建立保存位置"),
+    metadata: t("尚未建立保存位置"),
     pathRole: null,
   };
 }
@@ -155,13 +157,13 @@ function titleFromExternalDocumentPath(path: string): string | null {
   }
   const fileName = normalizedPath(path).split("/").pop() ?? "";
   const title = fileName.replace(/\.(md|markdown|txt)$/i, "").trim();
-  return title.length > 0 && title !== "未命名思维" ? title : null;
+  return title.length > 0 && !isUntitledTitle(title) ? title : null;
 }
 
 function resolveRecentDocumentTitle(
   document: RecentDocument,
 ): RecentDocument {
-  if (document.title.trim() !== "未命名思维") return document;
+  if (!isUntitledTitle(document.title.trim())) return document;
   const title = titleFromExternalDocumentPath(document.path);
   return title ? { ...document, title } : document;
 }
@@ -220,7 +222,7 @@ export function rememberRecentDocument(
   return normalize([
     {
       path,
-      title: title.trim() || "未命名思维",
+      title: title.trim() || t("未命名思维"),
       lastOpenedAt,
     },
     ...documents.filter((document) => document.path !== path),
@@ -232,7 +234,7 @@ export function updateRecentDocumentTitle(
   path: string,
   title: string,
 ): RecentDocument[] {
-  const nextTitle = title.trim() || "未命名思维";
+  const nextTitle = title.trim() || t("未命名思维");
   let changed = false;
   const updated = documents.map((document) => {
     if (document.path !== path || document.title === nextTitle) {

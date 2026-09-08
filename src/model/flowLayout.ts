@@ -21,7 +21,7 @@ import {
   estimateTextWidth,
   type NodeTextStyle,
   type TextWidthMeasurer,
-} from "./layout";
+} from "./textMetrics";
 import { flowSpaceToSemanticGraph } from "./flowGraphAdapter";
 import {
   FLOW_CANVAS_PADDING as canvasPadding,

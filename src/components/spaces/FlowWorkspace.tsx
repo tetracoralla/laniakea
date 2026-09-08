@@ -1,3 +1,6 @@
+import { localizedFlowLabels } from "../../i18n/defaults";
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   forwardRef,
   useCallback,
@@ -96,6 +99,7 @@ export const FlowWorkspace = forwardRef<
   onViewportChange,
   space,
 }, ref) {
+  useLocale();
   const canvasRef = useRef<FlowCanvasHandle>(null);
   const [selectedId, setSelectedId] = useState(initialSelectedId);
   const selectedIdRef = useRef(selectedId);
@@ -210,7 +214,7 @@ export const FlowWorkspace = forwardRef<
   }), [commitEdit]);
 
   const addNext = useCallback((nodeId: string) => {
-    const created = addFlowStepAfter(appliedSpaceRef.current, nodeId);
+    const created = addFlowStepAfter(appliedSpaceRef.current, nodeId, localizedFlowLabels());
     if (created.space === appliedSpaceRef.current) return;
     applySpace(created.space);
     setSelectedId(created.nodeId);
@@ -264,7 +268,7 @@ export const FlowWorkspace = forwardRef<
   }, [applySpace, commitEdit]);
 
   const addBranch = useCallback((nodeId: string) => {
-    const created = addFlowBranch(appliedSpaceRef.current, nodeId);
+    const created = addFlowBranch(appliedSpaceRef.current, nodeId, localizedFlowLabels());
     if (created.space === appliedSpaceRef.current) return;
     applySpace(created.space);
     setSelectedId(created.nodeId);
@@ -339,8 +343,8 @@ export const FlowWorkspace = forwardRef<
     editingIdRef.current = null;
     onEditorDraftFinish(true);
     notify({
-      message: "已删除流程步骤",
-      actionLabel: "撤销",
+      message: t("已删除流程步骤"),
+      actionLabel: t("撤销"),
       onAction: onUndo,
     });
   }, [applySpace, notify, onEditorDraftFinish, onUndo]);
@@ -350,8 +354,8 @@ export const FlowWorkspace = forwardRef<
     if (next === appliedSpaceRef.current) return;
     applySpace(next);
     notify({
-      message: "已删除连线",
-      actionLabel: "撤销",
+      message: t("已删除连线"),
+      actionLabel: t("撤销"),
       onAction: onUndo,
     });
   }, [applySpace, notify, onUndo]);

@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import {
   copyDocumentPath,
@@ -100,7 +101,7 @@ function downloadText(
 }
 
 function safeFilename(value: string): string {
-  return value.trim().replace(/[\\/:*?"<>|]+/g, "-") || "未命名思维";
+  return value.trim().replace(/[\\/:*?"<>|]+/g, "-") || t("未命名思维");
 }
 
 interface BrowserWritableFile {
@@ -361,7 +362,7 @@ export function useDocumentWorkflow({
               multiple: false,
               types: [
                 {
-                  description: "Markdown 或 Laniakea 文档",
+                  description: t("Markdown 或 Laniakea 文档"),
                   accept: {
                     "text/markdown": [".md", ".markdown"],
                     "text/plain": [".txt"],
@@ -543,7 +544,7 @@ export function useDocumentWorkflow({
         documentPath === null && currentDocumentPath !== null;
       const path = await chooseMarkdownDocumentPath(
         `${safeFilename(document.title)}${
-          protectsUnboundSource ? " - 另存" : ""
+          protectsUnboundSource ? t(" - 另存") : ""
         }`,
         {
           currentPath: currentDocumentPath,
@@ -942,7 +943,7 @@ export function useDocumentWorkflow({
   const deleteBrowserLibraryDocument = useCallback((path: string) => {
     const item = recentDocuments.find((document) => document.path === path);
     if (!item) return;
-    if (!window.confirm(`确定从此浏览器删除“${item.title}”吗？`)) return;
+    if (!window.confirm(t("确定从此浏览器删除“{0}”吗？", item.title))) return;
     void (async () => {
       const deleted = await deleteBrowserDocument(path);
       notify({

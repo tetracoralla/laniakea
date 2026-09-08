@@ -415,10 +415,44 @@
   flex: none;
 }
 
-.toolbar-button--labeled {
+.toolbar-button--reveal {
+  display: grid;
+  grid-template-columns: var(--control-icon) 0fr;
   width: auto;
-  gap: 7px;
-  padding: 0 10px;
+  justify-items: center;
+  transition:
+    grid-template-columns var(--motion-fast) ease,
+    background-color var(--motion-fast) ease;
+}
+
+.toolbar-button__label {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease;
+}
+
+.toolbar-button__label > span {
+  display: block;
+  padding-right: 10px;
+}
+
+.toolbar-button--reveal:focus-visible {
+  grid-template-columns: var(--control-icon) 1fr;
+}
+
+.toolbar-button--reveal:focus-visible .toolbar-button__label {
+  opacity: 1;
+}
+
+@media (hover: hover) {
+  .toolbar-button--reveal:hover {
+    grid-template-columns: var(--control-icon) 1fr;
+  }
+
+  .toolbar-button--reveal:hover .toolbar-button__label {
+    opacity: 1;
+  }
 }
 
 .toolbar-button:hover {
@@ -1260,16 +1294,15 @@
 
 .flow-edge-toolbar-anchor {
   position: absolute;
-  z-index: 11;
   pointer-events: none;
-  transform: translateY(calc(-1 * var(--flow-edge-toolbar-offset)));
 }
 
 .flow-edge-toolbar-shell {
-  position: relative;
+  position: absolute;
+  z-index: 18;
+  width: max-content;
+  visibility: hidden;
   pointer-events: auto;
-  transform: translate(-50%, -100%) scale(var(--flow-edge-toolbar-scale));
-  transform-origin: center bottom;
 }
 
 .flow-edge-toolbar {
@@ -1334,17 +1367,16 @@
 
 .flow-edge-style-panel {
   position: absolute;
-  top: calc(100% + 7px);
-  left: 50%;
   display: grid;
   width: 268px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 10px;
   background: var(--surface-glass);
   border: 1px solid var(--line);
   border-radius: var(--radius-12);
   box-shadow: var(--shadow-chrome);
   gap: 7px;
-  transform: translateX(-50%);
 }
 
 .flow-edge-style-panel__row {

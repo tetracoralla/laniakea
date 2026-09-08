@@ -44,6 +44,7 @@ interface FlowViewportController {
   contentRef: RefObject<HTMLDivElement | null>;
   fit: () => void;
   focusSelected: () => void;
+  revealEditor: (editor: HTMLElement) => void;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -180,6 +181,28 @@ export function useFlowViewport({
     });
   }, [scheduleViewport, selectedId]);
 
+  const revealEditor = useCallback((editor: HTMLElement) => {
+    const bounds = containerRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+    const rect = editor.getBoundingClientRect();
+    const insetX = Math.min(84, bounds.width / 4);
+    const insetY = Math.min(84, bounds.height / 4);
+    const left = bounds.left + insetX;
+    const right = bounds.right - insetX;
+    const top = bounds.top + insetY;
+    const bottom = bounds.bottom - insetY;
+    // Leave room for an empty label to grow while the user types. Revealing
+    // only its current edge would immediately clip a longer label again.
+    const x = rect.left < left || rect.right > right
+      ? (left + right - rect.left - rect.right) / 2 : 0;
+    const y = rect.top < top || rect.bottom > bottom
+      ? (top + bottom - rect.top - rect.bottom) / 2 : 0;
+    if (x || y) {
+      const current = liveViewport.current;
+      scheduleViewport({ ...current, x: current.x + x, y: current.y + y });
+    }
+  }, [scheduleViewport]);
+
   useEffect(() => {
     renderViewport(viewport);
   }, [renderViewport, viewport]);
@@ -218,6 +241,10 @@ export function useFlowViewport({
     const container = containerRef.current;
     if (!container) return;
     const handleWheel = (event: WheelEvent) => {
+      if ((event.target as Element | null)?.closest?.("[data-flow-edge-toolbar]")) {
+        if (event.ctrlKey || event.metaKey) event.preventDefault();
+        return;
+      }
       event.preventDefault();
       // Drag math divides by the viewport captured at pointer-down; changing
       // the viewport mid-gesture would slide the dragged content away from
@@ -348,6 +375,7 @@ export function useFlowViewport({
     contentRef,
     fit,
     focusSelected,
+    revealEditor,
     zoomIn,
     zoomOut,
     resetZoom,

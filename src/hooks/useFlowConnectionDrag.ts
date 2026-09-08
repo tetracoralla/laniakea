@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 import {
   useCallback,
   useEffect,
@@ -326,7 +327,7 @@ export function useFlowConnectionDrag({
     [space, state?.fromId],
   );
   const targetLabel = state?.targetId
-    ? space.nodes[state.targetId]?.text || "未命名步骤"
+    ? space.nodes[state.targetId]?.text || t("未命名步骤")
     : "";
 
   return {

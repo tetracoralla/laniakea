@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 import {
   startTransition,
   useCallback,
@@ -250,29 +251,22 @@ function dragAnnouncement(
   gesture: NodeDragGesture,
   document: MindMapDocument,
 ): string {
-  const subject =
-    gesture.roots.length > 1
-      ? `${gesture.roots.length} 个分支`
-      : "分支";
+  const subject = gesture.roots.length > 1
+    ? t("{0} 个分支", gesture.roots.length) : t("分支");
   if (gesture.dropTargetId) {
     const target = document.nodes[gesture.dropTargetId];
-    return `松手将${subject}移入“${target?.text || "未命名节点"}”${
-      gesture.dropPosition === null
-        ? ""
-        : `，排在第 ${gesture.dropPosition + 1} 个`
-    }`;
+    return t("松手将{0}移入“{1}”{2}", subject, target?.text || t("未命名节点"),
+      gesture.dropPosition === null ? "" : t("，排在第 {0} 个", gesture.dropPosition + 1));
   }
   return gesture.dropIntent === "detach"
-    ? `松手将${subject}移到画布空白处`
-    : "继续拖动以选择上级节点";
+    ? t("松手将{0}移到画布空白处", subject)
+    : t("继续拖动以选择上级节点");
 }
 
 function selectionAnnouncement(selection: SelectionState): string {
-  return selection.selectedIds.length === 0
-    ? "未选择节点"
-    : selection.selectedIds.length === 1
-      ? "已选择 1 个节点"
-      : `已选择 ${selection.selectedIds.length} 个节点`;
+  return selection.selectedIds.length === 0 ? t("未选择节点")
+    : selection.selectedIds.length === 1 ? t("已选择 1 个节点")
+    : t("已选择 {0} 个节点", selection.selectedIds.length);
 }
 
 export function useNodeDrag({

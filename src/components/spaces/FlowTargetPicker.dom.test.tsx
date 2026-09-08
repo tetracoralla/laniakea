@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FlowNode } from "../../types/mindmap";
 import { FlowTargetPicker } from "./FlowTargetPicker";
+import { setLanguagePreference } from "../../i18n/locale";
 
 const now = "2026-08-27T00:00:00.000Z";
 
@@ -35,7 +36,29 @@ describe("FlowTargetPicker", () => {
 
   afterEach(async () => {
     await act(async () => root.unmount());
+    setLanguagePreference("zh");
     container.remove();
+  });
+
+  it("translates candidate types in place while preserving user text, search, and target identity", async () => {
+    const onChoose = vi.fn();
+    const nodes = candidates(2).map((node, index) => ({ ...node, text: index ? "Untitled step" : "步骤", kind: "decision" as const }));
+    const before = JSON.stringify(nodes);
+    await act(async () => root.render(<FlowTargetPicker candidates={nodes} onChoose={onChoose}
+      onClose={() => undefined} sourceLabel="开始" />));
+    const input = container.querySelector("input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "步骤");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => setLanguagePreference("en"));
+    expect(input.value).toBe("步骤");
+    expect(document.activeElement).toBe(input);
+    expect(container.querySelector('[role="option"] span')?.textContent).toBe("步骤");
+    expect(container.querySelector('[role="option"] small')?.textContent).toBe("Decision");
+    expect(JSON.stringify(nodes)).toBe(before);
+    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" })));
+    expect(onChoose).toHaveBeenCalledWith("node-0");
   });
 
   it("bounds a large candidate list while keeping exact search and keyboard choice", async () => {

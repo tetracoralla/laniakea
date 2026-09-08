@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   forwardRef,
   useCallback,
@@ -144,6 +146,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     },
     ref,
   ) {
+    const locale = useLocale();
     const selectedSubspaceAnchorId =
       interactionTarget.kind === "subspace-portal"
         ? interactionTarget.anchorNodeId
@@ -226,6 +229,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         document.rootId,
         document.spaces,
         measureTextWidth,
+        locale,
       ],
     );
     useLayoutEffect(() => {
@@ -747,7 +751,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
 
     return (
       <div
-        aria-label="思维导图画布"
+        aria-label={t("思维导图画布")}
         className={className}
         onClickCapture={(event) => {
           nodeDragBindings.onClickCapture(event);
@@ -913,10 +917,10 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           ref={dragAnnouncementRef}
         >
           {selection.selectedIds.length === 0
-            ? "未选择节点"
+            ? t("未选择节点")
             : selection.selectedIds.length === 1
-              ? "已选择 1 个节点"
-              : `已选择 ${selection.selectedIds.length} 个节点`}
+              ? t("已选择 1 个节点")
+              : t("已选择 {0} 个节点", selection.selectedIds.length)}
         </div>
       </div>
     );

@@ -1,5 +1,6 @@
+import { isProvisionalDocumentTitle as isUntitledTitle } from "../model/document";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createBlankDocument } from "../data/seed";
+import { createLocalizedBlankDocument as createBlankDocument } from "../i18n/defaults";
 import {
   commitEditorHistory,
   createEditorHistory,
@@ -70,7 +71,7 @@ function isPristineBlankDocument(document: MindMapDocument): boolean {
     root?.text === "" &&
     root.children.length === 0 &&
     document.floatingRoots.length === 0 &&
-    document.title === "未命名思维"
+    isUntitledTitle(document.title)
   );
 }
 

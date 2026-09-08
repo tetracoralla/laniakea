@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t, localizeMessage } from "../../i18n/locale";
 import { useMemo, useRef, useState } from "react";
 import type { FlowNode, FlowNodeKind } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
@@ -39,6 +41,7 @@ export function FlowNodeMenu({
   onDelete,
   targetRect,
 }: FlowNodeMenuProps) {
+  useLocale();
   const menuRef = useRef<HTMLDivElement>(null);
   const [typeOpen, setTypeOpen] = useState(false);
   const location = useMemo(() => {
@@ -65,7 +68,7 @@ export function FlowNodeMenu({
 
   return (
     <div
-      aria-label={`${node.text || "未命名步骤"}的流程操作`}
+      aria-label={t("{0}的流程操作", node.text || t("未命名步骤"))}
       className="node-space-menu flow-node-menu"
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
@@ -78,30 +81,26 @@ export function FlowNodeMenu({
       style={location}
     >
       <button onClick={onBeginEdit} role="menuitem" type="button">
-        编辑文字
-      </button>
+        {t("编辑文字")}</button>
       <button
         onClick={onAddNext}
         role="menuitem"
         type="button"
       >
-        添加下一步
-      </button>
+        {t("添加下一步")}</button>
       <button
         onClick={onAddBranch}
         role="menuitem"
         type="button"
       >
-        添加分支
-      </button>
+        {t("添加分支")}</button>
       <button
         disabled={!canConnect}
         onClick={onConnect}
         role="menuitem"
         type="button"
       >
-        汇合到已有步骤…
-      </button>
+        {t("汇合到已有步骤…")}</button>
       <div className="node-space-menu__separator" role="separator" />
       <button
         aria-expanded={typeOpen}
@@ -111,14 +110,14 @@ export function FlowNodeMenu({
         role="menuitem"
         type="button"
       >
-        <span>节点类型</span>
+        <span>{t("节点类型")}</span>
         <span className="flow-node-menu__value">
-          {kindLabels[node.kind]}
+          {localizeMessage(kindLabels[node.kind])}
           <Icon name="chevronDown" size={12} />
         </span>
       </button>
       {typeOpen && (
-        <div aria-label="节点类型" className="flow-node-menu__types" role="group">
+        <div aria-label={t("节点类型")} className="flow-node-menu__types" role="group">
           {(Object.entries(kindLabels) as Array<[FlowNodeKind, string]>).map(
             ([kind, label]) => (
               <button
@@ -128,7 +127,7 @@ export function FlowNodeMenu({
                 role="menuitemradio"
                 type="button"
               >
-                {label}
+                {localizeMessage(label)}
                 {node.kind === kind && <Icon name="check" size={12} />}
               </button>
             ),
@@ -142,8 +141,7 @@ export function FlowNodeMenu({
         role="menuitem"
         type="button"
       >
-        删除步骤
-      </button>
+        {t("删除步骤")}</button>
     </div>
   );
 }

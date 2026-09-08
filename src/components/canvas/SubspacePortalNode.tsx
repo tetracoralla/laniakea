@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   memo,
   useCallback,
@@ -56,10 +58,11 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
   space,
   zoom,
 }: SubspacePortalNodeProps) {
+  const locale = useLocale();
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<PortalDragState | null>(null);
   const suppressClickRef = useRef(false);
-  const preview = useMemo(() => subspacePreview(space), [space]);
+  const preview = useMemo(() => subspacePreview(space), [space, locale]);
 
   const clearDropTarget = useCallback(() => {
     document
@@ -167,7 +170,7 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
       } as CSSProperties}
     >
       <button
-        aria-label={`${preview.typeLabel}概要：${preview.text}`}
+        aria-label={t("{0}概要：{1}", preview.typeLabel, preview.text)}
         aria-pressed={selected}
         className="subspace-portal__content"
         onClick={(event) => {
@@ -210,7 +213,7 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
           onOpen(anchorId);
         }}
         onPointerDown={(event) => event.stopPropagation()}
-        title={`进入${preview.typeLabel}`}
+        title={t("进入{0}", preview.typeLabel)}
         type="button"
       >
         <Icon name="layers" size={14} />

@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 import type {
   FlowNode,
   FlowSpace,
@@ -9,7 +10,7 @@ export interface SubspacePreview {
   accessibleLabel: string;
   lines: string[];
   text: string;
-  typeLabel: "思维图" | "流程";
+  typeLabel: string;
 }
 
 function visibleLabel(text: string, fallback: string): string {
@@ -19,16 +20,16 @@ function visibleLabel(text: string, fallback: string): string {
 function mapPreview(space: MapSpace): SubspacePreview {
   const childIds = space.nodes[space.rootId]?.children ?? [];
   const lines = childIds.slice(0, 3).map((id) =>
-    `-${visibleLabel(space.nodes[id]?.text ?? "", "未命名节点")}`,
+    `-${visibleLabel(space.nodes[id]?.text ?? "", t("未命名节点"))}`,
   );
   if (childIds.length > 3) lines.push("...");
-  if (lines.length === 0) lines.push("暂无下级节点");
+  if (lines.length === 0) lines.push(t("暂无下级节点"));
   const text = lines.join("\n");
   return {
-    accessibleLabel: `打开思维图：${lines.join("，")}`,
+    accessibleLabel: t("打开思维图：{0}", lines.join("，")),
     lines,
     text,
-    typeLabel: "思维图",
+    typeLabel: t("思维图"),
   };
 }
 
@@ -82,7 +83,7 @@ function orderedContentNodes(space: FlowSpace): FlowNode[] {
 
 function flowPreview(space: FlowSpace): SubspacePreview {
   const nodes = orderedContentNodes(space);
-  const steps = nodes.map(({ text }) => visibleLabel(text, "未命名步骤"));
+  const steps = nodes.map(({ text }) => visibleLabel(text, t("未命名步骤")));
   const separator = (index: number) => space.edges.some(({ from, to }) =>
     from === nodes[index - 1]?.id && to === nodes[index]?.id,
   ) ? "→" : " · ";
@@ -93,12 +94,12 @@ function flowPreview(space: FlowSpace): SubspacePreview {
     ? `${joinSteps(3)}...${separator(steps.length - 1)}${steps[steps.length - 1]}`
     : steps.length > 0
       ? joinSteps(steps.length)
-      : "暂无步骤";
+      : t("暂无步骤");
   return {
-    accessibleLabel: `打开流程：${text}`,
+    accessibleLabel: t("打开流程：{0}", text),
     lines: [text],
     text,
-    typeLabel: "流程",
+    typeLabel: t("流程"),
   };
 }
 

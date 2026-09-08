@@ -224,9 +224,10 @@ describe("rendered interaction regressions", () => {
 
     expect(document.activeElement).toBe(editor);
     expect(newDocument.textContent).toBe("新建");
-    expect(newDocument.classList.contains("toolbar-button--labeled")).toBe(
-      true,
-    );
+    // The label reveals on hover/focus; the accessible entry stays stable.
+    expect(newDocument.getAttribute("aria-label")).toBe("新建");
+    expect(newDocument.querySelector(".toolbar-button__label")?.getAttribute("aria-hidden"))
+      .toBe("true");
     expect(
       newDocument.nextElementSibling?.classList.contains(
         "topbar__actions-divider",

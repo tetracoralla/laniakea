@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   moveMenuFocus,
@@ -26,6 +28,7 @@ export function CanvasBlankMenu({
   clientX,
   clientY,
 }: CanvasBlankMenuProps) {
+  useLocale();
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuSize, setMenuSize] = useState({ width: 220, height: 116 });
   const location = useMemo(() => {
@@ -72,7 +75,7 @@ export function CanvasBlankMenu({
 
   return (
     <div
-      aria-label="画布操作"
+      aria-label={t("画布操作")}
       className="node-space-menu"
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
@@ -85,14 +88,11 @@ export function CanvasBlankMenu({
       style={location}
     >
       <button onClick={run(onCreateNode)} role="menuitem" type="button">
-        新建浮动节点
-      </button>
+        {t("新建浮动节点")}</button>
       <button onClick={run(onPaste)} role="menuitem" type="button">
-        粘贴
-      </button>
+        {t("粘贴")}</button>
       <button onClick={run(onFit)} role="menuitem" type="button">
-        适应视图
-      </button>
+        {t("适应视图")}</button>
     </div>
   );
 }

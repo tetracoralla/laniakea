@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 export const minCanvasZoom = 0.4;
 export const minOverviewCanvasZoom = 0.0001;
 export const maxCanvasZoom = 2.5;
@@ -85,13 +86,13 @@ export function canvasZoomFeedbackLabel(zoom: number): string {
       ? Number((zoom * 100).toFixed(1))
       : Math.round(zoom * 100);
   if (zoom < minCanvasZoom - 0.001) {
-    return `${percentage}% · 全图`;
+    return t("{0}% · 全图", percentage);
   }
   if (Math.abs(zoom - minCanvasZoom) < 0.001) {
-    return `${percentage}% · 最小`;
+    return t("{0}% · 最小", percentage);
   }
   if (Math.abs(zoom - maxCanvasZoom) < 0.001) {
-    return `${percentage}% · 最大`;
+    return t("{0}% · 最大", percentage);
   }
   return `${percentage}%`;
 }

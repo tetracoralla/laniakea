@@ -68,11 +68,11 @@ export function createSeedDocument(): MindMapDocument {
   };
 }
 
-export function createBlankDocument(): MindMapDocument {
+export function createBlankDocument(title = "未命名思维"): MindMapDocument {
   const now = new Date().toISOString();
   return {
     formatVersion: 1,
-    title: "未命名思维",
+    title,
     rootId: "root",
     nodes: {
       root: {

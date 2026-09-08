@@ -1,3 +1,7 @@
+import { createPortal } from "react-dom";
+import { LanguageSettings } from "../settings/LanguageSettings";
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   useEffect,
   useRef,
@@ -13,6 +17,7 @@ import {
   markInputMethodComposition,
 } from "../../model/inputMethod";
 import { DocumentSwitcher } from "./DocumentSwitcher";
+import { useColorTheme } from "../../hooks/useColorTheme";
 
 interface TopBarProps {
   title: string;
@@ -73,6 +78,9 @@ export function TopBar({
   onNavigateBack,
   saveState = "saved",
 }: TopBarProps) {
+  useLocale();
+  const { theme, toggleTheme } = useColorTheme();
+  const [languageOpen, setLanguageOpen] = useState(false);
   const [draft, setDraft] = useState(title);
   const [openMenu, setOpenMenu] = useState<"documents" | "more" | null>(
     null,
@@ -171,7 +179,7 @@ export function TopBar({
       <div className="topbar__identity">
         {spacePath.length > 0 && onNavigateBack && (
           <button
-            aria-label="返回上层图"
+            aria-label={t("返回上层图")}
             className="space-navigation__back"
             onClick={onNavigateBack}
             type="button"
@@ -180,7 +188,7 @@ export function TopBar({
           </button>
         )}
         <label className="document-title">
-          <span className="sr-only">文档标题</span>
+          <span className="sr-only">{t("文档标题")}</span>
           <input
             value={draft}
             onChange={(event) => {
@@ -217,7 +225,7 @@ export function TopBar({
           {(saveState === "saving" || saveState === "error") && (
             <span
               aria-label={
-                saveState === "error" ? "保存失败" : "有未保存的更改"
+                saveState === "error" ? t("保存失败") : t("有未保存的更改")
               }
               className={`document-title__dirty${
                 saveState === "error"
@@ -227,8 +235,8 @@ export function TopBar({
               role="img"
               title={
                 saveState === "error"
-                  ? "保存失败，可在左下角状态条重试"
-                  : "有未保存的更改"
+                  ? t("保存失败，可在左下角状态条重试")
+                  : t("有未保存的更改")
               }
             />
           )}
@@ -254,7 +262,7 @@ export function TopBar({
         />
         {currentSpace && (
           <div
-            aria-label={`当前位置：${currentSpace.label}`}
+            aria-label={t("当前位置：{0}", currentSpace.label)}
             className="space-navigation"
             title={currentSpace.label}
           >
@@ -264,35 +272,37 @@ export function TopBar({
         )}
       </div>
 
-      <nav className="topbar__actions" aria-label="文档操作">
+      <nav className="topbar__actions" aria-label={t("文档操作")}>
         <button
-          aria-label="新建"
-          className="toolbar-button toolbar-button--labeled"
+          aria-label={t("新建")}
+          className="toolbar-button toolbar-button--reveal"
           onClick={onNew}
-          title="新建"
+          title={t("新建")}
           type="button"
         >
           <Icon name="file" />
-          <span>新建</span>
+          <span aria-hidden="true" className="toolbar-button__label">
+            <span>{t("新建")}</span>
+          </span>
         </button>
         <span
           aria-hidden="true"
           className="topbar__actions-divider"
         />
         <button
-          aria-label="搜索"
+          aria-label={t("搜索")}
           className="toolbar-button"
           onClick={(event) => onSearch(event.currentTarget)}
-          title="搜索"
+          title={t("搜索")}
           type="button"
         >
           <Icon name="search" />
         </button>
         <button
-          aria-label="另存为"
+          aria-label={t("另存为")}
           className="toolbar-button"
           onClick={onSaveAs}
-          title="另存为"
+          title={t("另存为")}
           type="button"
         >
           <Icon name="export" />
@@ -301,7 +311,7 @@ export function TopBar({
           <button
             aria-expanded={menuOpen}
             aria-haspopup="menu"
-            aria-label="更多"
+            aria-label={t("更多")}
             className="toolbar-button"
             onClick={(event) => {
               event.currentTarget.focus({ preventScroll: true });
@@ -322,7 +332,7 @@ export function TopBar({
               }
             }}
             ref={menuButtonRef}
-            title="更多"
+            title={t("更多")}
             type="button"
           >
             <Icon name="more" />
@@ -339,7 +349,7 @@ export function TopBar({
                 type="button"
               >
                 <Icon name="file" />
-                <span>保存</span>
+                <span>{t("保存")}</span>
               </button>
               <button
                 onClick={() => runMenuAction(onCopyMarkdown)}
@@ -347,7 +357,7 @@ export function TopBar({
                 type="button"
               >
                 <Icon name="export" />
-                <span>复制为 Markdown</span>
+                <span>{t("复制为 Markdown")}</span>
               </button>
               {!showDesktopActions && onExportFullBackup && (
                 <button
@@ -356,7 +366,7 @@ export function TopBar({
                   type="button"
                 >
                   <Icon name="export" />
-                  <span>导出完整备份</span>
+                  <span>{t("导出完整备份")}</span>
                 </button>
               )}
               {!showDesktopActions && onRestoreFullBackup && (
@@ -366,7 +376,7 @@ export function TopBar({
                   type="button"
                 >
                   <Icon name="folder" />
-                  <span>恢复完整备份</span>
+                  <span>{t("恢复完整备份")}</span>
                 </button>
               )}
               {showDesktopActions && (
@@ -382,13 +392,33 @@ export function TopBar({
                   type="button"
                 >
                   <Icon name="command" />
-                  <span>唤醒快捷键</span>
+                  <span>{t("唤醒快捷键")}</span>
                 </button>
               )}
+              <button
+                aria-label="Language / 语言"
+                onClick={() => runMenuAction(() => setLanguageOpen(true), false)}
+                role="menuitem" type="button"
+              >
+                <span aria-hidden="true" className="language-menu-icon">文</span>
+                <span>Language / 语言</span>
+              </button>
+              <button
+                onClick={() => runMenuAction(toggleTheme)}
+                role="menuitem"
+                type="button"
+              >
+                <span aria-hidden="true" className="theme-swatch" />
+                <span>{theme === "dark" ? t("切换到浅色模式") : t("切换到深色模式")}</span>
+              </button>
             </div>
           )}
         </div>
       </nav>
+      {languageOpen && createPortal(<LanguageSettings onClose={() => {
+        setLanguageOpen(false);
+        window.requestAnimationFrame(() => menuButtonRef.current?.focus({ preventScroll: true }));
+      }} />, document.body)}
     </header>
   );
 }

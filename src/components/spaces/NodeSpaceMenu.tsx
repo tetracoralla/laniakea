@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { LaniakeaSpace } from "../../types/mindmap";
 import {
@@ -25,6 +27,7 @@ export function NodeSpaceMenu({
   targetRect,
   space,
 }: NodeSpaceMenuProps) {
+  useLocale();
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuSize, setMenuSize] = useState({
     width: 220,
@@ -77,7 +80,7 @@ export function NodeSpaceMenu({
 
   return (
     <div
-      aria-label={`${nodeLabel || "未命名节点"}的节点操作`}
+      aria-label={t("{0}的节点操作", nodeLabel || t("未命名节点"))}
       className="node-space-menu"
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
@@ -92,7 +95,7 @@ export function NodeSpaceMenu({
       {space ? (
         <>
           <button onClick={run(onEnter)} role="menuitem" type="button">
-            进入{space.type === "map" ? "思维图" : "流程"}
+            {t("进入{0}", space.type === "map" ? t("思维图") : t("流程"))}
           </button>
           <div className="node-space-menu__separator" role="separator" />
           <button
@@ -101,13 +104,11 @@ export function NodeSpaceMenu({
             role="menuitem"
             type="button"
           >
-            删除下层图
-          </button>
+            {t("删除下层图")}</button>
         </>
       ) : (
         <button onClick={run(onDrillDown)} role="menuitem" type="button">
-          下钻为…
-        </button>
+          {t("下钻为…")}</button>
       )}
     </div>
   );
