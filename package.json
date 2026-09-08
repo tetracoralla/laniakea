@@ -22,7 +22,7 @@
     "typecheck:mcp": "tsc --noEmit -p tsconfig.mcp.json",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
-    "test": "vitest run --maxWorkers=2",
+    "test": "vitest run --maxWorkers=2 --exclude src/model/markdown.performance.test.ts && vitest run src/model/markdown.performance.test.ts --maxWorkers=1",
     "test:watch": "vitest",
     "check:regression": "npm run check:graph-view-compiler && npm test && npm run build:web && npm run check:mcp && npm run check:release-hygiene && npm run build:desktop-notices && cargo test --manifest-path src-tauri/Cargo.toml",
     "check:release-hygiene": "node scripts/checkReleaseHygiene.mjs",

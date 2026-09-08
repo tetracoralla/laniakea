@@ -50,24 +50,6 @@ describe("Markdown import and export", () => {
     expect(document.nodes["imported-3"].parentId).toBe("imported-2");
   });
 
-  it("parses a 5,000-node outline within the large-document budget", () => {
-    const markdown = [
-      "- 大图性能样本",
-      ...Array.from(
-        { length: 4_999 },
-        (_, index) => `  - 节点 ${index + 1}`,
-      ),
-    ].join("\n");
-    const startedAt = performance.now();
-    const parsed = parseMarkdownDocument(markdown, "性能样本");
-    const elapsed = performance.now() - startedAt;
-
-    expect(Object.keys(parsed.document.nodes)).toHaveLength(5_000);
-    // Keep enough headroom for Vitest's parallel workers while still catching
-    // a material regression beyond the 1,000-node / 1-second product target.
-    expect(elapsed).toBeLessThan(1_500);
-  });
-
   it("round-trips the editable Markdown outline without changing its tree", () => {
     const source = createSeedDocument();
     const parsed = parseMarkdownDocument(
