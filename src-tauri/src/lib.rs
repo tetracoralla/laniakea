@@ -403,6 +403,14 @@ pub fn run() {
                     }
                 });
             }
+            // WebView2 constructs its environment while pumping native window
+            // messages. Expose the window only after native construction has
+            // completed; JavaScript readiness still uses the save handshake.
+            #[cfg(desktop)]
+            if let Some(window) = app.get_webview_window("main") {
+                window.show()?;
+                window.set_focus()?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

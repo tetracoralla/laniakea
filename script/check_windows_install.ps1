@@ -22,7 +22,9 @@ $subsystem = [BitConverter]::ToUInt16($pe, $peHeader + 24 + 68)
 if ($subsystem -ne 2) { throw 'Windows release must use the GUI subsystem' }
 $previousStartupArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
-$appProcess = Start-Process -FilePath $binary -PassThru
+$runtimeOutput = Join-Path $env:RUNNER_TEMP 'laniakea-runtime'
+New-Item -ItemType Directory -Force -Path $runtimeOutput | Out-Null
+$appProcess = Start-Process -FilePath $binary -PassThru -RedirectStandardError (Join-Path $runtimeOutput 'windows-startup-stderr.log')
 try {
   $deadline = (Get-Date).AddSeconds(30)
   do {
@@ -40,6 +42,24 @@ try {
   }
   if ($appProcess.ExitCode -ne 0) { throw 'Installed app exited unsuccessfully' }
   Write-Output 'PASS: installed resources and immediate native close during startup'
+} catch {
+  $startupFailure = $_
+  $appProcess.Refresh()
+  Write-Output ($appProcess | Select-Object Id, HasExited, MainWindowHandle, MainWindowTitle, Responding | ConvertTo-Json)
+  Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq $appProcess.Id -or $_.ParentProcessId -eq $appProcess.Id } |
+    Select-Object Name, ProcessId, ParentProcessId, CommandLine | ConvertTo-Json | Write-Output
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $bounds = [Windows.Forms.SystemInformation]::VirtualScreen
+    $bitmap = [Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    try {
+      $graphics.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
+      $bitmap.Save((Join-Path $runtimeOutput 'windows-native-startup-failure.png'))
+    } finally { $graphics.Dispose(); $bitmap.Dispose() }
+  } catch { Write-Warning "Could not capture the Windows desktop: $_" }
+  throw $startupFailure
 } finally {
   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $previousStartupArguments
   if (!$appProcess.HasExited) { Stop-Process -Id $appProcess.Id }

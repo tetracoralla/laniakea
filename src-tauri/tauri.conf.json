@@ -22,7 +22,7 @@
         "fullscreen": false,
         "decorations": true,
         "transparent": false,
-        "visible": true
+        "visible": false
       }
     ],
     "security": {
