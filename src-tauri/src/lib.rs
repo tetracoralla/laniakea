@@ -409,7 +409,6 @@ pub fn run() {
             #[cfg(desktop)]
             if let Some(window) = app.get_webview_window("main") {
                 window.show()?;
-                window.set_focus()?;
             }
             Ok(())
         })
