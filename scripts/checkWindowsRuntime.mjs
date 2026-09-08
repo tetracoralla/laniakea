@@ -79,11 +79,15 @@ if (mode === "disk") {
       }));
     } else if (mode === "edit") {
       await page.getByRole("application", { name: "思维导图画布" }).waitFor();
+      // Startup close already saved a document. Wait for its read-only node,
+      // then let New finish switching before typing in the new root editor.
+      await page.locator(".mind-node--root .mind-node__content").waitFor();
       await page.getByRole("button", { name: "新建", exact: true }).click();
       const editor = page.getByRole("textbox", { name: "编辑节点", exact: true });
-      if (!(await editor.isVisible())) await page.locator(".mind-node__content").first().dblclick();
+      await editor.waitFor();
       await editor.fill(rootText);
       await editor.press("Tab");
+      await page.getByRole("button", { name: rootText, exact: true }).waitFor();
       await editor.fill(childText);
       await editor.press("Enter");
       await page.getByRole("button", { name: childText, exact: true }).click({ button: "right" });
