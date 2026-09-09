@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 import { useCallback, useRef } from "react";
 import {
   clipboardTextToForest,
@@ -184,7 +185,7 @@ export function useMindMapClipboard({
         return null;
       }
       try {
-        return clipboardTextToForest(value);
+        return clipboardTextToForest(value, t("粘贴内容"));
       } catch (error) {
         notify({
           message:
@@ -236,7 +237,7 @@ export function useMindMapClipboard({
       if (!value.trim()) return false;
       try {
         return pasteForest(
-          clipboardTextToForest(value),
+          clipboardTextToForest(value, t("粘贴内容")),
           operationSessionId,
         );
       } catch (error) {

@@ -7,6 +7,7 @@ import {
 } from "react";
 import { flowContentBounds, type FlowLayoutResult } from "../model/flowLayout";
 import { ignoresSpaceShortcut } from "./useCanvasGestures";
+import { useCanvasPanCursor } from "./useCanvasPanCursor";
 import {
   hasActiveCanvasDrag,
   releaseOwnedPointerCapture,
@@ -44,6 +45,7 @@ interface FlowViewportController {
   contentRef: RefObject<HTMLDivElement | null>;
   fit: () => void;
   focusSelected: () => void;
+  revealEditor: (editor: HTMLElement) => void;
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
@@ -52,6 +54,7 @@ interface FlowViewportController {
   panBy: (x: number, y: number) => void;
   /** Live ref: true while Space is held (the pan modifier). */
   panModifierHeld: RefObject<boolean>;
+  panSurfaceRef: RefObject<HTMLDivElement | null>;
 }
 
 export function useFlowViewport({
@@ -72,6 +75,8 @@ export function useFlowViewport({
     viewport: Viewport;
   } | null>(null);
   const liveViewport = useRef(viewport);
+  const viewportFrame = useRef<number | null>(null);
+  const { panSurfaceRef, setPanCursor } = useCanvasPanCursor();
   const persistTimer = useRef<number | null>(null);
   const viewportDirtyRef = useRef(false);
   const viewportChangeRef = useRef(onViewportChange);
@@ -88,15 +93,43 @@ export function useFlowViewport({
   onSpaceTapRef.current = onSpaceTap;
   layoutRef.current = layout;
 
-  const renderViewport = useCallback((next: Viewport) => {
-    liveViewport.current = next;
+  const paintViewport = useCallback(() => {
+    const next = liveViewport.current;
     if (contentRef.current) {
       contentRef.current.style.transform =
         `translate3d(${next.x}px, ${next.y}px, 0) scale(${next.zoom})`;
     }
   }, []);
 
+  const renderViewport = useCallback((next: Viewport, coalesce = false) => {
+    liveViewport.current = next;
+    // Focus/reveal operations need the new position before reading editor
+    // bounds. Only the high-frequency wheel and pointer stream is deferred.
+    if (!coalesce) {
+      if (viewportFrame.current !== null) {
+        window.cancelAnimationFrame(viewportFrame.current);
+        viewportFrame.current = null;
+      }
+      paintViewport();
+      return;
+    }
+    if (viewportFrame.current !== null) return;
+    viewportFrame.current = window.requestAnimationFrame(() => {
+      viewportFrame.current = null;
+      paintViewport();
+    });
+  }, [paintViewport]);
+
+  const paintPendingViewport = useCallback(() => {
+    if (viewportFrame.current !== null) {
+      window.cancelAnimationFrame(viewportFrame.current);
+      viewportFrame.current = null;
+      paintViewport();
+    }
+  }, [paintViewport]);
+
   const flushViewport = useCallback(() => {
+    paintPendingViewport();
     if (persistTimer.current !== null) {
       window.clearTimeout(persistTimer.current);
       persistTimer.current = null;
@@ -104,10 +137,10 @@ export function useFlowViewport({
     if (!viewportDirtyRef.current) return;
     viewportDirtyRef.current = false;
     viewportChangeRef.current(liveViewport.current);
-  }, []);
+  }, [paintPendingViewport]);
 
-  const scheduleViewport = useCallback((next: Viewport) => {
-    renderViewport(next);
+  const scheduleViewport = useCallback((next: Viewport, coalesce = false) => {
+    renderViewport(next, coalesce);
     viewportDirtyRef.current = true;
     if (persistTimer.current !== null) {
       window.clearTimeout(persistTimer.current);
@@ -119,11 +152,12 @@ export function useFlowViewport({
     const pan = panRef.current;
     if (!pan) return;
     panRef.current = null;
-    releaseOwnedPointerCapture(pan.captureElement, pan.pointerId);
     spaceHeldRef.current = false;
     spaceUsedForPanRef.current = false;
+    setPanCursor(null);
+    releaseOwnedPointerCapture(pan.captureElement, pan.pointerId);
     flushViewport();
-  }, [flushViewport]);
+  }, [flushViewport, setPanCursor]);
 
   useDragInterruption({
     hasActiveDrag: () => panRef.current !== null,
@@ -180,6 +214,31 @@ export function useFlowViewport({
     });
   }, [scheduleViewport, selectedId]);
 
+  const revealEditor = useCallback((editor: HTMLElement) => {
+    // A wheel sample may still be waiting for a frame when editing starts.
+    // Measure the editor in that latest viewport, not the previous paint.
+    paintPendingViewport();
+    const bounds = containerRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
+    const rect = editor.getBoundingClientRect();
+    const insetX = Math.min(84, bounds.width / 4);
+    const insetY = Math.min(84, bounds.height / 4);
+    const left = bounds.left + insetX;
+    const right = bounds.right - insetX;
+    const top = bounds.top + insetY;
+    const bottom = bounds.bottom - insetY;
+    // Leave room for an empty label to grow while the user types. Revealing
+    // only its current edge would immediately clip a longer label again.
+    const x = rect.left < left || rect.right > right
+      ? (left + right - rect.left - rect.right) / 2 : 0;
+    const y = rect.top < top || rect.bottom > bottom
+      ? (top + bottom - rect.top - rect.bottom) / 2 : 0;
+    if (x || y) {
+      const current = liveViewport.current;
+      scheduleViewport({ ...current, x: current.x + x, y: current.y + y });
+    }
+  }, [paintPendingViewport, scheduleViewport]);
+
   useEffect(() => {
     renderViewport(viewport);
   }, [renderViewport, viewport]);
@@ -218,6 +277,10 @@ export function useFlowViewport({
     const container = containerRef.current;
     if (!container) return;
     const handleWheel = (event: WheelEvent) => {
+      if ((event.target as Element | null)?.closest?.("[data-flow-edge-toolbar]")) {
+        if (event.ctrlKey || event.metaKey) event.preventDefault();
+        return;
+      }
       event.preventDefault();
       // Drag math divides by the viewport captured at pointer-down; changing
       // the viewport mid-gesture would slide the dragged content away from
@@ -242,7 +305,7 @@ export function useFlowViewport({
           zoom,
           x: x - contentX * zoom,
           y: y - contentY * zoom,
-        });
+        }, true);
       } else {
         const panDelta = wheelPanPixelDelta(
           event.deltaX,
@@ -254,7 +317,7 @@ export function useFlowViewport({
           ...current,
           x: current.x - panDelta.x,
           y: current.y - panDelta.y,
-        });
+        }, true);
       }
     };
     container.addEventListener("wheel", handleWheel, { passive: false });
@@ -305,12 +368,14 @@ export function useFlowViewport({
       if (!spaceHeldRef.current) {
         spaceHeldRef.current = true;
         spaceUsedForPanRef.current = false;
+        setPanCursor(panRef.current ? "grabbing" : "grab");
       }
     };
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.key !== " " || !spaceHeldRef.current) return;
       event.preventDefault();
       spaceHeldRef.current = false;
+      setPanCursor(panRef.current ? "grabbing" : null);
       if (spaceUsedForPanRef.current) {
         spaceUsedForPanRef.current = false;
         flushViewport();
@@ -321,6 +386,7 @@ export function useFlowViewport({
     const handleBlur = () => {
       if (!spaceHeldRef.current) return;
       spaceHeldRef.current = false;
+      setPanCursor(null);
       if (spaceUsedForPanRef.current) {
         spaceUsedForPanRef.current = false;
         flushViewport();
@@ -334,7 +400,7 @@ export function useFlowViewport({
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", handleBlur);
     };
-  }, [flushViewport]);
+  }, [flushViewport, setPanCursor]);
 
   const panBy = useCallback((x: number, y: number) => {
     if (x === 0 && y === 0) return;
@@ -348,6 +414,7 @@ export function useFlowViewport({
     contentRef,
     fit,
     focusSelected,
+    revealEditor,
     zoomIn,
     zoomOut,
     resetZoom,
@@ -355,6 +422,7 @@ export function useFlowViewport({
     getViewport,
     panBy,
     panModifierHeld: spaceHeldRef,
+    panSurfaceRef,
     bindings: {
       onLostPointerCapture: (event) => {
         if (panRef.current?.pointerId !== event.pointerId) return;
@@ -369,6 +437,7 @@ export function useFlowViewport({
         // main map); right-click must never start a viewport drag.
         if (event.button !== 0 && event.button !== 1) return;
         if (hasActiveCanvasDrag()) return;
+        paintPendingViewport();
         const spacePan = spaceHeldRef.current && event.button === 0;
         if (event.target !== event.currentTarget && !spacePan) return;
         if (spacePan) {
@@ -376,14 +445,16 @@ export function useFlowViewport({
         } else {
           canvasPointerDownRef.current();
         }
+        const captureElement = panSurfaceRef.current ?? event.currentTarget;
         panRef.current = {
-          captureElement: event.currentTarget,
+          captureElement,
           pointerId: event.pointerId,
           x: event.clientX,
           y: event.clientY,
           viewport: liveViewport.current,
         };
-        event.currentTarget.setPointerCapture(event.pointerId);
+        setPanCursor("grabbing");
+        captureElement.setPointerCapture(event.pointerId);
       },
       onPointerMove: (event) => {
         const pan = panRef.current;
@@ -392,12 +463,18 @@ export function useFlowViewport({
           ...pan.viewport,
           x: pan.viewport.x + event.clientX - pan.x,
           y: pan.viewport.y + event.clientY - pan.y,
-        });
+        }, true);
       },
       onPointerUp: (event) => {
         const pan = panRef.current;
         if (pan?.pointerId !== event.pointerId) return;
         panRef.current = null;
+        setPanCursor(spaceHeldRef.current ? "grab" : null);
+        scheduleViewport({
+          ...pan.viewport,
+          x: pan.viewport.x + event.clientX - pan.x,
+          y: pan.viewport.y + event.clientY - pan.y,
+        });
         releaseOwnedPointerCapture(pan.captureElement, pan.pointerId);
         flushViewport();
       },

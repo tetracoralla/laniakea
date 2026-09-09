@@ -21,7 +21,10 @@ export function trapDialogTab(
     containerRef.current?.querySelectorAll<HTMLElement>(
       focusableSelector,
     ) ?? [],
-  ).filter((control) => !control.hasAttribute("hidden"));
+  ).filter((control) =>
+    control.tabIndex >= 0 &&
+    !control.closest("[hidden], [inert], [aria-hidden='true']"),
+  );
   if (controls.length === 0) return;
   const currentIndex = controls.indexOf(
     document.activeElement as HTMLElement,

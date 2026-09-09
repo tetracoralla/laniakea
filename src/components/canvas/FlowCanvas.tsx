@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   forwardRef,
   useCallback,
@@ -168,6 +170,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     },
     ref,
   ) {
+  useLocale();
     const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
     const [connectingFromId, setConnectingFromId] = useState<string | null>(null);
     const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -224,6 +227,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       contentRef,
       fit,
       focusSelected,
+      revealEditor,
       zoomIn,
       zoomOut,
       resetZoom,
@@ -231,6 +235,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       getViewport,
       panBy,
       panModifierHeld,
+      panSurfaceRef,
     } = useFlowViewport({
       layout,
       onCanvasPointerDown: clearCanvasSelection,
@@ -538,7 +543,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
     }, [containerRef, edgeReconnectPicker]);
     return (
       <div
-        aria-label="流程画布"
+        aria-label={t("流程画布")}
         className="flow-canvas"
         data-flow-connecting={
           connection.state || edgeReconnect.state ? "true" : undefined
@@ -560,7 +565,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         onPointerDown={bindings.onPointerDown}
         onDoubleClick={(event) => {
           if (
-            event.target !== event.currentTarget || event.button !== 0 ||
+            (event.target !== event.currentTarget && event.target !== panSurfaceRef.current) ||
+            event.button !== 0 ||
             event.metaKey || event.ctrlKey || event.altKey || event.shiftKey ||
             panModifierHeld.current || hasActiveCanvasDrag() || !keyboardEnabled
           ) return;
@@ -610,6 +616,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         role="application"
         tabIndex={0}
       >
+        <div aria-hidden="true" className="canvas-pan-surface" ref={panSurfaceRef} />
         <div
           className="flow-canvas__content"
           ref={contentRef}
@@ -629,6 +636,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             measureTextWidth={measureTextWidth}
             nodes={space.nodes}
             onChangeLabel={onChangeEdgeLabel}
+            onRevealEditor={revealEditor}
             onChangeRoute={onChangeEdgeRoute}
             onChangeStyle={onChangeEdgeStyle}
             onClearSelection={() => {
@@ -754,13 +762,13 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         )}
         <div aria-live="polite" className="sr-only" role="status">
           {edgeReconnect.targetLabel
-            ? `松开以重接到${edgeReconnect.targetLabel}`
+            ? t("松开以重接到{0}", edgeReconnect.targetLabel)
             : connection.targetLabel
-              ? `松开以连接到${connection.targetLabel}`
+              ? t("松开以连接到{0}", connection.targetLabel)
               : edgeReconnect.state
-                ? "拖动端点到节点的另一侧或其他节点"
+                ? t("拖动端点到节点的另一侧或其他节点")
                 : connection.state
-              ? "拖动到可连接的节点"
+              ? t("拖动到可连接的节点")
               : ""}
         </div>
 
@@ -777,10 +785,10 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         />
 
         <button
-          aria-label="适应内容"
+          aria-label={t("适应内容")}
           className="flow-fit-button"
           onClick={fit}
-          title="适应内容"
+          title={t("适应内容")}
           type="button"
         >
           <Icon name="fit" size={16} />
@@ -858,11 +866,11 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             candidates={edgeReconnectChoice.candidates}
             description={
               edgeReconnectPicker.endpoint === "from"
-                ? "选择新的连线起点；保留当前出口方向"
-                : "选择新的连线终点；保留当前入口方向"
+                ? t("选择新的连线起点；保留当前出口方向")
+                : t("选择新的连线终点；保留当前入口方向")
             }
-            eyebrow="连线端点"
-            listLabel="可连接的步骤"
+            eyebrow={t("连线端点")}
+            listLabel={t("可连接的步骤")}
             onChoose={(nodeId) => {
               onReconnectEdge(
                 edgeReconnectPicker.edgeId,
@@ -875,12 +883,12 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
             onClose={closeEdgeReconnectPicker}
             sourceLabel={
               edgeReconnectChoice.edge.label ||
-              `${space.nodes[edgeReconnectChoice.edge.from]?.text || "未命名步骤"} → ${space.nodes[edgeReconnectChoice.edge.to]?.text || "未命名步骤"}`
+              `${space.nodes[edgeReconnectChoice.edge.from]?.text || t("未命名步骤")} → ${space.nodes[edgeReconnectChoice.edge.to]?.text || t("未命名步骤")}`
             }
             title={
               edgeReconnectPicker.endpoint === "from"
-                ? "重连起点"
-                : "重连终点"
+                ? t("重连起点")
+                : t("重连终点")
             }
           />
         )}

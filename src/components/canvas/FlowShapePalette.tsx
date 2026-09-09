@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t, localizeMessage } from "../../i18n/locale";
 import {
   useEffect,
   useRef,
@@ -37,6 +39,7 @@ const shapes: Array<{ kind: PaletteKind; label: string }> = [
 ];
 
 export function FlowShapePalette({ onDrop, onInsert }: FlowShapePaletteProps) {
+  useLocale();
   const [drag, setDrag] = useState<ShapeDrag | null>(null);
   const dragRef = useRef<ShapeDrag | null>(null);
   const suppressClickRef = useRef(false);
@@ -110,14 +113,14 @@ export function FlowShapePalette({ onDrop, onInsert }: FlowShapePaletteProps) {
   return (
     <>
       <div
-        aria-label="图形栏"
+        aria-label={t("图形栏")}
         className="flow-shape-palette"
         onPointerDown={(event) => event.stopPropagation()}
         role="toolbar"
       >
         {shapes.map(({ kind, label }) => (
           <button
-            aria-label={`添加${label}图形`}
+            aria-label={t("添加{0}图形", localizeMessage(label))}
             className="flow-shape-palette__item"
             key={kind}
             onClick={() => {

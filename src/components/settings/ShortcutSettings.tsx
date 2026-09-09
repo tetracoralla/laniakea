@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t, localizeMessage } from "../../i18n/locale";
 import {
   useEffect,
   useRef,
@@ -24,6 +26,7 @@ export function ShortcutSettings({
   onClose,
   onSave,
 }: ShortcutSettingsProps) {
+  useLocale();
   const [candidate, setCandidate] = useState(currentShortcut);
   const [recording, setRecording] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -65,7 +68,7 @@ export function ShortcutSettings({
     const saved = await onSave(candidate);
     setSaving(false);
     if (saved) onClose();
-    else setError("快捷键未生效，请换一个组合");
+    else setError(t("快捷键未生效，请换一个组合"));
   };
 
   const handleDialogKeyDown = (event: ReactKeyboardEvent) => {
@@ -93,12 +96,12 @@ export function ShortcutSettings({
         role="dialog"
       >
         <div className="shortcut-settings__heading">
-          <h2 id="shortcut-settings-title">唤醒快捷键</h2>
+          <h2 id="shortcut-settings-title">{t("唤醒快捷键")}</h2>
           <span className={registered ? "is-ready" : "is-conflict"}>
-            {registered ? "当前可用" : "当前组合被占用"}
+            {registered ? t("当前可用") : t("当前组合被占用")}
           </span>
         </div>
-        <p>在其他应用中按下这个组合，即可立即唤醒 Laniakea。</p>
+        <p>{t("在其他应用中按下这个组合，即可立即唤醒 Laniakea。")}</p>
         <button
           className={`shortcut-recorder ${recording ? "is-recording" : ""}`}
           onClick={() => {
@@ -110,16 +113,15 @@ export function ShortcutSettings({
           type="button"
         >
           {recording
-            ? "请按下新的组合…"
+            ? t("请按下新的组合…")
             : displayGlobalShortcut(candidate)}
         </button>
         <span aria-live="polite" className="shortcut-settings__error">
-          {error ?? ""}
+          {localizeMessage(error ?? "")}
         </span>
         <div className="shortcut-settings__actions">
           <button onClick={onClose} type="button">
-            取消
-          </button>
+            {t("取消")}</button>
           <button
             className="is-primary"
             disabled={
@@ -128,7 +130,7 @@ export function ShortcutSettings({
             onClick={() => void save()}
             type="button"
           >
-            {saving ? "正在应用" : "应用"}
+            {saving ? t("正在应用") : t("应用")}
           </button>
         </div>
       </section>

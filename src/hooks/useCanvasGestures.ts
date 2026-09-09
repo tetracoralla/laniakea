@@ -30,6 +30,7 @@ import {
   releaseOwnedPointerCapture,
   useDragInterruption,
 } from "./useDragInterruption";
+import { useCanvasPanCursor } from "./useCanvasPanCursor";
 
 interface SelectGesture {
   captureElement: HTMLElement;
@@ -85,6 +86,7 @@ interface CanvasGestureResult {
   selecting: boolean;
   className: string;
   panModifierHeld: RefObject<boolean>;
+  panSurfaceRef: RefObject<HTMLDivElement | null>;
   bindings: CanvasGestureBindings;
 }
 
@@ -125,12 +127,17 @@ export function useCanvasGestures({
   const gestureRef = useRef<CanvasGesture | null>(null);
   const marqueeAutoPanFrame = useRef<number | null>(null);
   const marqueeAutoPanTimestamp = useRef<number | null>(null);
-  const [spaceMode, setSpaceMode] = useState(false);
-  const [gesture, setGestureState] = useState<CanvasGesture | null>(null);
+  const { panSurfaceRef, setPanCursor } = useCanvasPanCursor();
+  const [gesture, setGestureState] = useState<SelectGesture | null>(null);
 
   const setGesture = (next: CanvasGesture | null) => {
+    const previous = gestureRef.current;
     gestureRef.current = next;
-    setGestureState(next);
+    // Panning renders through the viewport ref, without rerendering the map
+    // for Space, pointer-down, or the first movement past the drag threshold.
+    if (next?.kind === "select") setGestureState(next);
+    else if (previous?.kind === "select") setGestureState(null);
+    setPanCursor(next?.kind === "pan" ? "grabbing" : spaceHeld.current ? "grab" : null);
   };
 
   const stopMarqueeAutoPan = () => {
@@ -222,6 +229,9 @@ export function useCanvasGestures({
   const interruptGesture = () => {
     const currentGesture = gestureRef.current;
     if (!currentGesture) return;
+    spaceHeld.current = false;
+    spaceUsedForPan.current = false;
+    setGesture(null);
     if (
       currentGesture.kind === "pan" ||
       currentGesture.viewportMoved
@@ -236,10 +246,6 @@ export function useCanvasGestures({
       currentGesture.pointerId,
     );
     stopMarqueeAutoPan();
-    spaceHeld.current = false;
-    spaceUsedForPan.current = false;
-    setSpaceMode(false);
-    setGesture(null);
   };
 
   useDragInterruption({
@@ -259,8 +265,9 @@ export function useCanvasGestures({
         return;
       }
       event.preventDefault();
+      if (spaceHeld.current) return;
       spaceHeld.current = true;
-      setSpaceMode(true);
+      setPanCursor(gestureRef.current?.kind === "pan" ? "grabbing" : "grab");
     };
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.key !== " " || !spaceHeld.current) return;
@@ -271,13 +278,13 @@ export function useCanvasGestures({
         editingId === null;
       spaceHeld.current = false;
       spaceUsedForPan.current = false;
-      setSpaceMode(false);
+      setPanCursor(gestureRef.current?.kind === "pan" ? "grabbing" : null);
       if (shouldEdit) onSpaceTap();
     };
     const handleBlur = () => {
       spaceHeld.current = false;
       spaceUsedForPan.current = false;
-      setSpaceMode(false);
+      setPanCursor(null);
     };
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
@@ -294,6 +301,7 @@ export function useCanvasGestures({
     onSpaceTap,
     onViewportChange,
     selection.selectedIds.length,
+    setPanCursor,
   ]);
 
   const bindings: CanvasGestureBindings = {
@@ -316,12 +324,12 @@ export function useCanvasGestures({
       if (!wantsPan && !wantsSelection) return;
       event.preventDefault();
       event.currentTarget.focus({ preventScroll: true });
-      event.currentTarget.setPointerCapture(event.pointerId);
 
       if (wantsPan) {
         if (spaceHeld.current) spaceUsedForPan.current = true;
+        const captureElement = panSurfaceRef.current ?? event.currentTarget;
         setGesture({
-          captureElement: event.currentTarget,
+          captureElement,
           kind: "pan",
           pointerId: event.pointerId,
           originX: event.clientX,
@@ -330,9 +338,12 @@ export function useCanvasGestures({
           viewportY: liveViewport.current.y,
           moved: false,
         });
+        // Keep the hand cursor on the capture target as well as the hit target.
+        captureElement.setPointerCapture(event.pointerId);
         return;
       }
 
+      event.currentTarget.setPointerCapture(event.pointerId);
       const bounds = event.currentTarget.getBoundingClientRect();
       const point = {
         x: event.clientX - bounds.left,
@@ -383,7 +394,7 @@ export function useCanvasGestures({
             currentGesture.originY,
         });
         if (moved !== currentGesture.moved) {
-          setGesture({ ...currentGesture, moved });
+          currentGesture.moved = moved;
         }
         return;
       }
@@ -428,14 +439,24 @@ export function useCanvasGestures({
       ) {
         return;
       }
+      // Clear ownership before release; WebKit may deliver lost capture here.
+      setGesture(null);
       releaseOwnedPointerCapture(
         currentGesture.captureElement,
         currentGesture.pointerId,
       );
       stopMarqueeAutoPan();
       if (currentGesture.kind === "pan") {
-        suppressNextClick.current = currentGesture.moved;
-        onViewportChange(liveViewport.current);
+        const next = {
+          ...liveViewport.current,
+          x: currentGesture.viewportX + event.clientX - currentGesture.originX,
+          y: currentGesture.viewportY + event.clientY - currentGesture.originY,
+        };
+        suppressNextClick.current = currentGesture.moved || Math.hypot(
+          event.clientX - currentGesture.originX, event.clientY - currentGesture.originY,
+        ) >= 4;
+        renderViewport(next);
+        onViewportChange(next);
       } else if (
         passedDragThreshold(
           currentGesture.start,
@@ -449,7 +470,6 @@ export function useCanvasGestures({
       } else {
         onSelectionChange(currentGesture.clickSelection);
       }
-      setGesture(null);
     },
     onPointerCancel: (event) => {
       const currentGesture = gestureRef.current;
@@ -475,9 +495,7 @@ export function useCanvasGestures({
       : null;
   const className = [
     "mindmap-canvas",
-    gesture?.kind === "pan" ? "is-panning" : "",
     selecting ? "is-selecting" : "",
-    spaceMode ? "is-space-held" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -488,6 +506,7 @@ export function useCanvasGestures({
     selecting: gesture?.kind === "select",
     className,
     panModifierHeld: spaceHeld,
+    panSurfaceRef,
     bindings,
   };
 }

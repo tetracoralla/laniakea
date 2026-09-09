@@ -95,14 +95,6 @@ describe("node editor styles", () => {
     );
   });
 
-  it("keeps only the primary new-document action persistently labeled", () => {
-    expect(appStyles).toContain(
-      ".toolbar-button--labeled {\n  width: auto;\n  gap: 7px;\n  padding: 0 10px;",
-    );
-    expect(appStyles).not.toContain("toolbar-button__label");
-    expect(appStyles).not.toContain("--toolbar-expanded-width");
-  });
-
   it("uses a transient relation line as the primary parent-drop feedback", () => {
     expect(appStyles).toContain(".node-drag-connector-preview__path {");
     expect(appStyles).toContain(

@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   memo,
   useEffect,
@@ -71,6 +73,7 @@ export const FlowNodeView = memo(function FlowNodeView({
   position,
   selected,
 }: FlowNodeViewProps) {
+  useLocale();
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const commitAfterCompositionRef = useRef(false);
@@ -133,14 +136,14 @@ export const FlowNodeView = memo(function FlowNodeView({
       {editing ? (
         <div className="flow-node__content flow-node__editing">
           <div className="flow-node__text-surface">
-            <div aria-hidden="true" className="flow-node__text-mirror">{draft || "输入步骤"}{"\u200b"}</div>
+            <div aria-hidden="true" className="flow-node__text-mirror">{draft || t("输入步骤")}{"\u200b"}</div>
         <textarea
-          aria-label="编辑流程步骤"
+          aria-label={t("编辑流程步骤")}
           className="flow-node__editor"
           defaultValue={draft}
           ref={editorRef}
           rows={1}
-          placeholder={node.kind === "start" || node.kind === "end" ? "输入文字" : "输入步骤"}
+          placeholder={node.kind === "start" || node.kind === "end" ? t("输入文字") : t("输入步骤")}
           onBlur={(event) => {
             if (composingRef.current) {
               commitAfterCompositionRef.current = true;
@@ -197,14 +200,14 @@ export const FlowNodeView = memo(function FlowNodeView({
           onPointerDown={(event) => onNodePointerDown(node.id, event)}
           type="button"
         >
-          {node.text || (node.kind === "start" || node.kind === "end" ? "输入文字" : "输入步骤")}
+          {node.text || (node.kind === "start" || node.kind === "end" ? t("输入文字") : t("输入步骤"))}
         </button>
       )}
       {!editing && (
         <div className="flow-node__ports">
           {(["up", "right", "down", "left"] as const).map((port) => (
             <button
-              aria-label={`从${port === "up" ? "上方" : port === "right" ? "右侧" : port === "down" ? "下方" : "左侧"}创建或拖线`}
+              aria-label={t("从{0}创建或拖线", port === "up" ? t("上方") : port === "right" ? t("右侧") : port === "down" ? t("下方") : t("左侧"))}
               className={`flow-node__port flow-node__port--${port}`}
               key={port}
               tabIndex={selected ? 0 : -1}

@@ -1,6 +1,9 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   memo,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,7 +36,6 @@ import {
 import { useFlowEdgeRouteDrag } from "../../hooks/useFlowEdgeRouteDrag";
 import { useFlowEdgeLabelDrag } from "../../hooks/useFlowEdgeLabelDrag";
 import { useTextEditorHistory } from "../../hooks/useTextEditorHistory";
-import { EDGE_TONES } from "../../styles/tokens";
 import { FlowEdgeSelectionControls } from "./FlowEdgeSelectionControls";
 
 interface FlowEdgeLayerProps {
@@ -46,6 +48,7 @@ interface FlowEdgeLayerProps {
   measureTextWidth?: TextWidthMeasurer;
   nodes: FlowSpace["nodes"];
   onChangeLabel: (edgeId: string, label: string) => void;
+  onRevealEditor: (editor: HTMLElement) => void;
   onChangeRoute: (edgeId: string, route: FlowEdgeRouteOverride | null) => void;
   onChangeStyle: (edgeId: string, patch: Partial<FlowEdgeStyle>) => void;
   onClearSelection: () => void;
@@ -73,10 +76,10 @@ interface FlowEdgeLayerProps {
 
 function edgeStroke(edge: FlowEdge, selected: boolean): string {
   if (selected) return "var(--violet)";
-  if (edge.style?.tone === "violet") return "var(--violet)";
-  if (edge.style?.tone === "blue") return EDGE_TONES.blue;
-  if (edge.style?.tone === "emerald") return EDGE_TONES.emerald;
-  if (edge.style?.tone === "amber") return EDGE_TONES.amber;
+  if (edge.style?.tone === "violet") return "var(--edge-violet, var(--violet))";
+  if (edge.style?.tone === "blue") return "var(--edge-blue)";
+  if (edge.style?.tone === "emerald") return "var(--edge-emerald)";
+  if (edge.style?.tone === "amber") return "var(--edge-amber)";
   return "color-mix(in srgb, var(--violet) 42%, var(--muted-soft))";
 }
 
@@ -101,6 +104,7 @@ function EndpointMarker({
   endpoint: FlowConnectorEndpoint;
   id: string;
 }) {
+  useLocale();
   if (endpoint === "none") return null;
   return (
     <marker
@@ -141,6 +145,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   measureTextWidth,
   nodes,
   onChangeLabel,
+  onRevealEditor,
   onChangeRoute,
   onChangeStyle,
   onClearSelection,
@@ -154,6 +159,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   spaceId,
   zoom,
 }: FlowEdgeLayerProps) {
+  useLocale();
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const commitAfterCompositionRef = useRef(false);
@@ -207,13 +213,17 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
       y: anchor.y + offset.y - size.height / 2, ...size }];
   }), [routes, edgeLabelOffsets, measureTextWidth]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!editingEdgeId) return;
     editFinishedByKeyRef.current = false;
+    // A pinned toolbar can remain reachable after its connection is panned
+    // off-screen. Reveal this explicit editing target once, never on typing,
+    // locale changes, or subsequent manual panning.
+    if (editorRef.current) onRevealEditor(editorRef.current);
     editorRef.current?.focus({ preventScroll: true });
     editorRef.current?.select();
     if (editorRef.current) editorHistory.reset(editorRef.current);
-  }, [editingEdgeId]);
+  }, [editingEdgeId, onRevealEditor]);
 
   useEffect(() => {
     if (editingEdgeId && !edges.some((edge) => edge.id === editingEdgeId)) {
@@ -244,7 +254,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
   return (
     <>
       <svg
-        aria-label="流程连线"
+        aria-label={t("流程连线")}
         className="flow-connectors"
         height={layout.height}
         style={{ left: layout.minX, top: layout.minY }}
@@ -305,7 +315,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
                 style={pathStyle}
               />
               <path
-                aria-label={`选择连线：${nodes[edge.from]?.text || "未命名步骤"} 到 ${nodes[edge.to]?.text || "未命名步骤"}`}
+                aria-label={t("选择连线：{0} 到 {1}", nodes[edge.from]?.text || t("未命名步骤"), nodes[edge.to]?.text || t("未命名步骤"))}
                 aria-pressed={selectedEdgeId === edge.id}
                 className="flow-connector__hit"
                 d={flowConnectorPathFromRoute(
@@ -389,7 +399,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
         return editingEdgeId === edge.id ? (
           <textarea
             rows={1}
-            aria-label="编辑分支名称"
+            aria-label={t("编辑分支名称")}
             className="flow-edge-label flow-edge-label__editor"
             key={edge.id}
             onBlur={(event) => {
@@ -446,7 +456,7 @@ export const FlowEdgeLayer = memo(function FlowEdgeLayer({
           />
         ) : (
           <button
-            aria-label={`编辑分支名称：${edge.label}`}
+            aria-label={t("编辑分支名称：{0}", edge.label)}
             className="flow-edge-label"
             key={edge.id}
             onClick={(event) => { event.stopPropagation(); onSelectEdge(edge.id, false); }}

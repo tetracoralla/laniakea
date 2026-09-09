@@ -78,7 +78,20 @@ if (mode === "disk") {
         return result;
       }));
     } else if (mode === "edit") {
+      // The hosted Windows runner uses English. Verify system-language startup,
+      // then choose Chinese through the same settings a person uses; the rest
+      // of the editing checks intentionally use the Chinese UI and user text.
+      await page.getByRole("application", { name: "Mind map canvas" }).waitFor();
+      assert.equal(await page.locator("html").getAttribute("lang"), "en");
+      await page.getByRole("button", { name: "More", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Language / 语言", exact: true }).click();
+      await page.getByRole("radio", { name: "简体中文", exact: true }).click();
+      await page.getByRole("button", { name: "关闭语言设置", exact: true }).click();
       await page.getByRole("application", { name: "思维导图画布" }).waitFor();
+      assert.equal(await page.locator("html").getAttribute("lang"), "zh-CN");
+      await page.getByRole("button", { name: "更多", exact: true }).click();
+      await page.getByRole("menuitem", { name: "切换到深色模式", exact: true }).click();
+      assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
       // Startup close already saved a document. Wait for its read-only node,
       // then let New finish switching before typing in the new root editor.
       await page.locator(".mind-node--root .mind-node__content").waitFor();
@@ -90,6 +103,11 @@ if (mode === "disk") {
       await page.getByRole("button", { name: rootText, exact: true }).waitFor();
       await editor.fill(childText);
       await editor.press("Enter");
+      await page.getByRole("button", { name: rootText, exact: true }).click();
+      await page.keyboard.press("Control+Backslash");
+      await page.getByRole("button", { name: childText, exact: true }).waitFor({ state: "hidden" });
+      await page.keyboard.press("Control+Backslash");
+      await page.getByRole("button", { name: childText, exact: true }).waitFor();
       await page.getByRole("button", { name: childText, exact: true }).click({ button: "right" });
       await page.getByRole("menuitem", { name: "下钻为…" }).click();
       await page.getByRole("radio", { name: /^流程/ }).click();
@@ -108,16 +126,18 @@ if (mode === "disk") {
       await page.getByRole("button", { name: childText, exact: true }).dblclick();
       await editor.fill(finalText);
       // Leave this textarea uncommitted. PowerShell now sends native WM_CLOSE.
-      console.log("PASS: installed editor created a mind map and a Flow; last edit awaits native close");
+      console.log("PASS: system English, Chinese selection, dark theme and Ctrl+\\; installed editor created a mind map and a Flow; last edit awaits native close");
     } else {
       await page.getByRole("application", { name: "思维导图画布" }).waitFor();
+      assert.equal(await page.locator("html").getAttribute("lang"), "zh-CN");
+      assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
       await page.getByRole("button", { name: rootText, exact: true }).waitFor();
       await page.getByRole("button", { name: finalText, exact: true }).waitFor();
       await page.locator(".subspace-portal__content").filter({ hasText: flowText }).dblclick();
       await page.locator(".flow-node__content").filter({ hasText: flowText }).waitFor();
       await page.screenshot({ path: path.join(output, `windows-${mode}.png`) });
       await page.getByRole("button", { name: "返回上层图" }).click();
-      console.log(`PASS: ${mode} preserved visible mind-map and Flow content`);
+      console.log(`PASS: ${mode} preserved visible mind-map and Flow content, language and theme`);
     }
     assert.deepEqual(errors, [], "Uncaught errors in the installed WebView");
   } catch (error) {

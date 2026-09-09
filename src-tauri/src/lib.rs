@@ -1,3 +1,4 @@
+mod interface_language;
 mod preferences;
 mod storage;
 
@@ -414,6 +415,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             desktop_runtime_status,
+            interface_language::set_interface_language,
             register_application_exit_listener,
             reveal_document_in_file_manager,
             resolve_application_exit,

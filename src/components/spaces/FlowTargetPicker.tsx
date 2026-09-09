@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FlowNode } from "../../types/mindmap";
 import { isInputMethodKey } from "../../model/inputMethod";
@@ -29,13 +31,14 @@ const visibleOptionLimit = 20;
 export function FlowTargetPicker({
   candidates,
   description,
-  eyebrow = "流程汇合",
-  listLabel = "可汇合的步骤",
+  eyebrow = t("流程汇合"),
+  listLabel = t("可汇合的步骤"),
   onChoose,
   onClose,
   sourceLabel,
-  title = "选择已有步骤",
+  title = t("选择已有步骤"),
 }: FlowTargetPickerProps) {
+  useLocale();
   const titleId = useId();
   const listId = useId();
   const optionIdPrefix = useId();
@@ -88,19 +91,19 @@ export function FlowTargetPicker({
             <p>{eyebrow}</p>
             <h2 id={titleId}>{title}</h2>
           </div>
-          <button aria-label="关闭" onClick={onClose} type="button">
+          <button aria-label={t("关闭")} onClick={onClose} type="button">
             <Icon aria-hidden="true" name="close" size={16} />
           </button>
         </header>
         <p className="flow-target-picker__source">
-          {description ?? `从“${sourceLabel || "未命名步骤"}”连接`}
+          {description ?? t("从“{0}”连接", sourceLabel || t("未命名步骤"))}
         </p>
         <input
           aria-activedescendant={activeOptionId}
           aria-autocomplete="list"
           aria-controls={listId}
           aria-expanded="true"
-          aria-label="搜索已有步骤"
+          aria-label={t("搜索已有步骤")}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
             if (isInputMethodKey(event.nativeEvent)) return;
@@ -118,7 +121,7 @@ export function FlowTargetPicker({
               onChoose(results.activeItem.id);
             }
           }}
-          placeholder="搜索步骤…"
+          placeholder={t("搜索步骤…")}
           ref={inputRef}
           role="combobox"
           value={query}
@@ -130,7 +133,7 @@ export function FlowTargetPicker({
           role="listbox"
         >
           {results.total === 0 ? (
-            <div className="flow-target-picker__empty">没有可连接的步骤</div>
+            <div className="flow-target-picker__empty">{t("没有可连接的步骤")}</div>
           ) : visibleItems.map((node, index) => (
             <button
               aria-selected={activeIndex === pageStart + index}
@@ -142,8 +145,8 @@ export function FlowTargetPicker({
               role="option"
               type="button"
             >
-              <span title={node.text}>{node.text || "未命名步骤"}</span>
-              <small>{kindLabel[node.kind]}</small>
+              <span title={node.text}>{node.text || t("未命名步骤")}</span>
+              <small>{t(kindLabel[node.kind])}</small>
             </button>
           ))}
         </div>

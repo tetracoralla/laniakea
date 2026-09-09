@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 import { isDesktopRuntime } from "./localDocumentStore";
 import {
   documentParentDirectory,
@@ -97,7 +98,7 @@ export async function chooseDocumentToOpen(
     multiple: false,
     filters: [
       {
-        name: "Markdown 与 Laniakea 备份",
+        name: t("Markdown 与 Laniakea 备份"),
         extensions: ["json", "md", "markdown", "txt"],
       },
     ],
@@ -120,7 +121,7 @@ export async function chooseNativeDocumentPath(
     ),
     filters: [
       {
-        name: "Laniakea 思维导图",
+        name: t("Laniakea 思维导图"),
         extensions: ["json"],
       },
     ],
@@ -143,7 +144,7 @@ export async function chooseMarkdownDocumentPath(
     ),
     filters: [
       {
-        name: "Markdown 思维导图",
+        name: t("Markdown 思维导图"),
         extensions: ["md"],
       },
     ],

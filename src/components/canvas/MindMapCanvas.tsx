@@ -1,3 +1,6 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
+import { darkBranchTones } from "../../theme/darkBranchTones";
 import {
   forwardRef,
   useCallback,
@@ -144,6 +147,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
     },
     ref,
   ) {
+    const locale = useLocale();
     const selectedSubspaceAnchorId =
       interactionTarget.kind === "subspace-portal"
         ? interactionTarget.anchorNodeId
@@ -226,6 +230,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         document.rootId,
         document.spaces,
         measureTextWidth,
+        locale,
       ],
     );
     useLayoutEffect(() => {
@@ -293,6 +298,8 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         measureTextWidth,
       ],
     );
+    const darkTones = useMemo(() => darkBranchTones(document),
+      [document.nodes, document.rootId, document.floatingRoots]);
     visibleIdsRef.current = layout.visibleIds;
     const viewport = document.viewport;
 
@@ -452,6 +459,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       selecting,
       className,
       panModifierHeld,
+      panSurfaceRef,
       bindings,
     } = useCanvasGestures({
       layout,
@@ -747,7 +755,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
 
     return (
       <div
-        aria-label="思维导图画布"
+        aria-label={t("思维导图画布")}
         className={className}
         onClickCapture={(event) => {
           nodeDragBindings.onClickCapture(event);
@@ -801,6 +809,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         role="application"
         tabIndex={0}
       >
+        <div aria-hidden="true" className="canvas-pan-surface" ref={panSurfaceRef} />
         <div
           className="mindmap-canvas__content"
           ref={contentRef}
@@ -812,6 +821,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           }}
         >
           <Connectors
+            darkTones={darkTones}
             document={document}
             layout={layout}
             renderedPortalAnchorIds={renderedPortalAnchorIds}
@@ -835,6 +845,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
               selectedIdSet.has(id) && selectedSubspaceAnchorId !== id;
             return (
               <MindMapNode
+                darkTone={darkTones[id]}
                 draft={draftForNode(id, editingId, draft)}
                 editing={editingId === id}
                 key={id}
@@ -874,6 +885,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
             if (!space || !portalLayout) return null;
             return (
               <SubspacePortalNode
+                darkTone={darkTones[anchorId]}
                 anchorId={anchorId}
                 canMoveTo={(targetId) =>
                   targetId !== anchorId &&
@@ -913,10 +925,10 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           ref={dragAnnouncementRef}
         >
           {selection.selectedIds.length === 0
-            ? "未选择节点"
+            ? t("未选择节点")
             : selection.selectedIds.length === 1
-              ? "已选择 1 个节点"
-              : `已选择 ${selection.selectedIds.length} 个节点`}
+              ? t("已选择 1 个节点")
+              : t("已选择 {0} 个节点", selection.selectedIds.length)}
         </div>
       </div>
     );

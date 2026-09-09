@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 import {
   useCallback,
   useEffect,
@@ -261,7 +262,7 @@ export function useFlowEdgeReconnect({
     [state],
   );
   const targetLabel = state?.targetId
-    ? space.nodes[state.targetId]?.text || "未命名步骤"
+    ? space.nodes[state.targetId]?.text || t("未命名步骤")
     : null;
   const preview = state
     ? state.endpoint === "from"

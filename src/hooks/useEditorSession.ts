@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 import {
   useCallback,
   useRef,
@@ -7,7 +8,6 @@ import {
 } from "react";
 import {
   adoptRootTextTitle,
-  importedPasteTitle,
 } from "../model/clipboard";
 import { isBlankMindMapDocument } from "../model/document";
 import { parseMarkdownDocument } from "../model/markdown";
@@ -270,8 +270,8 @@ export function useEditorSession({
       ) {
         return false;
       }
-      const parsed = parseMarkdownDocument(value, importedPasteTitle);
-      const document = adoptRootTextTitle(parsed.document, importedPasteTitle);
+      const parsed = parseMarkdownDocument(value, t("粘贴内容"));
+      const document = adoptRootTextTitle(parsed.document, t("粘贴内容"));
       cancelledEdit.current = id;
       setEditingId(null);
       setDraft("");

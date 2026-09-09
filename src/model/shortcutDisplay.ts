@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 /**
  * Platform-aware shortcut display. macOS keeps the compact modifier glyphs
  * (⌘⌥⇧⌃) joined without separators; Windows/Linux spell modifiers out and
@@ -44,7 +45,7 @@ const pcParts: Record<string, string> = {
 export function displayShortcutParts(parts: readonly string[]): string {
   const glyphs = isMacLikePlatform() ? macParts : pcParts;
   const joiner = isMacLikePlatform() ? "" : "+";
-  return parts.map((part) => glyphs[part] ?? part).join(joiner);
+  return parts.map((part) => part === "Space" ? t("空格") : glyphs[part] ?? part).join(joiner);
 }
 
 export function displayShortcutCombination(shortcut: string): string {
@@ -54,6 +55,6 @@ export function displayShortcutCombination(shortcut: string): string {
 /** Hint text for the recorder: which primary modifiers start a combination. */
 export function primaryModifierHint(): string {
   return isMacLikePlatform()
-    ? "请同时按住 ⌘、⌃ 或 ⌥"
-    : "请同时按住 Ctrl 或 Alt";
+    ? t("请同时按住 ⌘、⌃ 或 ⌥")
+    : t("请同时按住 Ctrl 或 Alt");
 }

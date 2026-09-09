@@ -85,6 +85,20 @@ describe("command registry context isolation", () => {
     );
   });
 
+  it("toggles child visibility with Command/Ctrl-backslash while preserving the old slash binding", () => {
+    for (const modifiers of [{ metaKey: true }, { ctrlKey: true }]) {
+      for (const key of ["\\", "/"]) {
+        const event = keyboardEvent(key, modifiers);
+        expect(findCommandForEvent(event, "selection", "mind-node")?.id).toBe("node.toggle");
+        expect(findCommandForEvent(event, "editing")).toBeUndefined();
+        expect(findCommandForEvent(event, "global")).toBeUndefined();
+        expect(findCommandForEvent(event, "selection", "subspace-portal")).toBeUndefined();
+        expect(findCommandForEvent(event, "selection", "flow")).toBeUndefined();
+      }
+    }
+    expect(findCommandForEvent(keyboardEvent("\\"), "selection")).toBeUndefined();
+  });
+
   it("routes Command-Enter to inserting a parent topic", () => {
     const event = keyboardEvent("Enter", { metaKey: true });
     expect(findCommandForEvent(event, "selection")?.id).toBe(

@@ -8,7 +8,7 @@ import {
   estimateTextWidth,
   type NodeTextStyle,
   type TextWidthMeasurer,
-} from "./layout";
+} from "./textMetrics";
 
 export const FLOW_STEP_NODE_WIDTH = 196;
 export const FLOW_STEP_NODE_HEIGHT = 54;

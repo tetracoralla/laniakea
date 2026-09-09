@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   memo,
   useCallback,
@@ -13,10 +15,11 @@ import {
   releaseOwnedPointerCapture,
   useDragInterruption,
 } from "../../hooks/useDragInterruption";
-import type { LaniakeaSpace, LayoutNode } from "../../types/mindmap";
+import type { BranchTone, LaniakeaSpace, LayoutNode } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
 
 interface SubspacePortalNodeProps {
+  darkTone?: BranchTone;
   anchorId: string;
   canMoveTo: (nodeId: string) => boolean;
   layout: LayoutNode;
@@ -45,6 +48,7 @@ interface PortalDragState {
 const dragThreshold = 5;
 
 export const SubspacePortalNode = memo(function SubspacePortalNode({
+  darkTone,
   anchorId,
   canMoveTo,
   layout,
@@ -56,10 +60,11 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
   space,
   zoom,
 }: SubspacePortalNodeProps) {
+  const locale = useLocale();
   const containerRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<PortalDragState | null>(null);
   const suppressClickRef = useRef(false);
-  const preview = useMemo(() => subspacePreview(space), [space]);
+  const preview = useMemo(() => subspacePreview(space), [space, locale]);
 
   const clearDropTarget = useCallback(() => {
     document
@@ -150,6 +155,7 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
     <div
       className={`subspace-portal subspace-portal--${space.type} subspace-portal--${layout.tone} subspace-portal--${layout.depth === 1 ? "branch" : layout.depth === 2 ? "secondary" : "leaf"} ${selected ? "is-selected" : ""}`}
       data-subspace-anchor-id={anchorId}
+      data-dark-tone={darkTone}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -167,7 +173,7 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
       } as CSSProperties}
     >
       <button
-        aria-label={`${preview.typeLabel}概要：${preview.text}`}
+        aria-label={t("{0}概要：{1}", preview.typeLabel, preview.text)}
         aria-pressed={selected}
         className="subspace-portal__content"
         onClick={(event) => {
@@ -210,7 +216,7 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
           onOpen(anchorId);
         }}
         onPointerDown={(event) => event.stopPropagation()}
-        title={`进入${preview.typeLabel}`}
+        title={t("进入{0}", preview.typeLabel)}
         type="button"
       >
         <Icon name="layers" size={14} />

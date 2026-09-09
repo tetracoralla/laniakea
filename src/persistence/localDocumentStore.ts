@@ -1,3 +1,4 @@
+import { t } from "../i18n/locale";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   parseMindMapDocument,
@@ -153,8 +154,8 @@ export function isMarkdownDocumentPath(path: string | null): boolean {
 function titleFromPath(path: string | null): string {
   const fileName = path?.split(/[\\/]/).pop() ?? "导入的思维";
   const title = fileName.replace(/\.(md|markdown|txt)$/i, "");
-  return isInternalDocumentPath(path ?? "") && /^未命名思维-\d+$/.test(title)
-    ? "未命名思维"
+  return isInternalDocumentPath(path ?? "") && /^(?:未命名思维|Untitled mind map)-\d+$/.test(title)
+    ? t("未命名思维")
     : title;
 }
 

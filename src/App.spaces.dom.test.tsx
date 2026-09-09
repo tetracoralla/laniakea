@@ -69,6 +69,41 @@ describe("space creation through the editor", () => {
     vi.unstubAllGlobals();
   });
 
+  it("toggles the selected branch with Command-backslash and preserves content through save and reload", async () => {
+    const before = documentToMarkdown((await loadActiveBrowserDocument())!.document);
+    await click("[data-node-id='path'] .mind-node__content");
+    await press(query(".mindmap-canvas"), "\\", { metaKey: true, code: "Backslash" });
+    expect(query("[data-node-id='path-1']")).toBeNull();
+    expect(query("[data-node-id='path'] .mind-node__content").getAttribute("aria-pressed")).toBe("true");
+    const collapsed = await save();
+    expect(collapsed.nodes.path.collapsed).toBe(true);
+    expect(documentToMarkdown(collapsed)).toBe(before);
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => { root.render(<App />); await settle(); });
+    await vi.waitFor(async () => { await act(settle); expect(query("[data-node-id='path']")).not.toBeNull(); });
+    expect(query("[data-node-id='path-1']")).toBeNull();
+    await click("[data-node-id='path'] .mind-node__content");
+    await press(query(".mindmap-canvas"), "\\", { metaKey: true, code: "Backslash" });
+    expect(query("[data-node-id='path-1']")).not.toBeNull();
+
+    // The key must not end an active edit or collapse its node.
+    await doubleClick(query("[data-node-id='path'] .mind-node__content"));
+    const editor = query("[aria-label='编辑节点']");
+    await press(editor, "\\", { metaKey: true, code: "Backslash" });
+    expect(query("[aria-label='编辑节点']")).toBe(editor);
+    expect(query("[data-node-id='path-1']")).not.toBeNull();
+    await press(editor, "Escape");
+
+    // The previous shortcut remains available for existing users.
+    await press(query(".mindmap-canvas"), "/", { metaKey: true });
+    expect(query("[data-node-id='path-1']")).toBeNull();
+    await press(query(".mindmap-canvas"), "\\", { metaKey: true });
+    expect(query("[data-node-id='path-1']")).not.toBeNull();
+    expect(documentToMarkdown(await save())).toBe(before);
+  });
+
   it("starts Flow empty, creates independent ideas, updates only its summary, and reopens durable content", async () => {
     await click("[data-node-id='path'] .mind-node__content");
     await press(query(".mindmap-canvas"), "F10", { shiftKey: true });
@@ -149,6 +184,11 @@ describe("space creation through the editor", () => {
     await press(query(".mindmap-canvas"), "Tab");
     await type("[aria-label='编辑节点']", "更深细节");
     await press(query("[aria-label='编辑节点']"), "Enter");
+    await click(`[data-node-id='${centerId}'] .mind-node__content`);
+    await press(query(".mindmap-canvas"), "\\", { metaKey: true });
+    expect(query(".mindmap-canvas").textContent).not.toContain("二级想法");
+    await press(query(".mindmap-canvas"), "\\", { metaKey: true });
+    expect(query(".mindmap-canvas").textContent).toContain("更深细节");
     await doubleClick(query(".mindmap-canvas"), 180, 210);
     await type("[aria-label='编辑节点']", "浮动想法");
     await press(query("[aria-label='编辑节点']"), "Enter");

@@ -146,6 +146,12 @@ describe("FlowCanvas", () => {
     expect(onViewportChange).not.toHaveBeenCalled(); // Its 120ms persistence debounce has not fired.
     expect(onAddShape).toHaveBeenCalledExactlyOnceWith("step", { x: 612, y: 396 }, {});
     onAddShape.mockClear();
+    // Chrome targets the click at the element that captured pointer-up.
+    // A blank-canvas double-click still creates a step after releasing pan.
+    const panSurface = container.querySelector<HTMLElement>(".canvas-pan-surface")!;
+    await act(async () => doubleClick(panSurface));
+    expect(onAddShape).toHaveBeenCalledExactlyOnceWith("step", { x: 612, y: 396 }, {});
+    onAddShape.mockClear();
     await act(async () => {
       doubleClick(container.querySelector(".flow-shape-palette button")!);
       doubleClick(canvas, { shiftKey: true });
@@ -154,6 +160,7 @@ describe("FlowCanvas", () => {
       canvas.focus();
       canvas.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: " " }));
       doubleClick(canvas);
+      doubleClick(panSurface);
       canvas.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " " }));
     });
     expect(onAddShape).not.toHaveBeenCalled();
@@ -1385,6 +1392,20 @@ describe("FlowCanvas", () => {
       )!.click();
     });
     expect(container.querySelector(".flow-edge-style-panel")).not.toBeNull();
+    const panel = container.querySelector<HTMLElement>(".flow-edge-style-panel")!;
+    const content = container.querySelector<HTMLElement>(".flow-canvas__content")!;
+    const transformBefore = content.style.transform;
+    const scroll = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 });
+    const pinch = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120, ctrlKey: true });
+    await act(async () => {
+      panel.querySelector("button")!.dispatchEvent(scroll);
+      panel.querySelector("button")!.dispatchEvent(pinch);
+    });
+    // The panel may scroll in a short window, without panning the document or
+    // invoking browser zoom. This includes events on its nested controls.
+    expect(scroll.defaultPrevented).toBe(false);
+    expect(pinch.defaultPrevented).toBe(true);
+    expect(content.style.transform).toBe(transformBefore);
     await act(async () => {
       container.querySelector<HTMLButtonElement>("[aria-label='曲线']")!.click();
       container.querySelector<HTMLButtonElement>("[aria-label='虚线']")!.click();
@@ -1453,6 +1474,106 @@ describe("FlowCanvas", () => {
     });
     expect(renderedSpace.edgeRoutes?.[added.space.edges[0].id])
       .toEqual(expect.objectContaining({ axis, coordinate: expect.any(Number) }));
+    const curved = panel.querySelector<HTMLButtonElement>("[aria-label='曲线']")!;
+    await act(async () => curved.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape", bubbles: true, cancelable: true,
+    })));
+    expect(container.querySelector(".flow-edge-style-panel")).toBeNull();
+    expect(container.querySelector(".flow-edge-toolbar")).not.toBeNull();
+    const styleButton = container.querySelector<HTMLButtonElement>("[aria-label='调整连线样式']")!;
+    await act(async () => styleButton.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape", bubbles: true, cancelable: true,
+    })));
+    expect(container.querySelector(".flow-edge-toolbar")).toBeNull();
+  });
+
+  it.each([
+    { zoom: 1, delta: 1600, label: "", offset: 0 },
+    { zoom: 0.5, delta: -1600, label: "已有原文 · Label", offset: 700 },
+    { zoom: 2, delta: 1600, label: "已有原文 · Label", offset: -500 },
+  ])("reveals the label editor from a pinned toolbar at zoom $zoom, then respects continued pan", async ({ zoom, delta, label, offset }) => {
+    const created = createFlowWithStep(createSeedDocument(), "path");
+    const initial = flowSpaceForNode(created.document, "path")!;
+    const added = addFlowNodeAfter(initial, created.selectedFlowNodeId, "step");
+    const edge = added.space.edges[0];
+    const space = {
+      ...added.space,
+      viewport: { x: 0, y: 0, zoom },
+      edges: [{ ...edge, label }],
+      edgeLabelOffsets: { [edge.id]: { x: offset, y: offset } },
+    };
+    const onChangeEdgeLabel = vi.fn();
+    const onViewportChange = vi.fn();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("flow-canvas")) return new DOMRect(0, 0, 760, 320);
+      if (this.classList.contains("flow-edge-label__editor")) {
+        const content = container.querySelector<HTMLElement>(".flow-canvas__content")!;
+        const translation = /translate3d\(([-\d.]+)px, ([-\d.]+)px/.exec(content.style.transform)!;
+        const width = Number.parseFloat(this.style.width);
+        return new DOMRect(
+          Number(translation[1]) + (Number.parseFloat(this.style.left) - width / 2) * zoom,
+          Number(translation[2]) + (Number.parseFloat(this.style.top) - 13) * zoom,
+          width * zoom, 26 * zoom,
+        );
+      }
+      return new DOMRect();
+    });
+    await act(async () => root.render(
+      <FlowCanvas
+        space={space} selectedId={null} editingId={null} draft=""
+        onAddBranch={vi.fn()} onAddNext={vi.fn()} onBeginEdit={vi.fn()}
+        onCancelEdit={vi.fn()} onCommitEdit={vi.fn()} onChangeKind={vi.fn()}
+        onChangeEdgeLabel={onChangeEdgeLabel} onConnect={vi.fn()}
+        onDelete={vi.fn()} onDraftChange={vi.fn()} onSelect={vi.fn()}
+        onViewportChange={onViewportChange}
+      />,
+    ));
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    const content = container.querySelector<HTMLElement>(".flow-canvas__content")!;
+    await act(async () => {
+      container.querySelector(".flow-connector__hit")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      canvas.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaX: delta, deltaY: delta }));
+    });
+    const beforeEdit = content.style.transform;
+    await act(async () => container.querySelector<HTMLButtonElement>(
+      label ? "[aria-label='编辑连线文字']" : "[aria-label='添加连线文字']",
+    )!.click());
+    const editor = container.querySelector<HTMLTextAreaElement>(".flow-edge-label__editor")!;
+    const bounds = editor.getBoundingClientRect();
+    expect(document.activeElement).toBe(editor);
+    expect(editor.value).toBe(label);
+    expect(bounds.left).toBeGreaterThanOrEqual(84);
+    expect(bounds.right).toBeLessThanOrEqual(676);
+    expect(bounds.top).toBeGreaterThanOrEqual(80);
+    expect(bounds.bottom).toBeLessThanOrEqual(240);
+    expect(content.style.transform).not.toBe(beforeEdit);
+    expect(content.style.transform).toContain(`scale(${zoom})`);
+    expect(onChangeEdgeLabel).not.toHaveBeenCalled();
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "继续输入一条较长的连线说明 · A longer connection label");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(editor.getBoundingClientRect().left).toBeGreaterThanOrEqual(0);
+    expect(editor.getBoundingClientRect().right).toBeLessThanOrEqual(760);
+
+    // Continued manual pan and typing must not repeatedly reveal the editor.
+    await act(async () => canvas.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, deltaX: 900, deltaY: 900,
+    })));
+    const afterPan = content.style.transform;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "继续编辑 · Continued");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(editor.value).toBe("继续编辑 · Continued");
+    expect(content.style.transform).toBe(afterPan);
+    await act(async () => editor.dispatchEvent(new KeyboardEvent("keydown", {
+      bubbles: true, cancelable: true, key: "Escape",
+    })));
+    expect(container.querySelector(".flow-edge-label__editor")).toBeNull();
+    expect(onChangeEdgeLabel).not.toHaveBeenCalled();
+    expect(space.edges[0].label).toBe(label);
   });
 
   it("keeps connector controls and hit areas usable when the canvas is zoomed out", async () => {
@@ -1497,14 +1618,10 @@ describe("FlowCanvas", () => {
       .toBe("20");
     expect(container.querySelector(".flow-edge-route-handle")?.getAttribute("r"))
       .toBe("22");
-    expect(
-      container.querySelector<HTMLElement>(".flow-edge-toolbar-anchor")
-        ?.style.getPropertyValue("--flow-edge-toolbar-offset"),
-    ).toBe("36px");
-    expect(
-      container.querySelector<HTMLElement>(".flow-edge-toolbar-shell")
-        ?.style.getPropertyValue("--flow-edge-toolbar-scale"),
-    ).toBe("2");
+    // Controls retain screen-space size, outside the zoomed content surface.
+    const shell = container.querySelector<HTMLElement>(".flow-edge-toolbar-shell")!;
+    expect(shell.parentElement).toBe(container.querySelector(".flow-canvas"));
+    expect(shell.closest(".flow-canvas__content")).toBeNull();
   });
 
   it("keeps a directional arrow on a selected edge and highlights its marker", async () => {

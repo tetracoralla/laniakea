@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import { useEffect, useId, useRef } from "react";
 import { trapDialogTab } from "./focus";
 
@@ -14,6 +16,7 @@ export function DeleteSubspaceDialog({
   onConfirm,
   typeLabel,
 }: DeleteSubspaceDialogProps) {
+  useLocale();
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLElement>(null);
@@ -46,20 +49,18 @@ export function DeleteSubspaceDialog({
         ref={dialogRef}
         role="dialog"
       >
-        <h2 id={titleId}>删除这张{typeLabel}？</h2>
+        <h2 id={titleId}>{t("删除这张{0}？", typeLabel)}</h2>
         <p id={descriptionId}>
-          “{nodeLabel.trim() || "未命名节点"}”下的全部内容会被删除，原节点会保留。此操作可撤销。
-        </p>
+          {t("“{0}”下的全部内容会被删除，原节点会保留。此操作可撤销。", nodeLabel.trim() || t("未命名节点"))}</p>
         <div className="delete-subspace-dialog__actions">
           <button onClick={onCancel} ref={cancelRef} type="button">
-            取消
-          </button>
+            {t("取消")}</button>
           <button
             className="delete-subspace-dialog__confirm"
             onClick={onConfirm}
             type="button"
           >
-            删除{typeLabel}
+            {t("删除")}
           </button>
         </div>
       </section>

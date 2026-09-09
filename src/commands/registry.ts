@@ -239,7 +239,8 @@ export const commandRegistry: CommandDefinition[] = [
   {
     id: "node.toggle",
     label: "折叠或展开节点",
-    shortcut: "Meta+/",
+    shortcut: "Meta+\\",
+    aliases: ["Meta+/"],
     contexts: ["selection"],
     targets: ["mind-node"],
     group: "节点",

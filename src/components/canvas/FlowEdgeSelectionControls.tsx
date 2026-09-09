@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { FlowEdgeRouteDragController } from "../../hooks/useFlowEdgeRouteDrag";
 import {
@@ -59,6 +61,7 @@ export function FlowEdgeSelectionControls({
   routeOverride,
   zoom,
 }: FlowEdgeSelectionControlsProps) {
+  useLocale();
   const endpointHitRadius = 10 / zoom;
   const endpointCoreRadius = 3 / zoom;
   const routeHitRadius = 11 / zoom;
@@ -77,7 +80,7 @@ export function FlowEdgeSelectionControls({
   return (
     <>
       <svg
-        aria-label="连线端点"
+        aria-label={t("连线端点")}
         className="flow-edge-handle-layer"
         height={layout.height}
         style={{ left: layout.minX, top: layout.minY }}
@@ -86,7 +89,7 @@ export function FlowEdgeSelectionControls({
       >
         <g className="flow-edge-handles">
           <circle
-            aria-label="重连连线起点"
+            aria-label={t("重连连线起点")}
             className="flow-edge-handle flow-edge-handle--from"
             cx={route.start.x}
             cy={route.start.y}
@@ -122,7 +125,7 @@ export function FlowEdgeSelectionControls({
             r={endpointCoreRadius}
           />
           <circle
-            aria-label="重连连线终点"
+            aria-label={t("重连连线终点")}
             className="flow-edge-handle flow-edge-handle--to"
             cx={route.end.x}
             cy={route.end.y}
@@ -161,8 +164,8 @@ export function FlowEdgeSelectionControls({
             <>
               <circle
                 aria-label={adjustment.axis === "y"
-                  ? "上下拖动调整连线位置"
-                  : "左右拖动调整连线位置"}
+                  ? t("上下拖动调整连线位置")
+                  : t("左右拖动调整连线位置")}
                 className={`flow-edge-route-handle flow-edge-route-handle--${adjustment.axis}`}
                 cx={adjustment.x}
                 cy={adjustment.y}
@@ -216,7 +219,6 @@ export function FlowEdgeSelectionControls({
         onDelete={onDelete}
         onDeselect={onClearSelection}
         onResetRoute={() => onChangeRoute(null)}
-        zoom={zoom}
       />
     </>
   );

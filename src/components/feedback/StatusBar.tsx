@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t, localizeMessage } from "../../i18n/locale";
 import {
   useCallback,
   useEffect,
@@ -79,10 +81,10 @@ function saveStateLabel(
   saveState: SaveState,
   saveErrorActionLabel: string,
 ): string {
-  if (saveState === "loading") return "正在打开";
-  if (saveState === "saving") return "正在保存";
+  if (saveState === "loading") return t("正在打开");
+  if (saveState === "saving") return t("正在保存");
   if (saveState === "error") {
-    return `保存失败 · ${saveErrorActionLabel}`;
+    return t("保存失败 · {0}", saveErrorActionLabel);
   }
   return "";
 }
@@ -95,8 +97,9 @@ export function StatusBar({
   onNoticeActionComplete,
   onPauseNotice,
   onResumeNotice,
-  saveErrorActionLabel = "重试",
+  saveErrorActionLabel = t("重试"),
 }: StatusBarProps) {
+  const locale = useLocale();
   const contentRef = useRef<HTMLDivElement>(null);
   const [measuredWidth, setMeasuredWidth] = useState<number | null>(
     null,
@@ -133,7 +136,7 @@ export function StatusBar({
   const saveLabel = displayedSaveStatus
     ? saveStateLabel(
         displayedSaveStatus.state,
-        displayedSaveStatus.actionLabel,
+        localizeMessage(displayedSaveStatus.actionLabel),
       )
     : "";
 
@@ -203,6 +206,7 @@ export function StatusBar({
     measureWidth,
     saveLabel,
     shellMounted,
+    locale,
   ]);
 
   useEffect(() => {
@@ -261,12 +265,12 @@ export function StatusBar({
       <div className="status-bar__content" ref={contentRef}>
         {displayedSaveStatus && renderedSaveState === "error" ? (
           <button
-            aria-label={`保存失败，${displayedSaveStatus.actionLabel}`}
+            aria-label={t("保存失败，{0}", localizeMessage(displayedSaveStatus.actionLabel))}
             className={`status-bar__save status-bar__save--error ${
               saveStatusVisible ? "is-visible" : ""
             }`}
             onClick={onRetrySave}
-            title={displayedSaveStatus.error ?? "保存失败"}
+            title={localizeMessage(displayedSaveStatus.error ?? t("保存失败"))}
             type="button"
           >
             {saveContent}
@@ -291,7 +295,7 @@ export function StatusBar({
               <span aria-hidden="true" className="status-bar__divider" />
             )}
             <span className="status-bar__message">
-              {displayedNotice.message}
+              {localizeMessage(displayedNotice.message)}
             </span>
             {displayedNotice.actionLabel && displayedNotice.onAction && (
               <button
@@ -299,7 +303,7 @@ export function StatusBar({
                 onClick={runNoticeAction}
                 type="button"
               >
-                {displayedNotice.actionLabel}
+                {localizeMessage(displayedNotice.actionLabel)}
               </button>
             )}
             {displayedNotice.secondaryActionLabel &&
@@ -309,7 +313,7 @@ export function StatusBar({
                   onClick={runNoticeSecondaryAction}
                   type="button"
                 >
-                  {displayedNotice.secondaryActionLabel}
+                  {localizeMessage(displayedNotice.secondaryActionLabel)}
                 </button>
               )}
           </span>

@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t } from "../../i18n/locale";
 import {
   forwardRef,
   useEffect,
@@ -29,9 +31,10 @@ export const CanvasControls = forwardRef<
   { onZoomOut, onZoomIn, onFit, onReset },
   ref,
 ) {
-  const [zoomLabel, setZoomLabel] = useState<string | null>(null);
+  useLocale();
+  const [displayedZoom, setDisplayedZoom] = useState<number | null>(null);
   const [feedbackVisible, setFeedbackVisible] = useState(false);
-  const zoomLabelRef = useRef<string | null>(null);
+  const displayedZoomRef = useRef<number | null>(null);
   const feedbackVisibleRef = useRef(false);
   const dismissTimerRef = useRef<number | null>(null);
   const clearTimerRef = useRef<number | null>(null);
@@ -46,9 +49,10 @@ export const CanvasControls = forwardRef<
         window.clearTimeout(clearTimerRef.current);
         clearTimerRef.current = null;
       }
-      if (zoomLabelRef.current !== nextLabel) {
-        zoomLabelRef.current = nextLabel;
-        setZoomLabel(nextLabel);
+      if (displayedZoomRef.current === null ||
+          canvasZoomFeedbackLabel(displayedZoomRef.current) !== nextLabel) {
+        displayedZoomRef.current = nextZoom;
+        setDisplayedZoom(nextZoom);
       }
       if (!feedbackVisibleRef.current) {
         feedbackVisibleRef.current = true;
@@ -59,8 +63,8 @@ export const CanvasControls = forwardRef<
         setFeedbackVisible(false);
         dismissTimerRef.current = null;
         clearTimerRef.current = window.setTimeout(() => {
-          zoomLabelRef.current = null;
-          setZoomLabel(null);
+          displayedZoomRef.current = null;
+          setDisplayedZoom(null);
           clearTimerRef.current = null;
         }, zoomFeedbackExitDuration);
       }, zoomFeedbackDuration);
@@ -86,29 +90,29 @@ export const CanvasControls = forwardRef<
       }`}
     >
       <div
-        aria-label="画布缩放"
+        aria-label={t("画布缩放")}
         className="canvas-controls__touch-actions"
       >
-        <button aria-label="缩小" onClick={onZoomOut} type="button">
+        <button aria-label={t("缩小")} onClick={onZoomOut} type="button">
           <Icon name="minus" size={17} />
         </button>
-        <button aria-label="恢复 100%" onClick={onReset} type="button">
+        <button aria-label={t("恢复 100%")} onClick={onReset} type="button">
           <span aria-hidden="true">100</span>
         </button>
-        <button aria-label="放大" onClick={onZoomIn} type="button">
+        <button aria-label={t("放大")} onClick={onZoomIn} type="button">
           <Icon name="plus" size={17} />
         </button>
-        <button aria-label="适应全部内容" onClick={onFit} type="button">
+        <button aria-label={t("适应全部内容")} onClick={onFit} type="button">
           <Icon name="fit" size={17} />
         </button>
       </div>
-      {zoomLabel !== null && (
+      {displayedZoom !== null && (
         <output
           aria-hidden={!feedbackVisible}
           aria-live={feedbackVisible ? "polite" : "off"}
           className="canvas-controls__feedback"
         >
-          {zoomLabel}
+          {canvasZoomFeedbackLabel(displayedZoom)}
         </output>
       )}
     </div>

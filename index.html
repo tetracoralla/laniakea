@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f8f9fc" />
+    <script>
+      // Restore the explicit preference before the application styles paint.
+      try {
+        if (localStorage.getItem("origin.color-theme") === "dark") {
+          document.documentElement.dataset.theme = "dark";
+          document.documentElement.style.backgroundColor = "#19221d";
+          document.querySelector('meta[name="theme-color"]').content = "#19221d";
+        }
+      } catch {}
+    </script>
     <meta name="author" content="openAdam" />
     <meta
       name="description"

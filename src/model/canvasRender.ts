@@ -1,15 +1,16 @@
+import { t } from "../i18n/locale";
 import type { LayoutNode } from "../types/mindmap";
 
 export function nodePlaceholder(
   layout: Pick<LayoutNode, "depth" | "rootKind">,
 ): string {
-  if (layout.rootKind === "main") return "中心主题";
-  return "输入文本";
+  if (layout.rootKind === "main") return t("中心主题");
+  return t("输入文本");
 }
 
 export function emptyNodeLabel(layout: LayoutNode): string {
-  if (layout.rootKind === "main") return "空白中心主题";
-  return "空白节点";
+  if (layout.rootKind === "main") return t("空白中心主题");
+  return t("空白节点");
 }
 
 export function isMarkdownThematicBreak(text: string): boolean {

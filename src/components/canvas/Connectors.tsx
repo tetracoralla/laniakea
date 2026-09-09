@@ -1,12 +1,14 @@
 import { memo } from "react";
 import { connectorPath } from "../../model/layout";
 import type {
+  BranchTone,
   LayoutNode,
   LayoutResult,
   MindMapDocument,
 } from "../../types/mindmap";
 
 interface ConnectorsProps {
+  darkTones?: Readonly<Record<string, BranchTone>>;
   document: MindMapDocument;
   layout: LayoutResult;
   renderedPortalAnchorIds?: readonly string[];
@@ -14,21 +16,25 @@ interface ConnectorsProps {
 }
 
 const ConnectorPath = memo(function ConnectorPath({
+  darkTone,
   parent,
   child,
 }: {
+  darkTone?: BranchTone;
   parent: LayoutNode;
   child: LayoutNode;
 }) {
   return (
     <path
       className={`connector connector--${child.tone}`}
+      data-dark-tone={darkTone}
       d={connectorPath(parent, child)}
     />
   );
 });
 
 export const Connectors = memo(function Connectors({
+  darkTones,
   document,
   layout,
   renderedPortalAnchorIds = [],
@@ -50,6 +56,7 @@ export const Connectors = memo(function Connectors({
         if (!parentLayout || !childLayout) return null;
         return (
           <ConnectorPath
+            darkTone={darkTones?.[id]}
             child={childLayout}
             key={`${child.parentId}-${id}`}
             parent={parentLayout}
@@ -62,6 +69,7 @@ export const Connectors = memo(function Connectors({
         if (!parent || !portal) return null;
         return (
           <ConnectorPath
+            darkTone={darkTones?.[anchorId]}
             child={portal}
             key={`${anchorId}-subspace`}
             parent={parent}

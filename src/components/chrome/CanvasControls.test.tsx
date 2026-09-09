@@ -7,6 +7,7 @@ import {
   CanvasControls,
   type CanvasControlsHandle,
 } from "./CanvasControls";
+import { setLanguagePreference } from "../../i18n/locale";
 
 describe("CanvasControls", () => {
   let container: HTMLDivElement;
@@ -26,8 +27,25 @@ describe("CanvasControls", () => {
 
   afterEach(async () => {
     await act(async () => root.unmount());
+    setLanguagePreference("zh");
     container.remove();
     vi.useRealTimers();
+  });
+
+  it("translates active zoom feedback without changing zoom or restarting its lifetime", () => {
+    const ref = createRef<CanvasControlsHandle>();
+    const action = vi.fn();
+    act(() => root.render(<CanvasControls ref={ref} onFit={action} onReset={action}
+      onZoomIn={action} onZoomOut={action} />));
+    act(() => ref.current?.showZoom(0.4));
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => setLanguagePreference("en"));
+    const feedback = container.querySelector("output")!;
+    expect(feedback.textContent).toBe("40% · Minimum");
+    expect(feedback.getAttribute("aria-hidden")).toBe("false");
+    act(() => vi.advanceTimersByTime(600));
+    expect(feedback.getAttribute("aria-hidden")).toBe("true");
+    expect(action).not.toHaveBeenCalled();
   });
 
   it("shows zoom feedback briefly, including boundaries, then hides it", () => {

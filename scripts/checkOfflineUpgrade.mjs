@@ -50,7 +50,7 @@ try {
     } catch { response.writeHead(404).end(); }
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  browser = await chromium.launch();
+  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined });
   const context = await browser.newContext();
   page = await context.newPage();
   page.setDefaultTimeout(10_000);

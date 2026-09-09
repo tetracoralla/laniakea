@@ -1,0 +1,160 @@
+/* Only the menu's new theme swatch is shared. Existing light styles and all
+   canvas geometry stay in tokens.css / app.css unchanged. */
+.theme-swatch {
+  width: 16px;
+  height: 16px;
+  margin: 1px;
+  flex: none;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  box-shadow: inset -6px 0 0 currentColor;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #19221d;
+  --surface: #222d26;
+  --surface-soft: #263229;
+  --surface-hover: #303e33;
+  --ink: #e5eadf;
+  --ink-strong: #f0f2e9;
+  --muted: #a8b6aa;
+  --muted-soft: #819084;
+  --line: #37453a;
+  --line-strong: #465548;
+  --line-hover: #647764;
+  --canvas-dot: #2d3a30;
+  --violet: #bdd9a2;
+  --violet-deep: #b7cd98;
+  --violet-soft: #2d3c2c;
+  --violet-ring: rgba(189, 217, 162, 0.14);
+  --violet-strong: #cce4b5;
+  --blue: #91adbc;
+  --emerald: #9bb889;
+  --amber: #beaa8b;
+  --danger: #f08f88;
+  --success: #a7cda5;
+  --edge-violet: var(--map-violet);
+  --edge-blue: var(--map-blue);
+  --edge-emerald: var(--map-emerald);
+  --edge-amber: var(--map-amber);
+  --shadow-chrome: 0 7px 24px rgba(0, 0, 0, 0.15);
+  --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --shadow-hairline: 0 2px 6px rgba(0, 0, 0, 0.14);
+  --shadow-raised: 0 10px 28px rgba(0, 0, 0, 0.22);
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.3);
+  --shadow-selection: 0 0 0 4px var(--violet-ring), 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-hover-violet: 0 4px 12px rgba(0, 0, 0, 0.2);
+  --glow-decision: 0 3px 6px rgba(189, 217, 162, 0.08);
+  --glow-decision-strong: 0 3px 8px rgba(189, 217, 162, 0.14);
+  --veil-light: rgba(13, 20, 15, 0.38);
+  --veil-strong: rgba(13, 20, 15, 0.64);
+  --surface-glass: rgba(34, 45, 38, 0.96);
+  --map-violet: #8daba2;
+  --map-blue: #87a2b2;
+  --map-emerald: #8caa72;
+  --map-amber: #b29d7f;
+  --on-accent: #203724;
+}
+
+[data-theme="dark"] :is(.mind-node, .subspace-portal)[data-dark-tone="violet"] {
+  --branch-tone: var(--map-violet);
+  --portal-tone: var(--map-violet);
+  --node-fill: #334340;
+}
+
+[data-theme="dark"] :is(.mind-node, .subspace-portal)[data-dark-tone="blue"] {
+  --branch-tone: var(--map-blue);
+  --portal-tone: var(--map-blue);
+  --node-fill: #293f47;
+}
+
+[data-theme="dark"] :is(.mind-node, .subspace-portal)[data-dark-tone="emerald"] {
+  --branch-tone: var(--map-emerald);
+  --portal-tone: var(--map-emerald);
+  --node-fill: #34462e;
+}
+
+[data-theme="dark"] :is(.mind-node, .subspace-portal)[data-dark-tone="amber"] {
+  --branch-tone: var(--map-amber);
+  --portal-tone: var(--map-amber);
+  --node-fill: #493f30;
+}
+
+[data-theme="dark"] .connector[data-dark-tone="violet"] { stroke: var(--map-violet); }
+[data-theme="dark"] .connector[data-dark-tone="blue"] { stroke: var(--map-blue); }
+[data-theme="dark"] .connector[data-dark-tone="emerald"] { stroke: var(--map-emerald); }
+[data-theme="dark"] .connector[data-dark-tone="amber"] { stroke: var(--map-amber); }
+
+[data-theme="dark"] .mind-node__content,
+[data-theme="dark"] .mind-node__editor-shell,
+[data-theme="dark"] .subspace-portal__content {
+  background: var(--node-fill, var(--surface));
+}
+
+[data-theme="dark"] .mind-node--root .mind-node__content,
+[data-theme="dark"] .mind-node--root .mind-node__editor-shell {
+  color: var(--on-accent);
+  background: var(--violet-deep);
+}
+
+[data-theme="dark"] .mind-node--root .mind-node__editor {
+  color: var(--on-accent);
+  caret-color: currentColor;
+}
+
+[data-theme="dark"] .mind-node--root .mind-node__content.is-placeholder,
+[data-theme="dark"] .mind-node--root .mind-node__editor::placeholder {
+  color: #4a5b3e;
+}
+
+/* Filled controls need dark text on the light accent. */
+[data-theme="dark"] .node-drag-preview[data-drop-position]::after,
+[data-theme="dark"] .subspace-portal__open:hover,
+[data-theme="dark"] .subspace-portal__open:focus-visible,
+[data-theme="dark"] .flow-node__port span:hover,
+[data-theme="dark"] .flow-node__port:focus-visible span,
+[data-theme="dark"] .space-picker__choices button.is-selected .space-picker__choice-state,
+[data-theme="dark"] .space-picker__create,
+[data-theme="dark"] .shortcut-settings__actions button.is-primary {
+  color: var(--on-accent);
+}
+
+[data-theme="dark"] .status-bar__error-icon,
+[data-theme="dark"] .delete-subspace-dialog__actions .delete-subspace-dialog__confirm {
+  color: #301c1b;
+}
+
+/* Replace light-only white mixes on large surfaces, while retaining their
+   original borders, spacing, shape and interaction rules. */
+[data-theme="dark"] .flow-edge-label {
+  background: var(--canvas);
+}
+
+[data-theme="dark"] .flow-edge-style-choice--violet i {
+  background: var(--edge-violet);
+}
+
+[data-theme="dark"] .flow-node__decision-shape polygon {
+  fill: #334340;
+}
+
+[data-theme="dark"] .space-picker__choices button.is-selected {
+  background: var(--violet-soft);
+}
+
+[data-theme="dark"] .space-picker__choice-state {
+  background: var(--surface);
+}
+
+[data-theme="dark"] .space-picker__choice-icon {
+  color: var(--ink);
+  background: var(--surface-soft);
+  border-color: var(--line-strong);
+}
+
+[data-theme="dark"] .space-picker__choices button.is-selected .space-picker__choice-icon {
+  color: var(--violet);
+  background: var(--surface-hover);
+  border-color: var(--line-hover);
+}

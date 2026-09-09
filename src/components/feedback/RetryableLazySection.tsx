@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t, localizeMessage } from "../../i18n/locale";
 import {
   Component,
   Suspense,
@@ -39,10 +41,9 @@ class LazyLoadBoundary extends Component<
     return (
       <div className="overlay-backdrop lazy-load-failure-backdrop">
         <section aria-live="assertive" className="lazy-load-failure" role="alert">
-          <p>{this.props.errorLabel}</p>
+          <p>{localizeMessage(this.props.errorLabel)}</p>
           <button onClick={this.props.onRetry} type="button">
-            重试
-          </button>
+            {t("重试")}</button>
         </section>
       </div>
     );
@@ -81,6 +82,7 @@ export function createRetryableLazySection<T extends ComponentType<any>>(
   };
 
   function RetryableLazyComponent(props: ComponentPropsWithRef<T>) {
+  useLocale();
     const [attempt, setAttempt] = useState(0);
     const LazyComponent = useMemo(() => lazy(loadOnce), [attempt]);
     const retry = useCallback(() => {

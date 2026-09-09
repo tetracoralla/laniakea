@@ -1,3 +1,5 @@
+import { useLocale } from "../../i18n/useLocale";
+import { t, localizeMessage } from "../../i18n/locale";
 import {
   useEffect,
   useId,
@@ -56,6 +58,7 @@ export function CommandOverlay({
   onExecute,
   onSelectNode,
 }: CommandOverlayProps) {
+  const locale = useLocale();
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
@@ -89,7 +92,7 @@ export function CommandOverlay({
         nodeId: node.id,
         title: node.text,
         normalizedTitle: node.text.toLocaleLowerCase(),
-        meta: trail || (node.children.length ? `${node.children.length} 个子节点` : ""),
+        meta: trail || (node.children.length ? t("{0} 个子节点", node.children.length) : ""),
         metaKind: "context",
       });
     });
@@ -103,13 +106,13 @@ export function CommandOverlay({
           spaceId: space.id,
           title: node.text,
           normalizedTitle: node.text.toLocaleLowerCase(),
-          meta: `${space.type === "map" ? "思维图" : "流程"} · ${anchor?.text || "未命名节点"}`,
+          meta: `${space.type === "map" ? t("思维图") : t("流程")} · ${anchor?.text || t("未命名节点")}`,
           metaKind: "context",
         });
       });
     });
     return entries;
-  }, [document.nodes, document.rootId, document.spaces, mode]);
+  }, [document.nodes, document.rootId, document.spaces, mode, locale]);
 
   const matches = useMemo<OverlayItem[]>(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -119,12 +122,12 @@ export function CommandOverlay({
         .filter(
           (command) =>
             !normalized ||
-            command.label.toLocaleLowerCase().includes(normalized) ||
-            command.group.toLocaleLowerCase().includes(normalized),
+            localizeMessage(command.label).toLocaleLowerCase().includes(normalized) ||
+            localizeMessage(command.group).toLocaleLowerCase().includes(normalized),
         )
         .map((command) => ({
           id: command.id,
-          title: command.label,
+          title: localizeMessage(command.label),
           meta: command.shortcut,
           metaKind: "shortcut" as const,
           command,
@@ -133,7 +136,7 @@ export function CommandOverlay({
     }
 
     return searchEntries.filter((entry) => !normalized || entry.normalizedTitle.includes(normalized));
-  }, [commandTarget, mode, query, searchEntries]);
+  }, [commandTarget, mode, query, searchEntries, locale]);
   const results = usePagedResults(matches, overlayItemLimit);
   const { activeIndex, pageStart, visibleItems: renderedItems } = results;
   const activeOptionId = results.activeItem ? `${listId}-option-${activeIndex}` : undefined;
@@ -164,7 +167,7 @@ export function CommandOverlay({
       }}
     >
       <section
-        aria-label={mode === "commands" ? "命令面板" : "搜索内容"}
+        aria-label={mode === "commands" ? t("命令面板") : t("搜索内容")}
         aria-modal="true"
         className="command-overlay"
         onKeyDown={(event) => {
@@ -186,7 +189,7 @@ export function CommandOverlay({
             aria-controls={listId}
             aria-autocomplete="list"
             aria-expanded="true"
-            aria-label={mode === "commands" ? "搜索命令" : "搜索内容"}
+            aria-label={mode === "commands" ? t("搜索命令") : t("搜索内容")}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (isInputMethodKey(event.nativeEvent)) return;
@@ -207,7 +210,7 @@ export function CommandOverlay({
                 choose(results.activeItem);
               }
             }}
-            placeholder={mode === "commands" ? "输入命令…" : "搜索内容…"}
+            placeholder={mode === "commands" ? t("输入命令…") : t("搜索内容…")}
             ref={inputRef}
             role="combobox"
             value={query}
@@ -220,7 +223,7 @@ export function CommandOverlay({
           role="listbox"
         >
           {results.total === 0 ? (
-            <div className="command-overlay__empty">没有匹配结果</div>
+            <div className="command-overlay__empty">{t("没有匹配结果")}</div>
           ) : (
             renderedItems.map((item, index) => (
               <button
@@ -236,7 +239,7 @@ export function CommandOverlay({
               >
                 <span>
                   <strong>{item.title}</strong>
-                  {item.command ? <small>{item.command.group}</small> : item.meta ? (
+                  {item.command ? <small>{localizeMessage(item.command.group)}</small> : item.meta ? (
                     <small className="command-overlay__meta" title={item.meta}>{item.meta}</small>
                   ) : null}
                 </span>
