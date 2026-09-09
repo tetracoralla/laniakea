@@ -235,6 +235,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
       getViewport,
       panBy,
       panModifierHeld,
+      panSurfaceRef,
     } = useFlowViewport({
       layout,
       onCanvasPointerDown: clearCanvasSelection,
@@ -564,7 +565,8 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         onPointerDown={bindings.onPointerDown}
         onDoubleClick={(event) => {
           if (
-            event.target !== event.currentTarget || event.button !== 0 ||
+            (event.target !== event.currentTarget && event.target !== panSurfaceRef.current) ||
+            event.button !== 0 ||
             event.metaKey || event.ctrlKey || event.altKey || event.shiftKey ||
             panModifierHeld.current || hasActiveCanvasDrag() || !keyboardEnabled
           ) return;
@@ -614,6 +616,7 @@ export const FlowCanvas = forwardRef<FlowCanvasHandle, FlowCanvasProps>(
         role="application"
         tabIndex={0}
       >
+        <div aria-hidden="true" className="canvas-pan-surface" ref={panSurfaceRef} />
         <div
           className="flow-canvas__content"
           ref={contentRef}

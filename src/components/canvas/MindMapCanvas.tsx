@@ -459,6 +459,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
       selecting,
       className,
       panModifierHeld,
+      panSurfaceRef,
       bindings,
     } = useCanvasGestures({
       layout,
@@ -808,6 +809,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         role="application"
         tabIndex={0}
       >
+        <div aria-hidden="true" className="canvas-pan-surface" ref={panSurfaceRef} />
         <div
           className="mindmap-canvas__content"
           ref={contentRef}

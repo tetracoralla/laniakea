@@ -51,6 +51,9 @@ function FlowViewportHarness({ includePalette = false, layoutOverride = layout }
   return (
     <>
       <button onClick={controller.fit}>Fit content</button>
+      <button onClick={() => controller.revealEditor(controller.contentRef.current!)}>
+        Reveal editor
+      </button>
       <div
         className="flow-canvas"
         onLostPointerCapture={controller.bindings.onLostPointerCapture}
@@ -60,6 +63,7 @@ function FlowViewportHarness({ includePalette = false, layoutOverride = layout }
         onPointerUp={controller.bindings.onPointerUp}
         ref={controller.containerRef}
       >
+        <div className="canvas-pan-surface" ref={controller.panSurfaceRef} />
         <div
           className="flow-canvas__content"
           ref={controller.contentRef}
@@ -199,6 +203,68 @@ describe("flow viewport interruption", () => {
       key: "Escape",
     })));
     expect(handlers.onBack).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces pan samples into one paint and commits the release position with a stable cursor", async () => {
+    await act(async () => root.render(<FlowViewportHarness />));
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    const content = container.querySelector<HTMLElement>(".flow-canvas__content")!;
+    const surface = container.querySelector<HTMLElement>(".canvas-pan-surface")!;
+    await act(async () => canvas.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: " " })));
+    expect(surface.dataset.panCursor).toBe("grab");
+    await act(async () => {
+      surface.dispatchEvent(new PointerEvent("pointerdown", {
+        bubbles: true, button: 0, pointerId: 1, clientX: 100, clientY: 100,
+      }));
+      for (let index = 1; index <= 20; index += 1) {
+        canvas.dispatchEvent(new PointerEvent("pointermove", {
+          bubbles: true, pointerId: 1, clientX: 100 + index, clientY: 100 + index,
+        }));
+      }
+    });
+    expect(surface.dataset.panCursor).toBe("grabbing");
+    expect(content.style.transform).toContain("translate3d(0px, 0px");
+    expect(animationFrames).toHaveLength(1);
+    await act(async () => animationFrames.splice(0).forEach((frame) => frame(16)));
+    expect(content.style.transform).toContain("translate3d(20px, 20px");
+    await act(async () => {
+      canvas.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " " }));
+    });
+    expect(surface.dataset.panCursor).toBe("grabbing");
+    await act(async () => {
+      canvas.dispatchEvent(new PointerEvent("pointerup", {
+        bubbles: true, pointerId: 1, clientX: 130, clientY: 135,
+      }));
+    });
+    expect(surface.dataset.panCursor).toBeUndefined();
+    expect(content.style.transform).toContain("translate3d(30px, 35px");
+    expect(handlers.onViewportChange).toHaveBeenLastCalledWith({ x: 30, y: 35, zoom: 1 });
+  });
+
+  it("measures editor reveal in the latest coalesced wheel position, not the last paint", async () => {
+    await act(async () => root.render(<FlowViewportHarness />));
+    const canvas = container.querySelector<HTMLElement>(".flow-canvas")!;
+    const content = container.querySelector<HTMLElement>(".flow-canvas__content")!;
+    await act(async () => {
+      canvas.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 400,
+        clientY: 300,
+        ctrlKey: true,
+        deltaY: 100,
+      }));
+    });
+    // The zoomed viewport is committed live but still waits for its frame.
+    expect(content.style.transform).toContain("scale(1)");
+    expect(handlers.onViewportChange).not.toHaveBeenCalled();
+    const revealButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Reveal editor",
+    )!;
+    await act(async () => revealButton.click());
+    // Revealing measured the editor after painting the pending zoom, so the
+    // painted transform already reflects the wheel sample.
+    expect(content.style.transform).toContain("scale(0.81225239635");
   });
 
   it("clears a Flow canvas pan when pointer capture is lost", async () => {

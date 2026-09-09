@@ -146,6 +146,12 @@ describe("FlowCanvas", () => {
     expect(onViewportChange).not.toHaveBeenCalled(); // Its 120ms persistence debounce has not fired.
     expect(onAddShape).toHaveBeenCalledExactlyOnceWith("step", { x: 612, y: 396 }, {});
     onAddShape.mockClear();
+    // Chrome targets the click at the element that captured pointer-up.
+    // A blank-canvas double-click still creates a step after releasing pan.
+    const panSurface = container.querySelector<HTMLElement>(".canvas-pan-surface")!;
+    await act(async () => doubleClick(panSurface));
+    expect(onAddShape).toHaveBeenCalledExactlyOnceWith("step", { x: 612, y: 396 }, {});
+    onAddShape.mockClear();
     await act(async () => {
       doubleClick(container.querySelector(".flow-shape-palette button")!);
       doubleClick(canvas, { shiftKey: true });
@@ -154,6 +160,7 @@ describe("FlowCanvas", () => {
       canvas.focus();
       canvas.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: " " }));
       doubleClick(canvas);
+      doubleClick(panSurface);
       canvas.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " " }));
     });
     expect(onAddShape).not.toHaveBeenCalled();

@@ -515,23 +515,17 @@
   outline: none;
 }
 
-.mindmap-canvas.is-space-held {
-  cursor: grab;
+.canvas-pan-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  touch-action: none;
 }
 
-.mindmap-canvas.is-space-held .mind-node__content,
-.mindmap-canvas.is-space-held .mind-node__disclosure {
-  cursor: grab;
-}
-
-.mindmap-canvas.is-panning {
-  cursor: grabbing;
-}
-
-.mindmap-canvas.is-panning .mind-node__content,
-.mindmap-canvas.is-panning .mind-node__disclosure {
-  cursor: grabbing;
-}
+.canvas-pan-surface[data-pan-cursor] { pointer-events: auto; }
+.canvas-pan-surface[data-pan-cursor="grab"] { cursor: grab; }
+.canvas-pan-surface[data-pan-cursor="grabbing"] { cursor: grabbing; }
 
 .mindmap-canvas.is-selecting {
   cursor: crosshair;

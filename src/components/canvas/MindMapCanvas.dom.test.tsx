@@ -1848,7 +1848,7 @@ describe("rendered interaction regressions", () => {
 
     expect(onZoomPreview).toHaveBeenCalledOnce();
     expect(onZoomPreview.mock.calls[0][0]).toBeCloseTo(
-      0.8521803964,
+      0.8122523964,
       10,
     );
     expect(onViewportChange).toHaveBeenCalledTimes(viewportCallsBeforeZoom);
@@ -1912,7 +1912,7 @@ describe("rendered interaction regressions", () => {
     expect(
       zooms.every(
         (zoom, index) =>
-          index === 0 || zooms[index - 1] - zoom < 0.003,
+          index === 0 || zooms[index - 1] - zoom < 0.004,
       ),
     ).toBe(true);
     expect(content.style.transform).toContain("scale(1)");
@@ -2496,7 +2496,7 @@ describe("rendered interaction regressions", () => {
       dispatchPointer(canvas, "pointerup", 1100, 800);
     });
 
-    expect(canvas.classList.contains("is-space-held")).toBe(false);
+    expect(container.querySelector(".canvas-pan-surface[data-pan-cursor]")).toBeNull();
     expect(onDetachNode).toHaveBeenCalledWith(
       [
         expect.objectContaining({
@@ -3176,17 +3176,38 @@ describe("rendered interaction regressions", () => {
         new KeyboardEvent("keydown", { bubbles: true, key: " " }),
       );
     });
-    expect(canvas.classList.contains("is-space-held")).toBe(true);
+    expect(container.querySelector<HTMLElement>(".canvas-pan-surface")?.dataset.panCursor).toBe("grab");
+    const panSurface = container.querySelector<HTMLElement>(".canvas-pan-surface")!;
+    const cursorChanges: MutationRecord[] = [];
+    const cursorObserver = new MutationObserver((records) => cursorChanges.push(...records));
+    cursorObserver.observe(panSurface, { attributes: true });
+    await act(async () => {
+      for (let index = 0; index < 5; index += 1) {
+        canvas.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: " ", repeat: true }));
+      }
+    });
+    expect(cursorChanges).toHaveLength(0);
 
     await act(async () => {
       dispatchPointer(nodeContent, "pointerdown", 320, 240);
-      dispatchPointer(canvas, "pointermove", 390, 285);
+    });
+    expect(panSurface.dataset.panCursor).toBe("grabbing");
+    expect(panSurface.hasPointerCapture(7)).toBe(true);
+    await act(async () => {
+      dispatchPointer(canvas, "pointermove", 380, 280);
       dispatchPointer(canvas, "pointerup", 390, 285);
+    });
+    expect(panSurface.dataset.panCursor).toBe("grab");
+    expect(panSurface.hasPointerCapture(7)).toBe(false);
+    await act(async () => {
+      panSurface.dispatchEvent(new PointerEvent("lostpointercapture", { bubbles: true, pointerId: 7 }));
       nodeContent.click();
       canvas.dispatchEvent(
         new KeyboardEvent("keyup", { bubbles: true, key: " " }),
       );
     });
+    expect(panSurface.dataset.panCursor).toBeUndefined();
+    cursorObserver.disconnect();
 
     expect(onViewportChange).toHaveBeenLastCalledWith({
       x: 70,

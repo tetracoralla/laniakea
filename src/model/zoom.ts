@@ -5,9 +5,9 @@ export const maxCanvasZoom = 2.5;
 
 const wheelLineHeight = 16;
 const maxWheelZoomDelta = 60;
-// Keep trackpad pinch continuous while making one gesture slightly more
-// responsive than the previous calibration.
-const wheelPixelsPerZoomDoubling = 260;
+// 30% more responsive than the previous 260 px calibration, with the same
+// continuous curve and single-event cap (no discrete zoom jumps).
+const wheelPixelsPerZoomDoubling = 200;
 
 /** Normalizes a non-pinch wheel event to pixel deltas for panning. */
 export function wheelPanPixelDelta(

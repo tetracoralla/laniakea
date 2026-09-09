@@ -9,24 +9,25 @@ export function darkBranchTones(
 ): Record<string, BranchTone> {
   const tones: Record<string, BranchTone> = Object.create(null);
   const roots = [document.rootId, ...document.floatingRoots.map((root) => root.id)];
-  const pending = roots.map((id, index) => ({ id, tone: palette[index % palette.length] }));
+  const pending = roots.map((id, index) => ({
+    id,
+    tone: palette[index % palette.length],
+    canSplit: true,
+  }));
   while (pending.length) {
-    const { id, tone } = pending.pop()!;
+    const { id, tone, canSplit } = pending.pop()!;
     const node = document.nodes[id];
     if (!node || tones[id]) continue;
     tones[id] = tone;
     const children = node.children.map((childId) => document.nodes[childId]).filter(Boolean);
-    const isGroup = (child: typeof node) => child.children.length > 0 || Boolean(child.subspaceId);
-    // A single outline wrapper must not force the entire map into one color.
-    // Split sibling topic groups; their detail leaves keep the group's color.
+    // Skip single-child title wrappers, then assign colors at the first fork.
+    // Once assigned, the entire topic subtree inherits its color, even when
+    // deeper descendants form new groups or acquire children during editing.
     // Ignore collapse/selection/viewport so browsing never recolors the map.
-    const split = children.length > 1 &&
-      (id === document.rootId || children.filter(isGroup).length > 1);
-    let groupIndex = palette.indexOf(tone);
-    for (const child of children) {
-      const childTone = split && (id === document.rootId || isGroup(child))
-        ? palette[groupIndex++ % palette.length] : tone;
-      pending.push({ id: child.id, tone: childTone });
+    const split = canSplit && children.length > 1;
+    for (const [index, child] of children.entries()) {
+      const childTone = split ? palette[(palette.indexOf(tone) + index) % palette.length] : tone;
+      pending.push({ id: child.id, tone: childTone, canSplit: canSplit && !split });
     }
   }
   return tones;
