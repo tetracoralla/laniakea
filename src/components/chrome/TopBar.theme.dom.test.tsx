@@ -148,9 +148,11 @@ describe("theme choice in the existing More menu", () => {
 
   it("restores the dark canvas before app startup and then releases the temporary paint", () => {
     const html = readFileSync(resolve("index.html"), "utf8");
-    const bootstrap = html.match(/<script>\s*([\s\S]*?)<\/script>/)![1];
+    const parsed = new DOMParser().parseFromString(html, "text/html");
+    const bootstrap = parsed.querySelector('script:not([src])')?.textContent;
+    expect(bootstrap).toBeTruthy();
     localStorage.setItem(COLOR_THEME_KEY, "dark");
-    window.eval(bootstrap);
+    window.eval(bootstrap!);
     expect(getColorTheme()).toBe("dark");
     expect(document.documentElement.style.backgroundColor).toBe("rgb(25, 34, 29)");
     expect(document.querySelector('meta[name="theme-color"]')?.getAttribute("content")).toBe("#19221d");
