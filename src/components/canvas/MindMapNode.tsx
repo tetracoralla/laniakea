@@ -12,7 +12,7 @@ import {
   isMarkdownThematicBreak,
   nodePlaceholder,
 } from "../../model/canvasRender";
-import type { LayoutNode, MindNode } from "../../types/mindmap";
+import type { BranchTone, LayoutNode, MindNode } from "../../types/mindmap";
 import {
   isInputMethodKey,
   markInputMethodComposition,
@@ -22,6 +22,7 @@ import { nodeInlinePadding } from "../../model/layout";
 import { Icon } from "../icons/Icon";
 
 interface MindMapNodeProps {
+  darkTone?: BranchTone;
   node: MindNode;
   layout: LayoutNode;
   selected: boolean;
@@ -45,6 +46,7 @@ interface MindMapNodeProps {
 }
 
 export const MindMapNode = memo(function MindMapNode({
+  darkTone,
   node,
   layout,
   selected,
@@ -149,6 +151,7 @@ export const MindMapNode = memo(function MindMapNode({
     <div
       className={`mind-node mind-node--${layout.rootKind === "main" ? "root" : layout.rootKind === "floating" ? "floating" : layout.depth === 1 ? "branch" : layout.depth === 2 ? "secondary" : "leaf"} mind-node--${layout.tone} ${markdownDivider ? "is-markdown-divider" : ""} ${selected ? "is-selected" : ""} ${primary ? "is-primary" : ""} ${editing ? "is-editing" : ""}`}
       data-node-id={node.id}
+      data-dark-tone={darkTone}
       id={`mind-node-${node.id}`}
       onContextMenu={
         editing

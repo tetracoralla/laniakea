@@ -15,10 +15,11 @@ import {
   releaseOwnedPointerCapture,
   useDragInterruption,
 } from "../../hooks/useDragInterruption";
-import type { LaniakeaSpace, LayoutNode } from "../../types/mindmap";
+import type { BranchTone, LaniakeaSpace, LayoutNode } from "../../types/mindmap";
 import { Icon } from "../icons/Icon";
 
 interface SubspacePortalNodeProps {
+  darkTone?: BranchTone;
   anchorId: string;
   canMoveTo: (nodeId: string) => boolean;
   layout: LayoutNode;
@@ -47,6 +48,7 @@ interface PortalDragState {
 const dragThreshold = 5;
 
 export const SubspacePortalNode = memo(function SubspacePortalNode({
+  darkTone,
   anchorId,
   canMoveTo,
   layout,
@@ -153,6 +155,7 @@ export const SubspacePortalNode = memo(function SubspacePortalNode({
     <div
       className={`subspace-portal subspace-portal--${space.type} subspace-portal--${layout.tone} subspace-portal--${layout.depth === 1 ? "branch" : layout.depth === 2 ? "secondary" : "leaf"} ${selected ? "is-selected" : ""}`}
       data-subspace-anchor-id={anchorId}
+      data-dark-tone={darkTone}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();

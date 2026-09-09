@@ -1,5 +1,6 @@
 import { useLocale } from "../../i18n/useLocale";
 import { t } from "../../i18n/locale";
+import { darkBranchTones } from "../../theme/darkBranchTones";
 import {
   forwardRef,
   useCallback,
@@ -297,6 +298,8 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
         measureTextWidth,
       ],
     );
+    const darkTones = useMemo(() => darkBranchTones(document),
+      [document.nodes, document.rootId, document.floatingRoots]);
     visibleIdsRef.current = layout.visibleIds;
     const viewport = document.viewport;
 
@@ -816,6 +819,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
           }}
         >
           <Connectors
+            darkTones={darkTones}
             document={document}
             layout={layout}
             renderedPortalAnchorIds={renderedPortalAnchorIds}
@@ -839,6 +843,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
               selectedIdSet.has(id) && selectedSubspaceAnchorId !== id;
             return (
               <MindMapNode
+                darkTone={darkTones[id]}
                 draft={draftForNode(id, editingId, draft)}
                 editing={editingId === id}
                 key={id}
@@ -878,6 +883,7 @@ export const MindMapCanvas = forwardRef<CanvasHandle, MindMapCanvasProps>(
             if (!space || !portalLayout) return null;
             return (
               <SubspacePortalNode
+                darkTone={darkTones[anchorId]}
                 anchorId={anchorId}
                 canMoveTo={(targetId) =>
                   targetId !== anchorId &&

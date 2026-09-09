@@ -3,6 +3,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FlowEdgeToolbar } from "./FlowEdgeToolbar";
+import { setColorTheme } from "../../theme/colorTheme";
+import { setLanguagePreference } from "../../i18n/locale";
 
 // Dimensions observed in the rendered app. DOM tests cover placement decisions;
 // real browser/desktop checks cover CSS geometry, hit-testing and scrolling.
@@ -16,6 +18,8 @@ describe("connection controls in the visible canvas", () => {
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
       .IS_REACT_ACT_ENVIRONMENT = true;
     point = { x: 380, y: 440 };
+    setColorTheme("light");
+    setLanguagePreference("zh");
     canvasHeight = 560;
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
       if (this.classList.contains("flow-canvas")) return new DOMRect(0, 0, 760, canvasHeight);
@@ -43,6 +47,8 @@ describe("connection controls in the visible canvas", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
+    setColorTheme("light");
+    setLanguagePreference("zh");
     vi.restoreAllMocks();
   });
 
@@ -113,5 +119,18 @@ describe("connection controls in the visible canvas", () => {
     });
     const resized = expectReachable();
     expect(resized.panel.offsetHeight).toBeLessThan(237);
+  });
+
+  it("keeps the same connector style slot while its visible color name follows theme and language", async () => {
+    await openPanel();
+    const swatch = host.querySelector<HTMLButtonElement>(".flow-edge-style-choice--violet")!;
+    expect(swatch.getAttribute("aria-label")).toBe("紫色");
+    await act(async () => setColorTheme("dark"));
+    expect(swatch.getAttribute("aria-label")).toBe("灰青");
+    await act(async () => setLanguagePreference("en"));
+    expect(swatch.getAttribute("aria-label")).toBe("Gray teal");
+    await act(async () => setColorTheme("light"));
+    expect(swatch.getAttribute("aria-label")).toBe("Purple");
+    expect(host.querySelector(".flow-edge-style-choice--violet")).toBe(swatch);
   });
 });

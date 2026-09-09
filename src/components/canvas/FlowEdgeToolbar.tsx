@@ -1,5 +1,6 @@
 import { useLocale } from "../../i18n/useLocale";
 import { t, localizeMessage } from "../../i18n/locale";
+import { useColorTheme } from "../../hooks/useColorTheme";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type {
@@ -100,6 +101,7 @@ export function FlowEdgeToolbar({
   onResetRoute,
 }: FlowEdgeToolbarProps) {
   const locale = useLocale();
+  const { theme } = useColorTheme();
   const [open, setOpen] = useState(false);
   const [canvas, setCanvas] = useState<HTMLElement | null>(null);
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -284,7 +286,8 @@ export function FlowEdgeToolbar({
                 current={style.tone ?? "neutral"}
                 label={t("颜色")}
                 onChange={(tone) => onChangeStyle({ tone })}
-                options={toneOptions}
+                options={toneOptions.map((option) => option.value === "violet" && theme === "dark"
+                  ? { ...option, label: t("灰青") } : option)}
               />
               {hasManualRoute && (
                 <button

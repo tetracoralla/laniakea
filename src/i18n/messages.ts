@@ -114,6 +114,7 @@ export const messages = {
   "圆环": "Ring",
   "中性": "Neutral",
   "紫色": "Purple",
+  "灰青": "Gray teal",
   "蓝色": "Blue",
   "绿色": "Green",
   "琥珀": "Amber",
