@@ -32,12 +32,18 @@
 
 公开安装包以对应 Release 的附件为准。macOS 的交付路线是网页直下 DMG；不需要提交 Mac App Store。Developer ID 签名和公证用于网站下载后的系统信任，与应用商店审核是不同的流程。本地临时签名可验证构建与运行，但不能证明普通用户下载后能顺利首次打开。
 
-源码、网页版与 Codex Plugin 的版本可以先通过普通 GitHub Release 发布，不把缺少
-签名的本地 `.app` 或 DMG 作为 Release 资产。`.github/workflows/release-macos.yml`
+源码、网页版与 Codex Plugin 的版本可以先通过普通 GitHub Release 发布。`.github/workflows/release-macos.yml`
 只接受人工触发：当一个 Release tag 已存在并且 Apple Developer 凭据已配置时，
 它才会为该同版本 Release 构建、验证并上传通用架构 DMG。这样源码发布不会制造
-一个注定失败的签名任务，桌面二进制也仍然保持凭据、签名、公证和 Gatekeeper
-检查全部失败关闭。
+一个注定失败的签名任务；签名发行路径仍要求凭据、签名、公证和 Gatekeeper
+检查全部通过。
+
+当前另提供明确标注的未公证通用 DMG。`.github/workflows/release-macos-unnotarized.yml`
+仅人工触发，检出既有 Release tag，通过开发回归、DMG 内容、两个架构和临时签名
+完整性检查后，以 `-unnotarized.dmg` 后缀上传，并附校验和与构建来源。该路径不使用
+Apple 发行凭据，不声称通过公证或 Gatekeeper。Release 和 README 必须说明首次
+打开可能需要按 Apple 指引在“隐私与安全性”中选择“仍要打开”，受管理设备可能
+不允许。两个 macOS 发行流程共用同一 tag 的并发组，已有附件不会被覆盖。
 
 `.github/workflows/release-windows.yml` 同样接受现有 Release tag，重新检出对应源码，
 完成开发回归、安装态编辑与恢复检查后，上传 x64 安装程序、校验和与构建来源。
@@ -97,7 +103,8 @@ Flow，在文字尚未结束编辑时发出原生关闭请求，核对 Markdown�
 现有 `com.openadam.origin` 标识保持不变，以延续草稿、最近文档、恢复与快捷键设置。
 应用内部状态留在系统 Application Support 目录，用户自己的 Markdown 留在其选择的
 目录；替换 `.app` 不删除或迁移这些内容。构建、安装备份、用户文档是不同目录。
-当前本机构建仍为临时签名，不能作为已公证的公开 macOS 安装包发布。
+当前本机构建仍为临时签名，不能作为已公证的 macOS 安装包；公开未公证 DMG
+应来自上述对应 tag 的独立发行流程并明确标注。
 
 Agent Host 使用带文件摘要的独立组件包，以及它管理的 Node 和宿主投影，不从源码
 目录启动 MCP。Laniakea 是 Host 兼容发行内置组件时，用 Host 的发行更新入口更新，

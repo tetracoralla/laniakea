@@ -26,7 +26,7 @@
 
 Windows 用户运行 `-setup.exe`，按安装向导完成安装，应用自带 WebView2 运行环境，不需要安装 Node.js 或开发工具。当前 Windows 包没有发行者签名，系统可能显示未知发布者提示；下载前请查看 Release 的验证范围与校验和。
 
-macOS 的交付方式是下载 `.dmg`，打开后拖到“应用程序”。公开 DMG 尚待 Developer ID 签名和公证凭据配置完成；本地临时签名包不会冒充已通过系统信任检查的公开安装包。
+macOS 下载 `.dmg`，打开后拖到“应用程序”。当前提供 Intel / Apple silicon 通用包，文件名中的 `unnotarized` 表示没有 Developer ID 发行者签名和 Apple 公证。首次打开可能被系统阻止；确认下载自本仓库的 Release 后，可按 [Apple 的说明](https://support.apple.com/zh-cn/102445)，在尝试打开后进入“系统设置 → 隐私与安全性”，选择“仍要打开”。受管理的 Mac 可能不允许此操作。
 
 ## 主要能力
 

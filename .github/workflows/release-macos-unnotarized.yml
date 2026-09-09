@@ -1,0 +1,61 @@
+name: Publish explicitly unnotarized macOS DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Release tag for a clearly labeled unnotarized DMG
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish-macos-unnotarized:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+      - name: Verify release version and destination
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test "$RELEASE_TAG" = "v$(node -p "require('./package.json').version")"
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
+      - run: npm ci
+      - run: npm run check:regression
+      - name: Build universal DMG without Apple notarization credentials
+        run: npm run desktop:build -- --target universal-apple-darwin --bundles dmg
+      - name: Verify and label unnotarized distribution
+        run: |
+          shopt -s nullglob
+          DMGS=(src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg)
+          test "${#DMGS[@]}" -eq 1
+          DMG_PATH="${DMGS[0]%.dmg}-unnotarized.dmg"
+          mv "${DMGS[0]}" "$DMG_PATH"
+          node scripts/checkMacDmg.mjs "$DMG_PATH" universal
+          node scripts/writeArtifactChecksums.mjs "$DMG_PATH"
+          printf 'DMG_PATH=%s\n' "$DMG_PATH" >> "$GITHUB_ENV"
+      - name: Upload unnotarized DMG and integrity records
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$RELEASE_TAG" "$DMG_PATH" "$DMG_PATH.sha256" "$DMG_PATH.build.json" --repo "$GITHUB_REPOSITORY"
