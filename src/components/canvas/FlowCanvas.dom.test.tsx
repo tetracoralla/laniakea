@@ -1558,13 +1558,19 @@ describe("FlowCanvas", () => {
     expect(editor.getBoundingClientRect().right).toBeLessThanOrEqual(760);
 
     // Continued manual pan and typing must not repeatedly reveal the editor.
-    await act(async () => canvas.dispatchEvent(new WheelEvent("wheel", {
-      bubbles: true, deltaX: 900, deltaY: 900,
-    })));
+    await act(async () => {
+      canvas.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true, deltaX: 900, deltaY: 900,
+      }));
+      // Wheel painting is intentionally coalesced. Observe the completed pan
+      // before checking that further typing does not move the viewport again.
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
     const afterPan = content.style.transform;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "继续编辑 · Continued");
       editor.dispatchEvent(new Event("input", { bubbles: true }));
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     });
     expect(editor.value).toBe("继续编辑 · Continued");
     expect(content.style.transform).toBe(afterPan);

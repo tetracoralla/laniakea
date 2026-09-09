@@ -38,4 +38,5 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+      - run: npm audit --registry=https://registry.npmjs.org --audit-level=moderate
       - run: npm run check:regression

@@ -92,6 +92,15 @@ describe("App document-scoped overlays", () => {
   let container: HTMLDivElement;
   let root: Root;
 
+  const waitForSearch = () => vi.waitFor(async () => {
+    // Search is lazy-loaded. Wait for its rendered control, not a fixed import
+    // duration that varies with the test worker's load.
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    const search = container.querySelector<HTMLInputElement>("[role='combobox']");
+    expect(search).toBeInstanceOf(HTMLInputElement);
+    return search!;
+  });
+
   beforeEach(() => {
     (
       globalThis as typeof globalThis & {
@@ -187,7 +196,7 @@ describe("App document-scoped overlays", () => {
     expect(container.querySelector<HTMLElement>(".flow-canvas__content")!.style.transform).toBe(viewport);
 
     await press(resumedCanvas, "f", true);
-    const search = container.querySelector<HTMLInputElement>("[role='combobox']")!;
+    const search = await waitForSearch();
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "起点");
       search.dispatchEvent(new Event("input", { bubbles: true }));
@@ -226,7 +235,7 @@ describe("App document-scoped overlays", () => {
     };
     await act(async () => { root.render(<App />); await settle(); });
     await press(window.document.body, "f", true);
-    const search = container.querySelector<HTMLInputElement>("[role='combobox']")!;
+    const search = await waitForSearch();
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Flow target");
       search.dispatchEvent(new Event("input", { bubbles: true }));
@@ -251,7 +260,7 @@ describe("App document-scoped overlays", () => {
     expect(container.textContent).not.toContain("创建同级节点");
     expect(container.textContent).not.toContain("删除节点及子节点");
     expect(container.textContent).toContain("立即保存");
-    await press(container.querySelector("[role='combobox']")!, "Escape");
+    await press(await waitForSearch(), "Escape");
     expect(container.querySelector(".flow-canvas")).not.toBeNull();
     const switcher = container.querySelector<HTMLButtonElement>(".document-switcher__trigger")!;
     await act(async () => {
